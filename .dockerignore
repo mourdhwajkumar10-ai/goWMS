@@ -1,0 +1,10 @@
+.env
+.git
+.gitignore
+node_modules
+web/node_modules
+web/dist
+uploads
+*.log
+README.md
+docs

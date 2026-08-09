@@ -1,0 +1,212 @@
+package analytics
+
+import (
+	"goWMS/api/modules/shared"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Register wires the analytics routes.
+func Register(r fiber.Router, db *pgxpool.Pool) {
+	r.Get("/dashboard", dashboard(db))
+	r.Get("/fast-moving", fastMoving(db))
+	r.Get("/slow-moving", slowMoving(db))
+	r.Get("/dead-stock", deadStock(db))
+	r.Get("/expiry", expiryItems(db))
+	r.Get("/fill-rate", fillRate(db))
+	r.Get("/pick-accuracy", pickAccuracy(db))
+	r.Get("/warehouse-metrics", warehouseMetrics(db))
+	r.Get("/supplier-performance", supplierPerformance(db))
+}
+
+func dashboard(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var (
+			totalItems, totalStock, pendingGRN, openPickLists int64
+			pendingBackorders, dueCycleCounts                 int64
+		)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM items WHERE disabled=false`).Scan(&totalItems)
+		_ = db.QueryRow(c.Context(), `SELECT COALESCE(SUM(actual_qty),0) FROM bins`).Scan(&totalStock)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM grn_sessions WHERE status IN ('open','confirmed')`).Scan(&pendingGRN)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM pick_lists WHERE status IN ('draft','open')`).Scan(&openPickLists)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM backorders WHERE status IN ('pending','partially_fulfilled')`).Scan(&pendingBackorders)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM cycle_count_sheets WHERE scheduled_date<=CURRENT_DATE AND status='pending'`).Scan(&dueCycleCounts)
+
+		return shared.OK(c, fiber.Map{
+			"TotalItems":        totalItems,
+			"TotalStock":        totalStock,
+			"PendingGRN":        pendingGRN,
+			"OpenPickLists":     openPickLists,
+			"PendingBackorders": pendingBackorders,
+			"DueCycleCounts":    dueCycleCounts,
+		})
+	}
+}
+
+func fastMoving(db *pgxpool.Pool) fiber.Handler {
+	return listClassification(db, "fast")
+}
+
+func slowMoving(db *pgxpool.Pool) fiber.Handler {
+	return listClassification(db, "slow")
+}
+
+func deadStock(db *pgxpool.Pool) fiber.Handler {
+	return listClassification(db, "dead")
+}
+
+func listClassification(db *pgxpool.Pool, classification string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		orderBy := "turnover_ratio DESC"
+		if classification == "slow" {
+			orderBy = "days_since_last_sale DESC"
+		}
+
+		rows, err := db.Query(c.Context(),
+			`SELECT item_code, avg_daily_sales, turnover_ratio, days_since_last_sale
+			 FROM item_movement_classifications WHERE classification=$1 ORDER BY `+orderBy+` LIMIT 50`,
+			classification)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type row struct {
+			ItemCode          string   `json:"item_code"`
+			AvgDailySales     *float64 `json:"avg_daily_sales"`
+			TurnoverRatio     *float64 `json:"turnover_ratio"`
+			DaysSinceLastSale *int     `json:"days_since_last_sale"`
+		}
+		var list []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.ItemCode, &r.AvgDailySales, &r.TurnoverRatio, &r.DaysSinceLastSale); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, r)
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func expiryItems(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT gl.item_code, gl.scanned_qty, gl.batch_no, gl.expiry_date
+			FROM grn_lines gl
+			WHERE gl.expiry_date IS NOT NULL
+			ORDER BY gl.expiry_date ASC LIMIT 50`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type item struct {
+			ItemCode   string   `json:"item_code"`
+			Qty        *float64 `json:"qty"`
+			BatchNo    *string  `json:"batch_no"`
+			ExpiryDate *string  `json:"expiry_date"`
+		}
+		var list []item
+		for rows.Next() {
+			var i item
+			if err := rows.Scan(&i.ItemCode, &i.Qty, &i.BatchNo, &i.ExpiryDate); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, i)
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func fillRate(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var total, fulfilled int64
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM order_fulfillment_log`).Scan(&total)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM order_fulfillment_log WHERE fill_rate=100`).Scan(&fulfilled)
+
+		rate := 0.0
+		if total > 0 {
+			rate = float64(fulfilled) / float64(total) * 100
+		}
+		return shared.OK(c, fiber.Map{"total_orders": total, "fulfilled": fulfilled, "fill_rate_pct": rate})
+	}
+}
+
+func pickAccuracy(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var total int64
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM pick_scan_logs`).Scan(&total)
+
+		var accurate int64
+		_ = db.QueryRow(c.Context(),
+			`SELECT COUNT(*) FROM pick_scan_logs WHERE location_drift=false`).Scan(&accurate)
+
+		rate := 0.0
+		if total > 0 {
+			rate = float64(accurate) / float64(total) * 100
+		}
+		return shared.OK(c, fiber.Map{"total_scans": total, "accurate_scans": accurate, "accuracy_pct": rate})
+	}
+}
+
+func warehouseMetrics(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT w.name, wm.total_bins, wm.occupied_bins, wm.utilization_pct, wm.pick_accuracy_pct
+			FROM warehouse_metrics wm JOIN warehouses w ON w.id = wm.warehouse_id
+			ORDER BY w.name`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type row struct {
+			Warehouse       string   `json:"warehouse"`
+			TotalBins       *int     `json:"total_bins"`
+			OccupiedBins    *int     `json:"occupied_bins"`
+			UtilizationPct  *float64 `json:"utilization_pct"`
+			PickAccuracyPct *float64 `json:"pick_accuracy_pct"`
+		}
+		var list []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.Warehouse, &r.TotalBins, &r.OccupiedBins, &r.UtilizationPct, &r.PickAccuracyPct); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, r)
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func supplierPerformance(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT supplier_name, total_grn, full_match_count, shortage_count, overage_count, accuracy_pct
+			FROM supplier_performance ORDER BY accuracy_pct DESC LIMIT 20`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type row struct {
+			SupplierName string   `json:"supplier_name"`
+			TotalGRN     *int     `json:"total_grn"`
+			FullMatch    *int     `json:"full_match_count"`
+			Shortage     *int     `json:"shortage_count"`
+			Overage      *int     `json:"overage_count"`
+			AccuracyPct  *float64 `json:"accuracy_pct"`
+		}
+		var list []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.SupplierName, &r.TotalGRN, &r.FullMatch, &r.Shortage, &r.Overage, &r.AccuracyPct); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, r)
+		}
+		return shared.OK(c, list)
+	}
+}

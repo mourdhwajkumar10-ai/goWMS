@@ -1,0 +1,74 @@
+# goWMS orchestration: PostgreSQL + migrations + the single-binary API/web app.
+# Usage:
+#   cp .env.example .env    # adjust secrets
+#   docker compose up -d --build
+#   open http://localhost:8080
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-gowms}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      POSTGRES_DB: ${DB_NAME:-gowms}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-gowms} -d ${DB_NAME:-gowms}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # Applies migrations once, then exits. Idempotent, safe to re-run.
+  migrate:
+    image: postgres:16-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./migrations:/migrations:ro
+    environment:
+      PGPASSWORD: ${DB_PASSWORD:-secret}
+    entrypoint:
+      - sh
+      - -c
+      - |
+        for f in /migrations/*.sql; do
+          echo "Applying $$f";
+          psql -h postgres -U ${DB_USER:-gowms} -d ${DB_NAME:-gowms} -v ON_ERROR_STOP=1 -q -f "$$f" || exit 1;
+        done
+        echo "Migrations complete."
+    restart: "no"
+
+  api:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      PORT: 8080
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: ${DB_USER:-gowms}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      DB_NAME: ${DB_NAME:-gowms}
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      TOKEN_EXPIRY_HOURS: ${TOKEN_EXPIRY_HOURS:-24}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - uploads_data:/app/uploads
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  uploads_data:
