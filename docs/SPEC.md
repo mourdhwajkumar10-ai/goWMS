@@ -239,12 +239,12 @@ Respect: `allow_mixed_items`, `max_capacity_qty`, location disabled, hold/damage
 6. Item master completeness gate on GRN unknown SKU / putaway.  
 7. Putaway suggest + confirm updates location balances.
 
-### Phase B — Guided inbound & putaway
+### Phase B — Guided inbound & putaway ✅ implemented
 
-1. GRN → Incoming/Hold balance on receive close.  
+1. GRN → Incoming/Hold/Damaged balances on receive close.  
 2. Putaway queue + suggestion API + confirm (updates location balances, putaway_log).  
-3. QI optional step into hold.  
-4. Expected qty vs scan variances UX.
+3. QI optional step into hold; accept → Incoming, reject → Damaged.  
+4. Expected qty vs scan variances UX + damage qty + complete-master modal.
 
 ### Phase C — Inventory health
 

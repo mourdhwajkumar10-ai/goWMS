@@ -2,10 +2,12 @@ package qi
 
 import (
 	"strconv"
+	"strings"
 
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -13,6 +15,7 @@ import (
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/", create(db))
 	r.Get("/", list(db))
+	r.Get("/list", list(db))
 	r.Get("/:id", get(db))
 	r.Post("/:id/reading", addReading(db))
 	r.Post("/:id/submit", submit(db))
@@ -26,6 +29,10 @@ func create(db *pgxpool.Pool) fiber.Handler {
 			ItemCode      string  `json:"item_code"`
 			SampleSize    float64 `json:"sample_size"`
 			BatchNo       string  `json:"batch_no"`
+			WarehouseID   int     `json:"warehouse_id"`
+			LocationID    int     `json:"location_id"`
+			Qty           float64 `json:"qty"`
+			GRNSessionID  int     `json:"grn_session_id"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -33,13 +40,23 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		if body.ItemCode == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 		}
+		if body.Qty <= 0 {
+			body.Qty = body.SampleSize
+		}
 
 		var id int
 		var inspectionNo string
 		err := db.QueryRow(c.Context(),
-			`INSERT INTO quality_inspections (inspection_no, reference_type, reference_name, item_code, sample_size, status)
-			 VALUES ('QI-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('quality_inspections_id_seq')::TEXT,5,'0'), $1, $2, $3, $4, 'pending') RETURNING id, inspection_no`,
-			body.ReferenceType, body.ReferenceName, body.ItemCode, body.SampleSize).Scan(&id, &inspectionNo)
+			`INSERT INTO quality_inspections (
+				inspection_no, reference_type, reference_name, item_code, sample_size, status,
+				warehouse_id, location_id, qty, grn_session_id, batch_no
+			 ) VALUES (
+				'QI-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('quality_inspections_id_seq')::TEXT,5,'0'),
+				$1,$2,$3,$4,'pending',$5,$6,$7,$8,NULLIF($9,'')
+			 ) RETURNING id, inspection_no`,
+			body.ReferenceType, body.ReferenceName, body.ItemCode, body.SampleSize,
+			nullInt(body.WarehouseID), nullInt(body.LocationID), body.Qty, nullInt(body.GRNSessionID), body.BatchNo,
+		).Scan(&id, &inspectionNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -50,14 +67,15 @@ func create(db *pgxpool.Pool) fiber.Handler {
 func list(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status
+			SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status,
+			       warehouse_id, location_id, COALESCE(qty,0), grn_session_id, batch_no
 			FROM quality_inspections ORDER BY created_at DESC LIMIT 50`)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
 
-		type qi struct {
+		type qiRow struct {
 			ID            int      `json:"id"`
 			InspectionNo  string   `json:"inspection_no"`
 			ReferenceType *string  `json:"reference_type"`
@@ -65,12 +83,18 @@ func list(db *pgxpool.Pool) fiber.Handler {
 			ItemCode      string   `json:"item_code"`
 			SampleSize    *float64 `json:"sample_size"`
 			Status        *string  `json:"status"`
+			WarehouseID   *int     `json:"warehouse_id"`
+			LocationID    *int     `json:"location_id"`
+			Qty           float64  `json:"qty"`
+			GRNSessionID  *int     `json:"grn_session_id"`
+			BatchNo       *string  `json:"batch_no"`
 		}
-		var list []qi
+		list := []qiRow{}
 		for rows.Next() {
-			var q qi
+			var q qiRow
 			if err := rows.Scan(&q.ID, &q.InspectionNo, &q.ReferenceType, &q.ReferenceName,
-				&q.ItemCode, &q.SampleSize, &q.Status); err != nil {
+				&q.ItemCode, &q.SampleSize, &q.Status, &q.WarehouseID, &q.LocationID,
+				&q.Qty, &q.GRNSessionID, &q.BatchNo); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, q)
@@ -95,12 +119,17 @@ func get(db *pgxpool.Pool) fiber.Handler {
 			SampleSize    *float64 `json:"sample_size"`
 			Status        *string  `json:"status"`
 			InspectedAt   *string  `json:"inspected_at"`
+			WarehouseID   *int     `json:"warehouse_id"`
+			LocationID    *int     `json:"location_id"`
+			Qty           float64  `json:"qty"`
+			BatchNo       *string  `json:"batch_no"`
 		}
 		err = db.QueryRow(c.Context(),
-			`SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status, inspected_at::text
+			`SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status, inspected_at::text,
+			        warehouse_id, location_id, COALESCE(qty,0), batch_no
 			 FROM quality_inspections WHERE id=$1`, id).
 			Scan(&q.ID, &q.InspectionNo, &q.ReferenceType, &q.ReferenceName, &q.ItemCode,
-				&q.SampleSize, &q.Status, &q.InspectedAt)
+				&q.SampleSize, &q.Status, &q.InspectedAt, &q.WarehouseID, &q.LocationID, &q.Qty, &q.BatchNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
 		}
@@ -146,12 +175,70 @@ func submit(db *pgxpool.Pool) fiber.Handler {
 
 		var body struct {
 			Status string `json:"status"` // accepted | rejected
+			Reason string `json:"reason"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
 		if body.Status == "" {
 			body.Status = "accepted"
+		}
+		body.Status = strings.ToLower(body.Status)
+		if body.Status != "accepted" && body.Status != "rejected" {
+			return shared.Err(c, fiber.StatusBadRequest, "status must be accepted or rejected")
+		}
+
+		var itemCode string
+		var warehouseID, locationID *int
+		var qty float64
+		var batch *string
+		var currentStatus string
+		err = db.QueryRow(c.Context(), `
+			SELECT item_code, warehouse_id, location_id, COALESCE(qty, sample_size, 0), batch_no, COALESCE(status,'pending')
+			FROM quality_inspections WHERE id=$1`, id).
+			Scan(&itemCode, &warehouseID, &locationID, &qty, &batch, &currentStatus)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if currentStatus != "pending" {
+			return shared.Err(c, fiber.StatusBadRequest, "inspection already submitted")
+		}
+
+		movedTo := ""
+		if warehouseID != nil && locationID != nil && qty > 0 {
+			wid := *warehouseID
+			fromID := *locationID
+			batchStr := ""
+			if batch != nil {
+				batchStr = *batch
+			}
+
+			var toID int
+			var toCode string
+			if body.Status == "accepted" {
+				toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "INCOMING-01", "incoming")
+			} else {
+				toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "DAMAGED-01", "damaged")
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+
+			// Move hold → incoming (accepted) or damaged (rejected).
+			_ = shared.AdjustLocationQty(c.Context(), db, itemCode, wid, fromID, batchStr, -qty)
+			if err := shared.AdjustLocationQty(c.Context(), db, itemCode, wid, toID, batchStr, qty); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			movedTo = toCode
+		}
+
+		if body.Reason != "" {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE quality_inspections SET remarks = COALESCE(remarks,'') || $1 WHERE id=$2`,
+				"\n"+body.Reason, id)
 		}
 
 		tag, err := db.Exec(c.Context(),
@@ -163,8 +250,19 @@ func submit(db *pgxpool.Pool) fiber.Handler {
 		if tag.RowsAffected() == 0 {
 			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
 		}
-		return shared.OK(c, fiber.Map{"id": id, "status": body.Status})
+
+		return shared.OK(c, fiber.Map{
+			"id": id, "status": body.Status, "moved_to": movedTo,
+			"putaway_ready": body.Status == "accepted" && movedTo != "",
+		})
 	}
+}
+
+func nullInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 func userID(c *fiber.Ctx) int {

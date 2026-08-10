@@ -59,9 +59,15 @@ export default function Qi() {
 
   const acceptInspection = async () => {
     if (!selected) return
-    const r = await api.post(`/qi/${selected.id}/submit`, { status: 'accepted' })
+    const r = await api.post<{ moved_to?: string }>(`/qi/${selected.id}/submit`, { status: 'accepted' })
     if (r.ok) {
-      notify({ type: 'success', title: 'Accepted', message: `${selected.item_code} passed inspection` })
+      notify({
+        type: 'success',
+        title: 'Accepted',
+        message: r.data?.moved_to
+          ? `${selected.item_code} → ${r.data.moved_to} (ready for putaway)`
+          : `${selected.item_code} passed inspection`,
+      })
       setSelected(null)
       loadList()
     }
@@ -69,9 +75,15 @@ export default function Qi() {
 
   const rejectInspection = async () => {
     if (!selected) return
-    const r = await api.post(`/qi/${selected.id}/submit`, { status: 'rejected', reason: rejectReason })
+    const r = await api.post<{ moved_to?: string }>(`/qi/${selected.id}/submit`, { status: 'rejected', reason: rejectReason })
     if (r.ok) {
-      notify({ type: 'warning', title: 'Rejected', message: `${selected.item_code} failed inspection` })
+      notify({
+        type: 'warning',
+        title: 'Rejected',
+        message: r.data?.moved_to
+          ? `${selected.item_code} moved to ${r.data.moved_to}`
+          : `${selected.item_code} failed inspection`,
+      })
       setSelected(null)
       setRejectReason('')
       loadList()

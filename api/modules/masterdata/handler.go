@@ -418,13 +418,20 @@ func createWarehouse(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		// Default incoming location for new warehouse.
-		_, _ = db.Exec(c.Context(), `
-			INSERT INTO warehouse_locations (
-				code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
-				location_type, allow_mixed_items, disabled, is_occupied
-			) VALUES ('INCOMING-01',$1,'IN','IN','01','01','01','low','01','incoming',true,false,false)
-			ON CONFLICT (warehouse_id, code) DO NOTHING`, id)
+		// Default staging locations for new warehouse.
+		staging := []struct{ code, zone, typ string }{
+			{"INCOMING-01", "IN", "incoming"},
+			{"HOLD-01", "HOLD", "hold"},
+			{"DAMAGED-01", "DMG", "damaged"},
+		}
+		for _, loc := range staging {
+			_, _ = db.Exec(c.Context(), `
+				INSERT INTO warehouse_locations (
+					code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
+					location_type, allow_mixed_items, disabled, is_occupied
+				) VALUES ($1,$2,$3,$3,'01','01','01','low','01',$4,true,false,false)
+				ON CONFLICT (warehouse_id, code) DO NOTHING`, loc.code, id, loc.zone, loc.typ)
+		}
 
 		return shared.OK(c, fiber.Map{"id": id, "code": body.Code, "name": body.Name})
 	}

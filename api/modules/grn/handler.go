@@ -3,6 +3,7 @@ package grn
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"goWMS/api/modules/shared"
@@ -149,8 +150,11 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 			ItemCode    string   `json:"item_code"`
 			ExpectedQty *float64 `json:"expected_qty"`
 			ScannedQty  *float64 `json:"scanned_qty"`
+			DamagedQty  float64  `json:"damaged_qty"`
 			Status      string   `json:"status"`
 			BatchNo     *string  `json:"batch_no"`
+			RequiresQI  bool     `json:"requires_qi"`
+			Notes       *string  `json:"notes"`
 		}
 		type carton struct {
 			ID        int        `json:"id"`
@@ -172,14 +176,14 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 
 		for i := range cartons {
 			lrows, err := db.Query(c.Context(), `
-				SELECT id, item_code, expected_qty, scanned_qty, status, batch_no
+				SELECT id, item_code, expected_qty, scanned_qty, COALESCE(damaged_qty,0), status, batch_no, COALESCE(requires_qi,false), notes
 				FROM grn_lines WHERE grn_carton_id=$1 ORDER BY id ASC`, cartons[i].ID)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			for lrows.Next() {
 				var l line
-				if err := lrows.Scan(&l.ID, &l.ItemCode, &l.ExpectedQty, &l.ScannedQty, &l.Status, &l.BatchNo); err != nil {
+				if err := lrows.Scan(&l.ID, &l.ItemCode, &l.ExpectedQty, &l.ScannedQty, &l.DamagedQty, &l.Status, &l.BatchNo, &l.RequiresQI, &l.Notes); err != nil {
 					lrows.Close()
 					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 				}
@@ -308,8 +312,12 @@ func scanLineBody(db *pgxpool.Pool) fiber.Handler {
 			ItemCode    string  `json:"item_code"`
 			ExpQty      float64 `json:"expected_qty"`
 			ScanQty     float64 `json:"scanned_qty"`
+			DamagedQty  float64 `json:"damaged_qty"`
 			Batch       string  `json:"batch_no"`
 			ExpiryDate  string  `json:"expiry_date"`
+			Notes       string  `json:"notes"`
+			RequiresQI  bool    `json:"requires_qi"`
+			Status      string  `json:"status"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -317,7 +325,12 @@ func scanLineBody(db *pgxpool.Pool) fiber.Handler {
 		if body.GRNCartonID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "grn_carton_id required")
 		}
-		return doScanLine(c, db, body.GRNCartonID, body.ItemCode, body.ExpQty, body.ScanQty, body.Batch, body.ExpiryDate)
+		return doScanLine(c, db, scanLineInput{
+			CartonID: body.GRNCartonID, ItemCode: body.ItemCode,
+			ExpQty: body.ExpQty, ScanQty: body.ScanQty, DamagedQty: body.DamagedQty,
+			Batch: body.Batch, ExpiryDate: body.ExpiryDate, Notes: body.Notes,
+			RequiresQI: body.RequiresQI, Status: body.Status,
+		})
 	}
 }
 
@@ -331,22 +344,59 @@ func scanLineParam(db *pgxpool.Pool) fiber.Handler {
 			ItemCode   string  `json:"item_code"`
 			ExpQty     float64 `json:"expected_qty"`
 			ScanQty    float64 `json:"scanned_qty"`
+			DamagedQty float64 `json:"damaged_qty"`
 			Batch      string  `json:"batch_no"`
 			ExpiryDate string  `json:"expiry_date"`
+			Notes      string  `json:"notes"`
+			RequiresQI bool    `json:"requires_qi"`
+			Status     string  `json:"status"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		return doScanLine(c, db, cartonID, body.ItemCode, body.ExpQty, body.ScanQty, body.Batch, body.ExpiryDate)
+		return doScanLine(c, db, scanLineInput{
+			CartonID: cartonID, ItemCode: body.ItemCode,
+			ExpQty: body.ExpQty, ScanQty: body.ScanQty, DamagedQty: body.DamagedQty,
+			Batch: body.Batch, ExpiryDate: body.ExpiryDate, Notes: body.Notes,
+			RequiresQI: body.RequiresQI, Status: body.Status,
+		})
 	}
 }
 
-func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, cartonID int, itemCode string, expQty, scanQty float64, batch, expiryDate string) error {
+type scanLineInput struct {
+	CartonID   int
+	ItemCode   string
+	ExpQty     float64
+	ScanQty    float64
+	DamagedQty float64
+	Batch      string
+	ExpiryDate string
+	Notes      string
+	RequiresQI bool
+	Status     string
+}
+
+func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
+	itemCode := strings.TrimSpace(in.ItemCode)
 	if itemCode == "" {
 		return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 	}
-	if scanQty <= 0 {
-		scanQty = 1
+	if in.ScanQty <= 0 {
+		in.ScanQty = 1
+	}
+	if in.DamagedQty < 0 {
+		in.DamagedQty = 0
+	}
+	if in.DamagedQty > in.ScanQty {
+		return shared.Err(c, fiber.StatusBadRequest, "damaged_qty cannot exceed scanned_qty")
+	}
+
+	exists, complete, err := shared.ItemMasterComplete(c.Context(), db, itemCode)
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	if !exists || !complete {
+		return shared.Err(c, fiber.StatusConflict, "item master incomplete — complete required fields before receiving")
 	}
 
 	var maxPct float64
@@ -356,40 +406,62 @@ func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, cartonID int, itemCode string, e
 		JOIN grn_sessions gs ON gs.id = gc.grn_session_id
 		JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
 		JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND poi.item_code = $1
-		WHERE gc.id = $2 LIMIT 1`, itemCode, cartonID).Scan(&maxPct)
+		WHERE gc.id = $2 LIMIT 1`, itemCode, in.CartonID).Scan(&maxPct)
 
-	if maxPct > 0 && expQty > 0 {
-		over := (scanQty - expQty) / expQty * 100
+	if maxPct > 0 && in.ExpQty > 0 {
+		over := (in.ScanQty - in.ExpQty) / in.ExpQty * 100
 		if over > maxPct {
 			return shared.Err(c, fiber.StatusBadRequest,
 				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%%", over, maxPct))
 		}
 	}
 
-	status := "full_match"
-	switch {
-	case expQty > 0 && scanQty < expQty:
-		status = "shortage"
-	case expQty > 0 && scanQty > expQty:
-		status = "excess"
-	case expQty == 0:
+	status := strings.TrimSpace(in.Status)
+	if status == "" {
 		status = "full_match"
+		switch {
+		case in.DamagedQty > 0 && in.DamagedQty >= in.ScanQty:
+			status = "damage"
+		case in.DamagedQty > 0:
+			status = "damage"
+		case in.ExpQty > 0 && in.ScanQty < in.ExpQty:
+			status = "shortage"
+		case in.ExpQty > 0 && in.ScanQty > in.ExpQty:
+			status = "excess"
+		}
 	}
 
 	var expiry any
-	if expiryDate != "" {
-		expiry = expiryDate
+	if in.ExpiryDate != "" {
+		expiry = in.ExpiryDate
 	}
 
 	var id int
-	err := db.QueryRow(c.Context(),
-		`INSERT INTO grn_lines (grn_carton_id,item_code,expected_qty,scanned_qty,status,batch_no,expiry_date)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
-		cartonID, itemCode, expQty, scanQty, status, batch, expiry).Scan(&id)
+	err = db.QueryRow(c.Context(),
+		`INSERT INTO grn_lines (grn_carton_id,item_code,expected_qty,scanned_qty,damaged_qty,status,batch_no,expiry_date,notes,requires_qi)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
+		in.CartonID, itemCode, in.ExpQty, in.ScanQty, in.DamagedQty, status, in.Batch, expiry, nullStr(in.Notes), in.RequiresQI).Scan(&id)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
-	return shared.OK(c, fiber.Map{"id": id, "status": status, "scanned_qty": scanQty})
+
+	goodQty := in.ScanQty - in.DamagedQty
+	variance := 0.0
+	if in.ExpQty > 0 {
+		variance = in.ScanQty - in.ExpQty
+	}
+	return shared.OK(c, fiber.Map{
+		"id": id, "status": status, "scanned_qty": in.ScanQty,
+		"damaged_qty": in.DamagedQty, "good_qty": goodQty, "variance_qty": variance,
+		"expected_qty": in.ExpQty, "requires_qi": in.RequiresQI,
+	})
+}
+
+func nullStr(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }
 
 func closeSessionBody(db *pgxpool.Pool) fiber.Handler {
@@ -431,53 +503,146 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		return shared.Err(c, fiber.StatusBadRequest, "session already closed")
 	}
 
-	// Post every scanned line with qty > 0 (ERPNext receives actual qty, not only full_match).
+	wid, err := shared.ResolveWarehouseID(c.Context(), db, warehouseID)
+	if err != nil {
+		return shared.Err(c, fiber.StatusBadRequest, "no warehouse configured for GRN")
+	}
+
+	incomingID, incomingCode, err := shared.EnsureLocation(c.Context(), db, wid, "INCOMING-01", "incoming")
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, "incoming location: "+err.Error())
+	}
+	holdID, holdCode, err := shared.EnsureLocation(c.Context(), db, wid, "HOLD-01", "hold")
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, "hold location: "+err.Error())
+	}
+	dmgID, dmgCode, err := shared.EnsureLocation(c.Context(), db, wid, "DAMAGED-01", "damaged")
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, "damaged location: "+err.Error())
+	}
+
+	// Per-line posting so batch / damage / QI routing is preserved.
 	rows, err := db.Query(c.Context(), `
-		SELECT gl.item_code, SUM(gl.scanned_qty), MAX(gl.batch_no)
+		SELECT gl.id, gl.item_code, COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0),
+		       COALESCE(gl.damaged_qty,0), COALESCE(gl.batch_no,''), COALESCE(gl.requires_qi,false), gl.status
 		FROM grn_lines gl
 		JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
 		WHERE gc.grn_session_id = $1 AND COALESCE(gl.scanned_qty,0) > 0
-		GROUP BY gl.item_code`, sessionID)
+		ORDER BY gl.id`, sessionID)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
 	defer rows.Close()
 
 	type line struct {
-		itemCode string
-		qty      float64
-		batch    *string
+		id         int
+		itemCode   string
+		expected   float64
+		scanned    float64
+		damaged    float64
+		batch      string
+		requiresQI bool
+		status     string
 	}
 	var lines []line
 	for rows.Next() {
 		var l line
-		if err := rows.Scan(&l.itemCode, &l.qty, &l.batch); err != nil {
+		if err := rows.Scan(&l.id, &l.itemCode, &l.expected, &l.scanned, &l.damaged, &l.batch, &l.requiresQI, &l.status); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		lines = append(lines, l)
 	}
 
 	whCode := "MAIN"
-	if warehouseID != nil {
-		_ = db.QueryRow(c.Context(),
-			`SELECT code FROM warehouses WHERE id=$1`, *warehouseID).Scan(&whCode)
-	}
+	_ = db.QueryRow(c.Context(), `SELECT code FROM warehouses WHERE id=$1`, wid).Scan(&whCode)
 
 	voucherNo := fmt.Sprintf("GRN-%d", sessionID)
+	postedIncoming := 0
+	postedHold := 0
+	postedDamaged := 0
+	qiCreated := 0
+	variances := []fiber.Map{}
+
 	for _, l := range lines {
+		goodQty := l.scanned - l.damaged
+		if goodQty < 0 {
+			goodQty = 0
+		}
+
+		if l.expected > 0 && l.scanned != l.expected {
+			variances = append(variances, fiber.Map{
+				"item_code": l.itemCode, "expected_qty": l.expected,
+				"scanned_qty": l.scanned, "variance_qty": l.scanned - l.expected,
+				"status": l.status,
+			})
+		}
+
+		// Damaged → DAMAGED location (not sellable, not putaway queue for storage).
+		if l.damaged > 0 {
+			if err := shared.AdjustLocationQty(c.Context(), db, l.itemCode, wid, dmgID, l.batch, l.damaged); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			postedDamaged++
+		}
+
+		if goodQty > 0 {
+			targetID := incomingID
+			targetCode := incomingCode
+			if l.requiresQI || l.status == "damage" && goodQty > 0 && l.requiresQI {
+				targetID = holdID
+				targetCode = holdCode
+			}
+			if l.requiresQI {
+				targetID = holdID
+				targetCode = holdCode
+			}
+
+			if err := shared.AdjustLocationQty(c.Context(), db, l.itemCode, wid, targetID, l.batch, goodQty); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			if targetID == holdID {
+				postedHold++
+			} else {
+				postedIncoming++
+			}
+
+			if l.requiresQI {
+				var qiID int
+				var qiNo string
+				err = db.QueryRow(c.Context(), `
+					INSERT INTO quality_inspections (
+						inspection_no, reference_type, reference_name, item_code, sample_size, status,
+						warehouse_id, location_id, qty, grn_session_id, batch_no
+					) VALUES (
+						'QI-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('quality_inspections_id_seq')::TEXT,5,'0'),
+						'GRN', $1, $2, $3, 'pending', $4, $5, $3, $6, NULLIF($7,'')
+					) RETURNING id, inspection_no`,
+					voucherNo, l.itemCode, goodQty, wid, holdID, sessionID, l.batch,
+				).Scan(&qiID, &qiNo)
+				if err == nil {
+					qiCreated++
+				}
+				_ = targetCode
+			}
+		}
+
+		// Warehouse-level bin + SLE (legacy aggregate).
 		var qtyAfter float64
 		_ = db.QueryRow(c.Context(),
 			`SELECT COALESCE(actual_qty,0) FROM bins WHERE item_code=$1 AND warehouse=$2`,
 			l.itemCode, whCode).Scan(&qtyAfter)
-		qtyAfter += l.qty
+		qtyAfter += l.scanned
 
+		batchArg := any(nil)
+		if l.batch != "" {
+			batchArg = l.batch
+		}
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO stock_ledger_entries (item_code, warehouse, actual_qty, qty_after_transaction, voucher_type, voucher_no, posting_date, creation, batch_no)
 			VALUES ($1,$2,$3,$4,'GRN', $5, CURRENT_DATE, NOW(), $6)`,
-			l.itemCode, whCode, l.qty, qtyAfter, voucherNo, l.batch); err != nil {
+			l.itemCode, whCode, l.scanned, qtyAfter, voucherNo, batchArg); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO bins (item_code, warehouse, actual_qty, projected_qty, last_synced_at)
 			VALUES ($1,$2,$3,$3,NOW())
@@ -485,7 +650,7 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 			DO UPDATE SET actual_qty = bins.actual_qty + EXCLUDED.actual_qty,
 			              projected_qty = bins.projected_qty + EXCLUDED.actual_qty,
 			              last_synced_at = NOW()`,
-			l.itemCode, whCode, l.qty); err != nil {
+			l.itemCode, whCode, l.scanned); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 	}
@@ -499,12 +664,17 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 			`SELECT id, COALESCE(per_billed,0) FROM purchase_orders WHERE name=$1`, *poName).
 			Scan(&poID, &perBilled)
 		if err == nil {
+			// Aggregate received by item for PO update.
+			agg := map[string]float64{}
 			for _, l := range lines {
+				agg[l.itemCode] += l.scanned
+			}
+			for itemCode, qty := range agg {
 				if _, err := db.Exec(c.Context(), `
 					UPDATE purchase_order_items
 					SET received_qty = COALESCE(received_qty,0) + $1
 					WHERE purchase_order_id=$2 AND item_code=$3`,
-					l.qty, poID, l.itemCode); err != nil {
+					qty, poID, itemCode); err != nil {
 					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 				}
 			}
@@ -523,7 +693,6 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 				}
 			}
 
-			// ERPNext-compatible PO status (simplified, no billing docs yet).
 			newStatus := "To Receive and Bill"
 			switch {
 			case perReceived >= 100 && perBilled >= 100:
@@ -543,64 +712,121 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 			}
 
 			poUpdate = fiber.Map{
-				"po_name":       *poName,
-				"po_id":         poID,
-				"per_received":  perReceived,
-				"status":        newStatus,
-				"total_qty":     totalQty,
+				"po_name":        *poName,
+				"po_id":          poID,
+				"per_received":   perReceived,
+				"status":         newStatus,
+				"total_qty":      totalQty,
 				"total_received": totalRecv,
 			}
 		}
 	}
 
 	if _, err := db.Exec(c.Context(),
-		`UPDATE grn_sessions SET status='closed', closed_at=NOW() WHERE id=$1`, sessionID); err != nil {
+		`UPDATE grn_sessions SET status='closed', closed_at=NOW(), warehouse_id=COALESCE(warehouse_id,$2) WHERE id=$1`,
+		sessionID, wid); err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
 
 	return shared.OK(c, fiber.Map{
-		"id":           sessionID,
-		"status":       "closed",
-		"items_posted": len(lines),
-		"sle_count":    len(lines),
-		"po":           poUpdate,
+		"id":              sessionID,
+		"status":          "closed",
+		"items_posted":    len(lines),
+		"sle_count":       len(lines),
+		"posted_incoming": postedIncoming,
+		"posted_hold":     postedHold,
+		"posted_damaged":  postedDamaged,
+		"qi_created":      qiCreated,
+		"variances":       variances,
+		"incoming_location": incomingCode,
+		"hold_location":     holdCode,
+		"damaged_location":  dmgCode,
+		"warehouse_id":      wid,
+		"po":                poUpdate,
+		"putaway_ready":     postedIncoming > 0,
 	})
 }
 
-// putawayAlias lets the GRN page call POST /grn/putaway with the same body as /putaway/.
+// putawayAlias lets the GRN page call POST /grn/putaway — delegates to location-aware putaway.
 func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			ItemCode        string  `json:"item_code"`
-			SourceWarehouse string  `json:"source_warehouse"`
-			TargetLocation  string  `json:"target_location"`
-			Quantity        float64 `json:"quantity"`
-			BatchNo         string  `json:"batch_no"`
+			ItemCode         string  `json:"item_code"`
+			SourceWarehouse  string  `json:"source_warehouse"`
+			SourceLocation   string  `json:"source_location"`
+			TargetLocation   string  `json:"target_location"`
+			TargetLocationID int     `json:"target_location_id"`
+			WarehouseID      int     `json:"warehouse_id"`
+			Quantity         float64 `json:"quantity"`
+			BatchNo          string  `json:"batch_no"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		if body.ItemCode == "" || body.TargetLocation == "" {
+		if body.ItemCode == "" || (body.TargetLocation == "" && body.TargetLocationID == 0) {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code and target_location required")
+		}
+		if body.Quantity <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "quantity must be > 0")
+		}
+
+		exists, complete, err := shared.ItemMasterComplete(c.Context(), db, body.ItemCode)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if !exists || !complete {
+			return shared.Err(c, fiber.StatusConflict, "item master incomplete")
+		}
+
+		var targetID, warehouseID int
+		var targetCode string
+		if body.TargetLocationID > 0 {
+			err = db.QueryRow(c.Context(), `
+				SELECT id, code, warehouse_id FROM warehouse_locations
+				WHERE id=$1 AND COALESCE(disabled,false)=false`, body.TargetLocationID).
+				Scan(&targetID, &targetCode, &warehouseID)
+		} else {
+			err = db.QueryRow(c.Context(), `
+				SELECT id, code, warehouse_id FROM warehouse_locations
+				WHERE code=$1 AND COALESCE(disabled,false)=false
+				  AND ($2=0 OR warehouse_id=$2)
+				ORDER BY id LIMIT 1`, body.TargetLocation, body.WarehouseID).
+				Scan(&targetID, &targetCode, &warehouseID)
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "target location not found")
+		}
+
+		srcCode := body.SourceLocation
+		if srcCode == "" {
+			srcCode = "INCOMING-01"
+		}
+		var sourceID int
+		_ = db.QueryRow(c.Context(), `
+			SELECT id FROM warehouse_locations WHERE code=$1 AND warehouse_id=$2`,
+			srcCode, warehouseID).Scan(&sourceID)
+		if sourceID > 0 {
+			_ = shared.AdjustLocationQty(c.Context(), db, body.ItemCode, warehouseID, sourceID, body.BatchNo, -body.Quantity)
+		}
+		if err := shared.AdjustLocationQty(c.Context(), db, body.ItemCode, warehouseID, targetID, body.BatchNo, body.Quantity); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
 		var id int
 		var logNo string
-		err := db.QueryRow(c.Context(),
+		err = db.QueryRow(c.Context(),
 			`INSERT INTO putaway_logs (log_no,item_code,batch_no,source_warehouse,target_location,quantity,placed_at,placed_by)
 			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,$5,NOW(),$6)
 			 RETURNING id, log_no`,
-			body.ItemCode, body.BatchNo, body.SourceWarehouse, body.TargetLocation, body.Quantity, userID(c)).
+			body.ItemCode, nullStr(body.BatchNo), body.SourceWarehouse, targetCode, body.Quantity, userID(c)).
 			Scan(&id, &logNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{
-			"id":              id,
-			"log_no":          logNo,
-			"item_code":       body.ItemCode,
-			"quantity":        body.Quantity,
-			"target_location": body.TargetLocation,
+			"id": id, "log_no": logNo, "item_code": body.ItemCode,
+			"quantity": body.Quantity, "target_location": targetCode,
+			"target_location_id": targetID, "warehouse_id": warehouseID,
 		})
 	}
 }
