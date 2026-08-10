@@ -107,6 +107,17 @@ export default function GRN() {
 
   const addLine = async () => {
     if (!item) return
+
+    const check = await api.itemCheck(item)
+    if (check.ok && (!check.data.exists || !check.data.master_complete)) {
+      notify({
+        type: 'warning',
+        title: 'Complete item master first',
+        message: `${item} is new or incomplete — open Items and save pack/control details, then rescan.`,
+      })
+      return
+    }
+
     let cartonId = session.cartons?.[0]?.id
     if (!cartonId) {
       const auto = await api.grnScanCarton({

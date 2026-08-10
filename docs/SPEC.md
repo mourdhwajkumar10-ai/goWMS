@@ -229,14 +229,15 @@ Respect: `allow_mixed_items`, `max_capacity_qty`, location disabled, hold/damage
 
 ## 6. Phased build plan
 
-### Phase A — Foundation (build first)
+### Phase A — Foundation (build first) ✅ in progress / implemented in code
 
 1. Extend `items`: `pack_type`, `control_mode`, `home_location_id`; validation helpers.  
 2. Harden `warehouse_locations`: shelf/level naming, generated `location_code`, capacity, mixed flag, location_type.  
 3. API + UI: warehouse detail → CRUD/bulk locations.  
 4. Introduce `stock_location_balances` (+ migration from warehouse-level bins if needed).  
 5. Items screen: location breakdown. Locations screen: inventory contents.  
-6. Item master completeness gate on GRN unknown SKU.
+6. Item master completeness gate on GRN unknown SKU / putaway.  
+7. Putaway suggest + confirm updates location balances.
 
 ### Phase B — Guided inbound & putaway
 

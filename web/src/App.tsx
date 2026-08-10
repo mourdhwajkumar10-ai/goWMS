@@ -12,6 +12,7 @@ import Workflow from "./pages/Workflow";
 import Reports from "./pages/Reports";
 import Analytics from "./pages/Analytics";
 import Items from "./pages/Items";
+import Locations from "./pages/Locations";
 import Warehouses from "./pages/Warehouses";
 import Customers from "./pages/Customers";
 import Suppliers from "./pages/Suppliers";
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="workflow" element={<Workflow />} />
         <Route path="reports" element={<Reports />} />
         <Route path="items" element={<Items />} />
+        <Route path="locations" element={<Locations />} />
         <Route path="warehouses" element={<Warehouses />} />
         <Route path="customers" element={<Customers />} />
         <Route path="suppliers" element={<Suppliers />} />

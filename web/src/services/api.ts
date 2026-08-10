@@ -48,6 +48,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 const get = <T>(path: string) => request<T>("GET", path);
 const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body);
 const put = <T>(path: string, body?: unknown) => request<T>("PUT", path, body);
+const patch = <T>(path: string, body?: unknown) => request<T>("PATCH", path, body);
 const del = <T>(path: string) => request<T>("DELETE", path);
 
 export const api = {
@@ -68,6 +69,10 @@ export const api = {
   // Items
   itemList: (q?: string) => get<any[]>(`/masterdata/items${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
+  itemComplete: (data: any) => post<any>("/masterdata/items/complete", data),
+  itemCheck: (code: string) => get<any>(`/masterdata/items/check/${encodeURIComponent(code)}`),
+  itemInventory: (code: string) => get<any[]>(`/masterdata/items/${encodeURIComponent(code)}/inventory`),
+  stockAdjust: (data: any) => post<any>("/masterdata/stock/adjust", data),
 
   // PO
   poList: () => get<any[]>("/po/list"),
@@ -108,6 +113,9 @@ export const api = {
   // Putaway
   putawayRules: () => get<any[]>("/putaway/rules"),
   putawayCreate: (data: any) => post<any>("/putaway/", data),
+  putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number) =>
+    get<any>(`/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}${warehouseId ? `&warehouse_id=${warehouseId}` : ''}`),
+  putawayQueue: () => get<any[]>("/putaway/queue"),
 
   // Cycle Count
   cycleCountSheets: () => get<any[]>("/cyclecount/sheets"),
@@ -132,6 +140,11 @@ export const api = {
   // Warehouses
   warehouseList: () => get<any[]>("/masterdata/warehouses"),
   warehouseCreate: (data: any) => post<any>("/masterdata/warehouses", data),
+  warehouseLocations: (id: number) => get<any[]>(`/masterdata/warehouses/${id}/locations`),
+  locationCreate: (warehouseId: number, data: any) => post<any>(`/masterdata/warehouses/${warehouseId}/locations`, data),
+  locationBulk: (warehouseId: number, data: any) => post<any>(`/masterdata/warehouses/${warehouseId}/locations/bulk`, data),
+  locationInventory: (id: number) => get<any[]>(`/masterdata/locations/${id}/inventory`),
+  locationUpdate: (id: number, data: any) => patch<any>(`/masterdata/locations/${id}`, data),
 
   // Batches
   batchList: () => get<any[]>("/masterdata/batches"),

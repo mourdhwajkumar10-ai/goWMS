@@ -46,6 +46,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
     items: [
       { to: "/items", label: "Item", icon: "◱" },
       { to: "/warehouses", label: "Warehouse", icon: "▦" },
+      { to: "/locations", label: "Locations", icon: "▤" },
       { to: "/workflow", label: "Workflow", icon: "↯" },
       { to: "/reports", label: "Reports", icon: "▤" },
     ],
