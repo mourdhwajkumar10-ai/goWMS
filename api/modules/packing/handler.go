@@ -1,28 +1,32 @@
 package packing
 
 import (
-	"fmt"
 	"strconv"
 	"time"
 
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Register wires the packing routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/", listBoxes(db))
+	r.Get("/sessions", listBoxes(db)) // frontend alias
 	r.Post("/", createBox(db))
+	r.Get("/:id", getBox(db))
 	r.Post("/:id/item", packItem(db))
 	r.Post("/:id/reverse", reverseItem(db))
+	r.Post("/:id/load", markLoaded(db)) // consume reserved stock
 }
 
 func listBoxes(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT b.id, b.label, b.pick_list_id, b.loaded, b.created_at,
+			SELECT b.id, b.label, b.pick_list_id, b.delivery_note, b.loaded, b.created_at,
+			       COALESCE(b.stock_consumed,false),
 			       COALESCE((SELECT SUM(quantity) FROM box_items bi WHERE bi.box_id = b.id),0) AS total_items
 			FROM boxes b ORDER BY b.created_at DESC LIMIT 100`)
 		if err != nil {
@@ -31,17 +35,20 @@ func listBoxes(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type box struct {
-			ID         int       `json:"id"`
-			Label      string    `json:"label"`
-			PickListID *int      `json:"pick_list_id"`
-			Loaded     bool      `json:"loaded"`
-			CreatedAt  time.Time `json:"created_at"`
-			TotalItems float64   `json:"total_items"`
+			ID            int       `json:"id"`
+			Label         string    `json:"label"`
+			PickListID    *int      `json:"pick_list_id"`
+			DeliveryNote  *string   `json:"delivery_note"`
+			Loaded        bool      `json:"loaded"`
+			CreatedAt     time.Time `json:"created_at"`
+			StockConsumed bool      `json:"stock_consumed"`
+			TotalItems    float64   `json:"total_items"`
 		}
 		var list []box
 		for rows.Next() {
 			var b box
-			if err := rows.Scan(&b.ID, &b.Label, &b.PickListID, &b.Loaded, &b.CreatedAt, &b.TotalItems); err != nil {
+			if err := rows.Scan(&b.ID, &b.Label, &b.PickListID, &b.DeliveryNote, &b.Loaded, &b.CreatedAt,
+				&b.StockConsumed, &b.TotalItems); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, b)
@@ -53,8 +60,9 @@ func listBoxes(db *pgxpool.Pool) fiber.Handler {
 func createBox(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			Label      string `json:"label"`
-			PickListID int    `json:"pick_list_id"`
+			Label        string `json:"label"`
+			PickListID   int    `json:"pick_list_id"`
+			DeliveryNote string `json:"delivery_note"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -63,20 +71,80 @@ func createBox(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "label required")
 		}
 
-		// pick_list_id is nullable — 0 becomes NULL.
 		var pickListID any
 		if body.PickListID != 0 {
 			pickListID = body.PickListID
 		}
+		var dn any
+		if body.DeliveryNote != "" {
+			dn = body.DeliveryNote
+		}
 
 		var id int
 		err := db.QueryRow(c.Context(),
-			`INSERT INTO boxes (label, pick_list_id) VALUES ($1,$2) RETURNING id`,
-			body.Label, pickListID).Scan(&id)
+			`INSERT INTO boxes (label, pick_list_id, delivery_note) VALUES ($1,$2,$3) RETURNING id`,
+			body.Label, pickListID, dn).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "label": body.Label})
+	}
+}
+
+func getBox(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		boxID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid box id")
+		}
+		var (
+			label         string
+			pickListID    *int
+			deliveryNote  *string
+			loaded        bool
+			stockConsumed bool
+			createdAt     time.Time
+		)
+		err = db.QueryRow(c.Context(), `
+			SELECT label, pick_list_id, delivery_note, COALESCE(loaded,false),
+			       COALESCE(stock_consumed,false), created_at
+			FROM boxes WHERE id=$1`, boxID).
+			Scan(&label, &pickListID, &deliveryNote, &loaded, &stockConsumed, &createdAt)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "box not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		rows, err := db.Query(c.Context(), `
+			SELECT id, item_code, COALESCE(quantity,0), batch_no
+			FROM box_items WHERE box_id=$1 ORDER BY id`, boxID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type item struct {
+			ID       int     `json:"id"`
+			ItemCode string  `json:"item_code"`
+			Quantity float64 `json:"quantity"`
+			BatchNo  *string `json:"batch_no"`
+		}
+		var items []item
+		for rows.Next() {
+			var it item
+			if err := rows.Scan(&it.ID, &it.ItemCode, &it.Quantity, &it.BatchNo); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			items = append(items, it)
+		}
+
+		return shared.OK(c, fiber.Map{
+			"id": boxID, "label": label, "pick_list_id": pickListID,
+			"delivery_note": deliveryNote, "loaded": loaded,
+			"stock_consumed": stockConsumed, "created_at": createdAt, "items": items,
+		})
 	}
 }
 
@@ -99,10 +167,16 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code and quantity > 0 required")
 		}
 
+		var batch any
+		if body.BatchNo != "" {
+			batch = body.BatchNo
+		}
+
 		var id int
 		err = db.QueryRow(c.Context(),
-			`INSERT INTO box_items (box_id,item_code,quantity,batch_no,scanned_by) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-			boxID, body.ItemCode, body.Quantity, body.BatchNo, userID(c)).Scan(&id)
+			`INSERT INTO box_items (box_id,item_code,quantity,batch_no,scanned_by,scanned_at)
+			 VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id`,
+			boxID, body.ItemCode, body.Quantity, batch, userID(c)).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -155,11 +229,61 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func markLoaded(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		boxID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid box id")
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var pickListID *int
+		var stockConsumed bool
+		err = tx.QueryRow(c.Context(), `
+			SELECT pick_list_id, COALESCE(stock_consumed,false) FROM boxes WHERE id=$1 FOR UPDATE`, boxID).
+			Scan(&pickListID, &stockConsumed)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "box not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if !stockConsumed && pickListID != nil && *pickListID > 0 {
+			var plConsumed bool
+			_ = tx.QueryRow(c.Context(), `
+				SELECT COALESCE(stock_consumed,false) FROM pick_lists WHERE id=$1 FOR UPDATE`, *pickListID).
+				Scan(&plConsumed)
+			if !plConsumed {
+				if err := shared.ConsumePickListStock(c.Context(), tx, *pickListID); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+			}
+			_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, boxID)
+		} else if !stockConsumed {
+			_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, boxID)
+		}
+
+		if _, err := tx.Exec(c.Context(),
+			`UPDATE boxes SET loaded=true, loaded_at=NOW() WHERE id=$1`, boxID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if err := tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"box_id": boxID, "loaded": true, "stock_consumed": true})
+	}
+}
+
 func userID(c *fiber.Ctx) int {
 	if v, ok := c.Locals("user_id").(int); ok {
 		return v
 	}
 	return 0
 }
-
-var _ = fmt.Sprintf

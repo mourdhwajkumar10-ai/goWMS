@@ -7,28 +7,29 @@ import (
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Register wires the dispatch routes. Route shapes match the frontend bundle:
-//   - POST /trip            -> create delivery trip
-//   - GET  /trips           -> list delivery trips
-//   - POST /trip/:id/load   -> load a box onto a trip (trip id in path)
-//   - POST /load            -> load a box (trip id in body)
-//   - POST /signature       -> capture a delivery signature
+// Register wires the dispatch routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
+	r.Post("/", createTrip(db)) // frontend alias
 	r.Post("/trip", createTrip(db))
 	r.Get("/trips", listTrips(db))
+	r.Get("/trip/:id", getTrip(db))
 	r.Post("/trip/:id/load", loadBox(db))
 	r.Post("/load", loadBox(db))
+	r.Post("/trip/:id/start", startTrip(db))
+	r.Post("/trip/:id/complete", completeTrip(db))
 	r.Post("/signature", captureSignature(db))
 }
 
 func createTrip(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			DriverID  *int   `json:"driver_id"`
-			VehicleNo string `json:"vehicle_no"`
+			DriverID   *int   `json:"driver_id"`
+			DriverName string `json:"driver_name"`
+			VehicleNo  string `json:"vehicle_no"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -37,21 +38,28 @@ func createTrip(db *pgxpool.Pool) fiber.Handler {
 		var id int
 		var tripNo string
 		err := db.QueryRow(c.Context(),
-			`INSERT INTO delivery_trips (trip_no,driver_id,vehicle_no)
-			 VALUES ('DT-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('delivery_trips_id_seq')::TEXT,5,'0'),$1,$2)
+			`INSERT INTO delivery_trips (trip_no,driver_id,vehicle_no,driver_name,status)
+			 VALUES ('DT-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('delivery_trips_id_seq')::TEXT,5,'0'),$1,$2,$3,'scheduled')
 			 RETURNING id, trip_no`,
-			body.DriverID, body.VehicleNo).Scan(&id, &tripNo)
+			body.DriverID, body.VehicleNo, nullEmpty(body.DriverName)).Scan(&id, &tripNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "trip_no": tripNo, "status": "draft"})
+		return shared.OK(c, fiber.Map{"id": id, "trip_no": tripNo, "status": "scheduled"})
 	}
+}
+
+func nullEmpty(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func listTrips(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT id, trip_no, vehicle_no, driver_id, status, created_at
+			SELECT id, trip_no, vehicle_no, driver_id, driver_name, status, departure_time, created_at
 			FROM delivery_trips ORDER BY created_at DESC LIMIT 50`)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -59,17 +67,20 @@ func listTrips(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type trip struct {
-			ID        int        `json:"id"`
-			TripNo    string     `json:"trip_no"`
-			VehicleNo *string    `json:"vehicle_no"`
-			DriverID  *int       `json:"driver_id"`
-			Status    string     `json:"status"`
-			CreatedAt *time.Time `json:"created_at"`
+			ID            int        `json:"id"`
+			TripNo        string     `json:"trip_no"`
+			VehicleNo     *string    `json:"vehicle_no"`
+			DriverID      *int       `json:"driver_id"`
+			DriverName    *string    `json:"driver_name"`
+			Status        string     `json:"status"`
+			DepartureTime *time.Time `json:"departure_time"`
+			CreatedAt     *time.Time `json:"created_at"`
 		}
 		var list []trip
 		for rows.Next() {
 			var t trip
-			if err := rows.Scan(&t.ID, &t.TripNo, &t.VehicleNo, &t.DriverID, &t.Status, &t.CreatedAt); err != nil {
+			if err := rows.Scan(&t.ID, &t.TripNo, &t.VehicleNo, &t.DriverID, &t.DriverName,
+				&t.Status, &t.DepartureTime, &t.CreatedAt); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, t)
@@ -78,9 +89,97 @@ func listTrips(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func getTrip(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+
+		var t struct {
+			ID            int
+			TripNo        string
+			VehicleNo     *string
+			DriverID      *int
+			DriverName    *string
+			Status        string
+			DepartureTime *time.Time
+			CreatedAt     *time.Time
+		}
+		err = db.QueryRow(c.Context(), `
+			SELECT id, trip_no, vehicle_no, driver_id, driver_name, status, departure_time, created_at
+			FROM delivery_trips WHERE id=$1`, id).
+			Scan(&t.ID, &t.TripNo, &t.VehicleNo, &t.DriverID, &t.DriverName, &t.Status, &t.DepartureTime, &t.CreatedAt)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "trip not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		stopRows, err := db.Query(c.Context(), `
+			SELECT id, delivery_note_no, customer, address, stop_order, visited
+			FROM delivery_stops WHERE trip_id=$1 ORDER BY stop_order, id`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer stopRows.Close()
+
+		type stop struct {
+			ID             int     `json:"id"`
+			DeliveryNoteNo *string `json:"delivery_note_no"`
+			Customer       *string `json:"customer"`
+			Address        *string `json:"address"`
+			StopOrder      *int    `json:"stop_order"`
+			Visited        bool    `json:"visited"`
+		}
+		var stops []stop
+		for stopRows.Next() {
+			var s stop
+			if err := stopRows.Scan(&s.ID, &s.DeliveryNoteNo, &s.Customer, &s.Address, &s.StopOrder, &s.Visited); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			stops = append(stops, s)
+		}
+
+		boxRows, err := db.Query(c.Context(), `
+			SELECT b.id, b.label, b.pick_list_id, b.loaded, COALESCE(b.stock_consumed,false)
+			FROM box_load_logs bl
+			JOIN boxes b ON b.id = bl.box_id
+			WHERE bl.trip_id=$1
+			ORDER BY bl.id`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer boxRows.Close()
+
+		type box struct {
+			ID            int    `json:"id"`
+			Label         string `json:"label"`
+			PickListID    *int   `json:"pick_list_id"`
+			Loaded        bool   `json:"loaded"`
+			StockConsumed bool   `json:"stock_consumed"`
+		}
+		var boxes []box
+		for boxRows.Next() {
+			var b box
+			if err := boxRows.Scan(&b.ID, &b.Label, &b.PickListID, &b.Loaded, &b.StockConsumed); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			boxes = append(boxes, b)
+		}
+
+		return shared.OK(c, fiber.Map{
+			"id": t.ID, "trip_no": t.TripNo, "vehicle_no": t.VehicleNo,
+			"driver_id": t.DriverID, "driver_name": t.DriverName, "status": t.Status,
+			"departure_time": t.DepartureTime, "created_at": t.CreatedAt,
+			"stops": stops, "boxes": boxes,
+		})
+	}
+}
+
 func loadBox(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Trip id may come from the path (/trip/:id/load) or the body.
 		tripID, err := strconv.Atoi(c.Params("id"))
 		if err != nil {
 			tripID = 0
@@ -103,24 +202,94 @@ func loadBox(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "trip_id required")
 		}
 
-		var label string
-		err = db.QueryRow(c.Context(),
-			`SELECT label FROM boxes WHERE id=$1`, body.BoxID).Scan(&label)
+		tx, err := db.Begin(c.Context())
 		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var label string
+		var pickListID *int
+		var stockConsumed bool
+		err = tx.QueryRow(c.Context(),
+			`SELECT label, pick_list_id, COALESCE(stock_consumed,false) FROM boxes WHERE id=$1 FOR UPDATE`,
+			body.BoxID).Scan(&label, &pickListID, &stockConsumed)
+		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "box not found")
 		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 
-		if _, err := db.Exec(c.Context(),
+		// Consume reserved location stock on first load (pack or dispatch).
+		if !stockConsumed && pickListID != nil && *pickListID > 0 {
+			var plConsumed bool
+			_ = tx.QueryRow(c.Context(), `
+				SELECT COALESCE(stock_consumed,false) FROM pick_lists WHERE id=$1 FOR UPDATE`, *pickListID).
+				Scan(&plConsumed)
+			if !plConsumed {
+				if err := shared.ConsumePickListStock(c.Context(), tx, *pickListID); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+			}
+			_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, body.BoxID)
+		}
+
+		if _, err := tx.Exec(c.Context(),
 			`INSERT INTO box_load_logs (box_id,trip_id,loaded_by) VALUES ($1,$2,$3)`,
 			body.BoxID, tripID, userID(c)); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		if _, err := db.Exec(c.Context(),
+		if _, err := tx.Exec(c.Context(),
 			`UPDATE boxes SET loaded=true, loaded_at=NOW() WHERE id=$1`, body.BoxID); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		return shared.OK(c, fiber.Map{"box_id": body.BoxID, "trip_id": tripID, "loaded": true})
+		if err := tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		return shared.OK(c, fiber.Map{
+			"box_id": body.BoxID, "trip_id": tripID, "loaded": true,
+			"label": label, "stock_consumed": true,
+		})
+	}
+}
+
+func startTrip(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE delivery_trips SET status='in_transit', departure_time=NOW()
+			WHERE id=$1 AND status IN ('draft','scheduled')`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "trip cannot be started")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "status": "in_transit"})
+	}
+}
+
+func completeTrip(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE delivery_trips SET status='completed' WHERE id=$1 AND status IN ('in_transit','scheduled')`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "trip cannot be completed")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "status": "completed"})
 	}
 }
 

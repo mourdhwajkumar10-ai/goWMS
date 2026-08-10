@@ -61,11 +61,19 @@ export default function Dispatch() {
 
   const loadBox = async () => {
     if (!loadBoxId || !selectedTrip) return
-    const r = await api.post(`/dispatch/trip/${selectedTrip.id}/load`, { box_id: +loadBoxId })
+    const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { box_id: +loadBoxId })
     if (r.ok) {
-      notify({ type: 'success', title: 'Box Loaded', message: `Box ${loadBoxId} loaded` })
+      notify({
+        type: 'success',
+        title: 'Box Loaded',
+        message: r.data?.stock_consumed
+          ? `Box ${loadBoxId} loaded — reserved stock consumed`
+          : `Box ${loadBoxId} loaded`,
+      })
       setLoadBoxId('')
       openTrip(selectedTrip.id)
+    } else {
+      notify({ type: 'error', title: 'Load failed', message: r.error || 'Could not load box' })
     }
   }
 

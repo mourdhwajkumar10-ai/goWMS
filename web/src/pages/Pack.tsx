@@ -77,10 +77,16 @@ export default function Pack() {
   }
 
   const markLoaded = async (id: number) => {
-    const r = await api.post(`/packing/${id}/load`, {})
+    const r = await api.post<{ stock_consumed?: boolean }>(`/packing/${id}/load`, {})
     if (r.ok) {
-      notify({ type: 'success', title: 'Box Loaded', message: 'Marked as loaded' })
+      notify({
+        type: 'success',
+        title: 'Box Loaded',
+        message: r.data?.stock_consumed ? 'Loaded — reserved location stock consumed' : 'Marked as loaded',
+      })
       loadBoxes()
+    } else {
+      notify({ type: 'error', title: 'Load failed', message: r.error || 'Could not load box' })
     }
   }
 

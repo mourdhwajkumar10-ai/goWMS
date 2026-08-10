@@ -93,15 +93,22 @@ export const api = {
 
   // Picking
   pickLists: () => get<any[]>("/picking/lists"),
+  pickCreate: (data: any) => post<any>("/picking/", data),
+  pickGet: (id: number) => get<any>(`/picking/${id}`),
   pickScan: (data: any) => post<any>("/picking/scan", data),
 
   // Packing
   packSessions: () => get<any[]>("/packing/sessions"),
   packCreate: (data: any) => post<any>("/packing/", data),
+  packGet: (id: number) => get<any>(`/packing/${id}`),
+  packLoad: (id: number) => post<any>(`/packing/${id}/load`, {}),
 
   // Dispatch
   dispatchTrips: () => get<any[]>("/dispatch/trips"),
   dispatchCreate: (data: any) => post<any>("/dispatch/", data),
+  dispatchTrip: (id: number) => get<any>(`/dispatch/trip/${id}`),
+  dispatchLoad: (tripId: number, boxId: number) =>
+    post<any>(`/dispatch/trip/${tripId}/load`, { box_id: boxId }),
 
   // Quality
   qiList: () => get<any[]>("/qi/list"),

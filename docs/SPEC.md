@@ -253,10 +253,11 @@ Respect: `allow_mixed_items`, `max_capacity_qty`, location disabled, hold/damage
 3. Cycle count by location/zone (auto-fill bins, apply adjustments on close).  
 4. Inter-warehouse transfer ship/receive (`/inventory/transfers`).
 
-### Phase D — Outbound alignment (after A–B stable)
+### Phase D — Outbound alignment ✅ implemented
 
-1. Pick path uses location balances + FEFO + allocation reserve.  
-2. Pack/dispatch unchanged conceptually but consume reserved qty.
+1. Pick create allocates from `stock_location_balances` (storage/pick_face) FEFO, splits lines across bins, bumps `reserved_qty`.  
+2. Pick scan confirms against suggested location (drift flagged); stock stays reserved.  
+3. Pack `/:id/load` or dispatch trip load consumes reserved (actual + reserved ↓); unused reserve released; idempotent via `stock_consumed`.
 
 ---
 
@@ -276,6 +277,12 @@ Respect: `allow_mixed_items`, `max_capacity_qty`, location disabled, hold/damage
 | GET | `/api/putaway/suggest` | `?item_code=&qty=&warehouse_id=` |
 | POST | `/api/putaway/` | Confirm putaway (existing, extend to update balances) |
 | POST | `/api/grn/...` | Existing; ensure hold/incoming posting |
+| POST | `/api/picking/` | Create pick list + FEFO allocate/reserve |
+| GET | `/api/picking/lists` | List pick lists |
+| GET | `/api/picking/:id` | Pick list detail with suggested bins |
+| POST | `/api/picking/scan` | Confirm pick scan (reserve held) |
+| POST | `/api/packing/:id/load` | Mark box loaded; consume reserved stock |
+| POST | `/api/dispatch/trip/:id/load` | Load box on trip; consume if not yet |
 
 ---
 
