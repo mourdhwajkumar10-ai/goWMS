@@ -2,6 +2,10 @@
 
 Warehouse Management System — Go/Fiber backend + React/Vite frontend + PostgreSQL.
 
+> **Product / build spec:** see [`docs/SPEC.md`](./docs/SPEC.md) — have vs need,
+> domain model (warehouses → locations, item controls, stock-by-location),
+> putaway rules, and phased build plan for distributor inbound + inventory.
+
 > **Recovery note:** The original `goWMS` source was lost and has been rebuilt
 > from the compiled binary, the live API, the frontend bundle, and a schema
 > dump. The API contract and database schema are exact; internal
