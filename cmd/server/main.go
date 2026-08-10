@@ -21,6 +21,7 @@ import (
 	"goWMS/api/modules/cyclecount"
 	"goWMS/api/modules/dispatch"
 	"goWMS/api/modules/grn"
+	"goWMS/api/modules/inventory"
 	"goWMS/api/modules/masterdata"
 	"goWMS/api/modules/notifications"
 	"goWMS/api/modules/packing"
@@ -85,8 +86,10 @@ func main() {
 	billing.Register(api.Group("/billing"), pool)
 	customer.Register(api.Group("/customer"), pool)
 	cyclecount.Register(api.Group("/cycle-count"), pool)
+	cyclecount.Register(api.Group("/cyclecount"), pool) // frontend alias
 	dispatch.Register(api.Group("/dispatch"), pool)
 	grn.Register(api.Group("/grn"), pool)
+	inventory.Register(api.Group("/inventory"), pool)
 	notifications.Register(api.Group("/notifications"), pool)
 	packing.Register(api.Group("/packing"), pool)
 	picking.Register(api.Group("/picking"), pool)

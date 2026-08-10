@@ -246,12 +246,12 @@ Respect: `allow_mixed_items`, `max_capacity_qty`, location disabled, hold/damage
 3. QI optional step into hold; accept → Incoming, reject → Damaged.  
 4. Expected qty vs scan variances UX + damage qty + complete-master modal.
 
-### Phase C — Inventory health
+### Phase C — Inventory health ✅ implemented
 
-1. Min/max & reorder notifications.  
-2. Expiry / FEFO warnings on item & location views.  
-3. Cycle count by location/zone.  
-4. Inter-warehouse transfer (ship/receive).
+1. Min/max & reorder notifications (`/inventory/reorder-alerts`, refresh → notifications).  
+2. Expiry / FEFO warnings on item & location views + `/inventory/expiry-alerts`.  
+3. Cycle count by location/zone (auto-fill bins, apply adjustments on close).  
+4. Inter-warehouse transfer ship/receive (`/inventory/transfers`).
 
 ### Phase D — Outbound alignment (after A–B stable)
 

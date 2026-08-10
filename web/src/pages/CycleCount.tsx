@@ -31,27 +31,33 @@ export default function CycleCount() {
   const [tier, setTier] = useState('A')
   const [scheduledDate, setScheduledDate] = useState('')
   const [warehouse, setWarehouse] = useState('')
+  const [aisle, setAisle] = useState('')
+  const [warehouses, setWarehouses] = useState<any[]>([])
+  const [autoGen, setAutoGen] = useState(true)
 
   const [addItemCode, setAddItemCode] = useState('')
   const [addSystemQty, setAddSystemQty] = useState('')
 
-  const [countLineId, setCountLineId] = useState('')
-  const [countedQty, setCountedQty] = useState('')
-
   const loadSheets = () => api.cycleCountSheets().then(r => { if (r.ok) setSheets(r.data ?? []) })
-  useEffect(() => { loadSheets() }, [])
+  useEffect(() => {
+    loadSheets()
+    api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
+  }, [])
 
   const createSheet = async () => {
     const r = await api.cycleCountCreate({
       tier,
       scheduled_date: scheduledDate || undefined,
       warehouse_id: warehouse ? +warehouse : undefined,
+      aisle: aisle || undefined,
+      auto_generate: autoGen && !!warehouse,
     })
     if (r.ok) {
-      setMsg(`Sheet ${r.data.sheet_no} created`)
-      setTier('A'); setScheduledDate(''); setWarehouse('')
+      setMsg(`Sheet ${r.data.sheet_no} created${r.data.lines_generated ? ` · ${r.data.lines_generated} bins` : ''}`)
+      setTier('A'); setScheduledDate(''); setAisle('')
       loadSheets()
       notify({ type: 'success', title: 'Sheet Created', message: r.data.sheet_no })
+      if (r.data.id) openSheet(r.data.id)
     }
   }
 
@@ -88,9 +94,14 @@ export default function CycleCount() {
 
   const completeSheet = async () => {
     if (!selectedSheet) return
-    const r = await api.post(`/cyclecount/${selectedSheet.id}/complete`, {})
+    const apply = window.confirm('Apply qty adjustments to location stock for discrepancies?')
+    const r = await api.post<{ adjustments_applied?: number }>(`/cyclecount/${selectedSheet.id}/complete`, { apply_adjustments: apply })
     if (r.ok) {
-      notify({ type: 'success', title: 'Sheet Completed', message: 'Cycle count finished' })
+      notify({
+        type: 'success',
+        title: 'Sheet Completed',
+        message: apply ? `${r.data?.adjustments_applied || 0} adjustments applied` : 'Closed without adjustments',
+      })
       setSelectedSheet(null)
       loadSheets()
     }
@@ -134,10 +145,21 @@ export default function CycleCount() {
                 </div>
                 <div>
                   <label className="erpnext-label">Warehouse</label>
-                  <input className="erpnext-input" value={warehouse} onChange={e => setWarehouse(e.target.value)} placeholder="Optional" />
+                  <select className="erpnext-input" value={warehouse} onChange={e => setWarehouse(e.target.value)}>
+                    <option value="">Select</option>
+                    {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.code}</option>)}
+                  </select>
                 </div>
-                <div className="flex items-end">
-                  <button onClick={createSheet} className="erpnext-btn-primary">Create Sheet</button>
+                <div>
+                  <label className="erpnext-label">Aisle (optional)</label>
+                  <input className="erpnext-input" value={aisle} onChange={e => setAisle(e.target.value)} placeholder="A" />
+                </div>
+                <div className="flex items-center gap-2 md:col-span-2">
+                  <input type="checkbox" id="autogen" checked={autoGen} onChange={e => setAutoGen(e.target.checked)} className="w-4 h-4" />
+                  <label htmlFor="autogen" className="text-sm">Auto-fill from location stock</label>
+                </div>
+                <div className="flex items-end md:col-span-2">
+                  <button onClick={createSheet} className="erpnext-btn-primary w-full">Create Sheet</button>
                 </div>
               </div>
             </div>
@@ -204,13 +226,14 @@ export default function CycleCount() {
                 <h4 className="font-medium text-sm mb-2">Count Lines ({selectedSheet.lines.length})</h4>
                 <table className="erpnext-table text-sm">
                   <thead>
-                    <tr><th>Item</th><th>System Qty</th><th>Counted Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr>
+                    <tr><th>Location</th><th>Item</th><th>System Qty</th><th>Counted Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr>
                   </thead>
                   <tbody>
-                    {selectedSheet.lines.map((line: CountLine) => {
-                      const variance = line.counted_qty !== null ? line.counted_qty - line.system_qty : null
+                    {selectedSheet.lines.map((line: any) => {
+                      const variance = line.counted_qty !== null && line.counted_qty !== undefined ? line.counted_qty - line.system_qty : null
                       return (
                         <tr key={line.id}>
+                          <td className="text-xs">{line.location_code || '—'}</td>
                           <td className="font-medium">{line.item_code}</td>
                           <td>{line.system_qty}</td>
                           <td>{line.counted_qty ?? '—'}</td>

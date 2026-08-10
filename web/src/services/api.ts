@@ -119,7 +119,16 @@ export const api = {
 
   // Cycle Count
   cycleCountSheets: () => get<any[]>("/cyclecount/sheets"),
-  cycleCountCreate: (data: any) => post<any>("/cyclecount/", data),
+  cycleCountCreate: (data: any) => post<any>("/cyclecount/sheets", data),
+
+  // Inventory health / transfers
+  reorderAlerts: () => get<any[]>("/inventory/reorder-alerts"),
+  expiryAlerts: (days?: number) => get<any[]>(`/inventory/expiry-alerts?days=${days ?? 90}`),
+  refreshAlerts: () => post<any>("/inventory/refresh-alerts", {}),
+  transferList: () => get<any[]>("/inventory/transfers"),
+  transferCreate: (data: any) => post<any>("/inventory/transfers", data),
+  transferShip: (id: number) => post<any>(`/inventory/transfers/${id}/ship`, {}),
+  transferReceive: (id: number, data?: any) => post<any>(`/inventory/transfers/${id}/receive`, data || {}),
 
   // Backorders
   backorderList: () => get<any[]>("/backorder/list"),

@@ -359,6 +359,7 @@ func itemInventory(db *pgxpool.Pool) fiber.Handler {
 			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, w.name,
 			       slb.location_id, wl.code, wl.aisle, wl.shelf, wl.level, wl.number, wl.location_type,
 			       COALESCE(slb.batch_no,''), b.expiry_date::text,
+			       CASE WHEN b.expiry_date IS NULL THEN NULL ELSE (b.expiry_date - CURRENT_DATE) END,
 			       slb.actual_qty, slb.reserved_qty,
 			       (slb.actual_qty - slb.reserved_qty) AS available_qty,
 			       CASE
@@ -376,7 +377,7 @@ func itemInventory(db *pgxpool.Pool) fiber.Handler {
 				ORDER BY id DESC LIMIT 1
 			) b ON true
 			WHERE slb.item_code = $1 AND slb.actual_qty <> 0
-			ORDER BY w.code, wl.code, slb.batch_no`, code)
+			ORDER BY b.expiry_date NULLS LAST, w.code, wl.code, slb.batch_no`, code)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -659,6 +660,7 @@ func locationInventory(db *pgxpool.Pool) fiber.Handler {
 			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, w.name,
 			       slb.location_id, wl.code, wl.aisle, wl.shelf, wl.level, wl.number, wl.location_type,
 			       COALESCE(slb.batch_no,''), b.expiry_date::text,
+			       CASE WHEN b.expiry_date IS NULL THEN NULL ELSE (b.expiry_date - CURRENT_DATE) END,
 			       slb.actual_qty, slb.reserved_qty,
 			       (slb.actual_qty - slb.reserved_qty) AS available_qty,
 			       CASE
@@ -676,7 +678,7 @@ func locationInventory(db *pgxpool.Pool) fiber.Handler {
 				ORDER BY id DESC LIMIT 1
 			) b ON true
 			WHERE slb.location_id = $1 AND slb.actual_qty <> 0
-			ORDER BY slb.item_code, slb.batch_no`, id)
+			ORDER BY b.expiry_date NULLS LAST, slb.item_code, slb.batch_no`, id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -889,25 +891,27 @@ func nullIfEmpty(s string) any {
 }
 
 type inventoryRow struct {
-	ID               int      `json:"id"`
-	ItemCode         string   `json:"item_code"`
-	ItemName         *string  `json:"item_name"`
-	WarehouseID      int      `json:"warehouse_id"`
-	WarehouseCode    string   `json:"warehouse_code"`
-	WarehouseName    string   `json:"warehouse_name"`
-	LocationID       int      `json:"location_id"`
-	LocationCode     string   `json:"location_code"`
-	Aisle            string   `json:"aisle"`
-	Shelf            string   `json:"shelf"`
-	Level            string   `json:"level"`
-	Number           string   `json:"number"`
-	LocationType     string   `json:"location_type"`
-	BatchNo          string   `json:"batch_no"`
-	ExpiryDate       *string  `json:"expiry_date"`
-	ActualQty        float64  `json:"actual_qty"`
-	ReservedQty      float64  `json:"reserved_qty"`
-	AvailableQty     float64  `json:"available_qty"`
-	AllocationStatus string   `json:"allocation_status"`
+	ID               int     `json:"id"`
+	ItemCode         string  `json:"item_code"`
+	ItemName         *string `json:"item_name"`
+	WarehouseID      int     `json:"warehouse_id"`
+	WarehouseCode    string  `json:"warehouse_code"`
+	WarehouseName    string  `json:"warehouse_name"`
+	LocationID       int     `json:"location_id"`
+	LocationCode     string  `json:"location_code"`
+	Aisle            string  `json:"aisle"`
+	Shelf            string  `json:"shelf"`
+	Level            string  `json:"level"`
+	Number           string  `json:"number"`
+	LocationType     string  `json:"location_type"`
+	BatchNo          string  `json:"batch_no"`
+	ExpiryDate       *string `json:"expiry_date"`
+	DaysUntilExpiry  *int    `json:"days_until_expiry"`
+	ActualQty        float64 `json:"actual_qty"`
+	ReservedQty      float64 `json:"reserved_qty"`
+	AvailableQty     float64 `json:"available_qty"`
+	AllocationStatus string  `json:"allocation_status"`
+	FefoWarn         bool    `json:"fefo_warn"`
 }
 
 func scanInventoryRows(rows pgx.Rows) []inventoryRow {
@@ -917,7 +921,7 @@ func scanInventoryRows(rows pgx.Rows) []inventoryRow {
 		var aisle, shelf, level, number, locType *string
 		_ = rows.Scan(&r.ID, &r.ItemCode, &r.ItemName, &r.WarehouseID, &r.WarehouseCode, &r.WarehouseName,
 			&r.LocationID, &r.LocationCode, &aisle, &shelf, &level, &number, &locType,
-			&r.BatchNo, &r.ExpiryDate, &r.ActualQty, &r.ReservedQty, &r.AvailableQty, &r.AllocationStatus)
+			&r.BatchNo, &r.ExpiryDate, &r.DaysUntilExpiry, &r.ActualQty, &r.ReservedQty, &r.AvailableQty, &r.AllocationStatus)
 		if aisle != nil {
 			r.Aisle = *aisle
 		}
@@ -932,6 +936,9 @@ func scanInventoryRows(rows pgx.Rows) []inventoryRow {
 		}
 		if locType != nil {
 			r.LocationType = *locType
+		}
+		if r.DaysUntilExpiry != nil && *r.DaysUntilExpiry <= 90 {
+			r.FefoWarn = true
 		}
 		list = append(list, r)
 	}

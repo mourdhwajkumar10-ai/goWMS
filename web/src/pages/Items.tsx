@@ -28,6 +28,8 @@ interface InvRow {
   warehouse_code: string
   batch_no: string
   expiry_date: string | null
+  days_until_expiry?: number | null
+  fefo_warn?: boolean
   actual_qty: number
   reserved_qty: number
   available_qty: number
@@ -301,7 +303,14 @@ export default function Items() {
                       <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
                       <td>{row.warehouse_code}</td>
                       <td>{row.batch_no || '—'}</td>
-                      <td>{row.expiry_date ? new Date(row.expiry_date).toLocaleDateString() : '—'}</td>
+                      <td>
+                        {row.expiry_date ? new Date(row.expiry_date).toLocaleDateString() : '—'}
+                        {row.fefo_warn && (
+                          <span className="erpnext-badge erpnext-badge-yellow ml-1">
+                            {row.days_until_expiry != null ? `${row.days_until_expiry}d` : 'FEFO'}
+                          </span>
+                        )}
+                      </td>
                       <td className="text-right">{row.actual_qty}</td>
                       <td>
                         <span className={`erpnext-badge ${

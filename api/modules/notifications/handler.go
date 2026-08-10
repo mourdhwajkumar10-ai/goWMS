@@ -12,6 +12,7 @@ import (
 // Register wires the notifications routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/", list(db))
+	r.Get("/list", list(db))
 	r.Post("/", create(db))
 	r.Post("/:id/read", markRead(db))
 }

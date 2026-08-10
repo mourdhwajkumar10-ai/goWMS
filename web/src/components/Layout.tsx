@@ -19,6 +19,8 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
       { to: "/pack", label: "Packing", icon: "▣" },
       { to: "/dispatch", label: "Dispatch", icon: "➤" },
       { to: "/cycle-count", label: "Cycle Count", icon: "↻" },
+      { to: "/inventory-health", label: "Inventory Health", icon: "♥" },
+      { to: "/transfers", label: "Transfers", icon: "⇄" },
       { to: "/stock-entries", label: "Stock Entry", icon: "≡" },
       { to: "/stock-reconciliations", label: "Stock Reconciliation", icon: "≋" },
       { to: "/serial", label: "Serial No", icon: "№" },

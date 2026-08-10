@@ -11,6 +11,8 @@ import PurchaseOrders from "./pages/PurchaseOrders";
 import Workflow from "./pages/Workflow";
 import Reports from "./pages/Reports";
 import Analytics from "./pages/Analytics";
+import InventoryHealth from "./pages/InventoryHealth";
+import Transfers from "./pages/Transfers";
 import Items from "./pages/Items";
 import Locations from "./pages/Locations";
 import Warehouses from "./pages/Warehouses";
@@ -51,6 +53,8 @@ export default function App() {
         <Route path="pack" element={<Pack />} />
         <Route path="dispatch" element={<Dispatch />} />
         <Route path="cycle-count" element={<CycleCount />} />
+        <Route path="inventory-health" element={<InventoryHealth />} />
+        <Route path="transfers" element={<Transfers />} />
         <Route path="po" element={<PurchaseOrders />} />
         <Route path="workflow" element={<Workflow />} />
         <Route path="reports" element={<Reports />} />
