@@ -37,10 +37,13 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 
 	md.Get("/suppliers", listSuppliers(db))
 	md.Post("/suppliers", createSupplier(db))
+	md.Get("/suppliers/:id/vehicles", getSupplierVehicles(db))
 	md.Put("/suppliers/:id/vehicles", setSupplierVehicles(db))
 	md.Get("/batches", listBatches(db))
 	md.Post("/batches", createBatch(db))
 	md.Get("/delivery-notes", listDeliveryNotes(db))
+	md.Get("/delivery-notes/:id", getDeliveryNote(db))
+	md.Post("/delivery-notes/:id/confirm", confirmDeliveryNote(db))
 	md.Get("/stock-entries", listStockEntries(db))
 	md.Get("/stock-reconciliations", listStockReconciliations(db))
 	registerStockRoutes(md, db)
@@ -52,6 +55,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/suppliers", listSuppliers(db))
 	r.Get("/batches", listBatches(db))
 	r.Get("/delivery-notes", listDeliveryNotes(db))
+	r.Get("/delivery-notes/:id", getDeliveryNote(db))
+	r.Post("/delivery-notes/:id/confirm", confirmDeliveryNote(db))
 	r.Get("/stock-entries", listStockEntries(db))
 	r.Get("/stock-reconciliations", listStockReconciliations(db))
 }
@@ -1300,6 +1305,84 @@ func listDeliveryNotes(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func getDeliveryNote(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var name string
+		var customer, status *string
+		var tripID *int
+		err = db.QueryRow(c.Context(), `
+			SELECT name, customer_name, status, trip_id FROM delivery_notes WHERE id=$1`, id).
+			Scan(&name, &customer, &status, &tripID)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "delivery note not found")
+		}
+		if err != nil {
+			// trip_id may be missing on older DBs
+			err = db.QueryRow(c.Context(), `
+				SELECT name, customer_name, status FROM delivery_notes WHERE id=$1`, id).
+				Scan(&name, &customer, &status)
+			if err == pgx.ErrNoRows {
+				return shared.Err(c, fiber.StatusNotFound, "delivery note not found")
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		}
+		items := []fiber.Map{}
+		rows, err := db.Query(c.Context(), `
+			SELECT item_code, qty, COALESCE(against_sales_order,'') FROM delivery_note_items WHERE delivery_note_id=$1`, id)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var code, so string
+				var qty float64
+				if rows.Scan(&code, &qty, &so) == nil {
+					items = append(items, fiber.Map{"item_code": code, "qty": qty, "against_sales_order": so})
+				}
+			}
+		}
+		return shared.OK(c, fiber.Map{
+			"id": id, "name": name, "customer_name": customer, "status": status, "trip_id": tripID, "items": items,
+		})
+	}
+}
+
+func confirmDeliveryNote(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			ReceivedBy string `json:"received_by"`
+			Notes      string `json:"notes"`
+		}
+		_ = shared.Bind(c, &body)
+		tag, err := db.Exec(c.Context(), `
+			UPDATE delivery_notes SET status='Delivered',
+				remarks = COALESCE(remarks,'') || CASE WHEN $2<>'' THEN E'\n[POD] '||$2 ELSE '' END,
+				delivered_at = COALESCE(delivered_at, NOW())
+			WHERE id=$1`, id, strings.TrimSpace(body.ReceivedBy+" "+body.Notes))
+		if err != nil {
+			tag, err = db.Exec(c.Context(), `
+				UPDATE delivery_notes SET status='Delivered',
+					remarks = COALESCE(remarks,'') || CASE WHEN $2<>'' THEN E'\n[POD] '||$2 ELSE '' END
+				WHERE id=$1`, id, strings.TrimSpace(body.ReceivedBy+" "+body.Notes))
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "delivery note not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "status": "Delivered"})
+	}
+}
+
 func listStockEntries(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
@@ -1420,6 +1503,30 @@ func setSupplierVehicles(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "vehicles": body.Vehicles})
+	}
+}
+
+func getSupplierVehicles(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var raw []byte
+		err = db.QueryRow(c.Context(), `
+			SELECT COALESCE(vehicles::text, '[]') FROM suppliers WHERE id=$1`, id).Scan(&raw)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		var veh any
+		_ = json.Unmarshal(raw, &veh)
+		if veh == nil {
+			veh = []any{}
+		}
+		return shared.OK(c, fiber.Map{"id": id, "vehicles": veh})
 	}
 }
 

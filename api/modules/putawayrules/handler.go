@@ -97,7 +97,9 @@ func resolve(db *pgxpool.Pool) fiber.Handler {
 			WHERE pr.item_code=$1 AND pr.active=true
 			ORDER BY pr.priority ASC LIMIT 1`, itemCode).Scan(&ruleID, &wh, &cap, &current)
 		if err != nil {
-			return shared.Err(c, fiber.StatusNotFound, "no putaway rule for item")
+			return shared.OK(c, fiber.Map{
+				"found": false, "item_code": itemCode, "message": "no putaway rule for item",
+			})
 		}
 
 		available := cap - current

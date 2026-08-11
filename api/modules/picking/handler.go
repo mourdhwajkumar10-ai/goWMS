@@ -141,7 +141,8 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		if len(lines) == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "no valid items to allocate")
+			return shared.Err(c, fiber.StatusBadRequest,
+				"no valid items to allocate — each item needs item_code and ordered_qty (or qty) > 0")
 		}
 
 		allocatedAny := false

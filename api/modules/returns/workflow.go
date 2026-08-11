@@ -47,7 +47,8 @@ func receive(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		if tag.RowsAffected() == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "claim cannot be received (need pending status)")
+			return shared.Err(c, fiber.StatusBadRequest,
+				"claim cannot be received — status must be pending/open (inspect/decide come after receive)")
 		}
 		notifications.Emit(c.Context(), db, "info", "Return received", "claim #"+strconv.Itoa(id), userID(c))
 		return shared.OK(c, fiber.Map{"id": id, "status": "received"})
@@ -74,7 +75,8 @@ func decide(db *pgxpool.Pool) fiber.Handler {
 		}
 		body.Decision = strings.ToLower(strings.TrimSpace(body.Decision))
 		if body.Decision != "restock" && body.Decision != "scrap" && body.Decision != "rts" {
-			return shared.Err(c, fiber.StatusBadRequest, "decision must be restock, scrap, or rts")
+			return shared.Err(c, fiber.StatusBadRequest,
+				`decision must be one of: "restock", "scrap", "rts"`)
 		}
 
 		var status string

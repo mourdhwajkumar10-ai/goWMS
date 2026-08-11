@@ -320,14 +320,28 @@ func captureSignature(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
 			StopID        int    `json:"stop_id"`
+			TripID        int    `json:"trip_id"`
 			OrderNo       string `json:"order_no"`
 			SignatureData string `json:"signature_data"`
+			Customer      string `json:"customer"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
+		if body.StopID == 0 && body.TripID > 0 {
+			// Auto-create a stop on the trip when only trip_id is provided
+			_ = db.QueryRow(c.Context(), `
+				INSERT INTO delivery_stops (trip_id, customer, stop_order, visited)
+				VALUES ($1,$2, COALESCE((SELECT MAX(stop_order)+1 FROM delivery_stops WHERE trip_id=$1),1), false)
+				RETURNING id`, body.TripID, nullEmpty(body.Customer)).Scan(&body.StopID)
+		}
 		if body.StopID == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "stop_id required")
+			return shared.Err(c, fiber.StatusBadRequest, "stop_id required (or trip_id to auto-create stop)")
+		}
+		var exists bool
+		_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM delivery_stops WHERE id=$1)`, body.StopID).Scan(&exists)
+		if !exists {
+			return shared.Err(c, fiber.StatusBadRequest, "stop_id not found — create trip stop first or pass trip_id")
 		}
 
 		if _, err := db.Exec(c.Context(),
@@ -340,7 +354,7 @@ func captureSignature(db *pgxpool.Pool) fiber.Handler {
 			// non-fatal if the stop does not exist
 		}
 
-		return shared.OK(c, nil)
+		return shared.OK(c, fiber.Map{"stop_id": body.StopID, "captured": true})
 	}
 }
 

@@ -1,6 +1,7 @@
 package salesorder
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -664,13 +665,24 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 func importCSV(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			Rows []map[string]string `json:"rows"`
+			Rows []map[string]any `json:"rows"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
 		if len(body.Rows) == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "rows required")
+			return shared.Err(c, fiber.StatusBadRequest,
+				`rows required — send {"rows":[{"so_number":"SO1","customer":"Acme","item_code":"SKU","qty":1}]}`)
+		}
+
+		// Normalize to string maps
+		rows := make([]map[string]string, 0, len(body.Rows))
+		for _, raw := range body.Rows {
+			m := map[string]string{}
+			for k, v := range raw {
+				m[k] = fmt.Sprint(v)
+			}
+			rows = append(rows, m)
 		}
 
 		// Group by so_number
@@ -689,7 +701,7 @@ func importCSV(db *pgxpool.Pool) fiber.Handler {
 		groups := map[string]*orderIn{}
 		orderKeys := []string{}
 
-		for _, row := range body.Rows {
+		for _, row := range rows {
 			soNo := first(row, "so_number", "sales_order", "name", "SO Number")
 			if soNo == "" {
 				continue
@@ -715,6 +727,11 @@ func importCSV(db *pgxpool.Pool) fiber.Handler {
 			if item != "" && qty > 0 {
 				g.Lines = append(g.Lines, lineIn{ItemCode: item, Qty: qty, Rate: rate})
 			}
+		}
+
+		if len(orderKeys) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest,
+				"no valid SO rows — need so_number/customer/item_code/qty columns")
 		}
 
 		created := []fiber.Map{}

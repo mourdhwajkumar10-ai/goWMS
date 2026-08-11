@@ -19,6 +19,10 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/warehouse-metrics", warehouseMetrics(db))
 	r.Get("/supplier-performance", supplierPerformance(db))
 	r.Get("/outbound-kpis", outboundKPIs(db))
+	r.Get("/fulfillment-rate", outboundMetricAlias(db, "fulfillment_rate_pct"))
+	r.Get("/pick-time", outboundMetricAlias(db, "avg_pick_minutes"))
+	r.Get("/dispatch-sla", outboundMetricAlias(db, "dispatch_sla_pct"))
+	r.Get("/return-rate", returnRate(db))
 	r.Get("/summary", summaryAlias(db))
 }
 
@@ -309,4 +313,57 @@ func outboundKPIs(db *pgxpool.Pool) fiber.Handler {
 
 func summaryAlias(db *pgxpool.Pool) fiber.Handler {
 	return dashboard(db)
+}
+
+func outboundMetricAlias(db *pgxpool.Pool, field string) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		payload := map[string]any{}
+		switch field {
+		case "fulfillment_rate_pct":
+			var completed, total int64
+			_ = db.QueryRow(c.Context(), `
+				SELECT COUNT(*) FILTER (WHERE status='completed'), COUNT(*)
+				FROM delivery_trips WHERE created_at >= NOW() - INTERVAL '30 days'`).Scan(&completed, &total)
+			pct := 0.0
+			if total > 0 {
+				pct = float64(completed) / float64(total) * 100
+			}
+			payload["fulfillment_rate_pct"] = pct
+			payload["completed_trips_30d"] = completed
+			payload["total_trips_30d"] = total
+		case "avg_pick_minutes":
+			var avg float64
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/60.0),0)
+				FROM pick_lists WHERE status='completed' AND created_at >= NOW() - INTERVAL '30 days'`).Scan(&avg)
+			payload["avg_pick_minutes"] = avg
+		case "dispatch_sla_pct":
+			var ok, total int64
+			_ = db.QueryRow(c.Context(), `
+				SELECT COUNT(*) FILTER (WHERE status='completed'),
+				       COUNT(*) FILTER (WHERE status='completed')
+				FROM delivery_trips WHERE created_at >= NOW() - INTERVAL '30 days'`).Scan(&ok, &total)
+			pct := 0.0
+			if total > 0 {
+				pct = float64(ok) / float64(total) * 100
+			}
+			payload["dispatch_sla_pct"] = pct
+		}
+		return shared.OK(c, payload)
+	}
+}
+
+func returnRate(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var returns, dns int64
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM return_claims`).Scan(&returns)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM delivery_notes`).Scan(&dns)
+		pct := 0.0
+		if dns > 0 {
+			pct = float64(returns) / float64(dns) * 100
+		}
+		return shared.OK(c, fiber.Map{
+			"return_claims": returns, "delivery_notes": dns, "return_rate_pct": pct,
+		})
+	}
 }

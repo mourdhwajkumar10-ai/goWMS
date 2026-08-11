@@ -26,6 +26,12 @@ func RegisterGRNAlias(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/:id/import-xlsx", importXLSX(db))
 }
 
+// RegisterSupplierAlias mounts template paths under /suppliers/:id/packing-templates.
+func RegisterSupplierAlias(r fiber.Router, db *pgxpool.Pool) {
+	r.Get("/:id/packing-templates", listTemplates(db))
+	r.Post("/:id/packing-templates", createTemplate(db))
+}
+
 func importPackingListViaGRN(db *pgxpool.Pool) fiber.Handler {
 	xlsx := importXLSX(db)
 	jsonImport := importIntoGRN(db)
@@ -40,9 +46,17 @@ func importPackingListViaGRN(db *pgxpool.Pool) fiber.Handler {
 
 func listTemplates(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(c.Context(), `
+		supplierID, _ := strconv.Atoi(c.Params("id"))
+		q := `
 			SELECT id, name, supplier_id, header_row, column_map::text, skip_summary_row, is_active
-			FROM packing_list_templates WHERE is_active=true ORDER BY id`)
+			FROM packing_list_templates WHERE is_active=true`
+		args := []any{}
+		if supplierID > 0 {
+			q += ` AND (supplier_id=$1 OR supplier_id IS NULL)`
+			args = append(args, supplierID)
+		}
+		q += ` ORDER BY id`
+		rows, err := db.Query(c.Context(), q, args...)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -93,6 +107,10 @@ func createTemplate(db *pgxpool.Pool) fiber.Handler {
 		}
 		if body.HeaderRow <= 0 {
 			body.HeaderRow = 1
+		}
+		// Prefer path supplier id when mounted under /suppliers/:id/packing-templates
+		if sid, err := strconv.Atoi(c.Params("id")); err == nil && sid > 0 {
+			body.SupplierID = &sid
 		}
 		skip := true
 		if body.SkipSummaryRow != nil {
