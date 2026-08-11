@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { clearSession, getRole } from "../services/api";
 
-const sections: { title: string; items: { to: string; label: string; icon: string }[] }[] = [
+const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean }[] }[] = [
   {
     title: "Home",
     items: [
@@ -39,7 +39,10 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
   {
     title: "Selling",
     items: [
+      { to: "/sales-orders", label: "Sales Order", icon: "◎" },
       { to: "/delivery-notes", label: "Delivery Note", icon: "✉" },
+      { to: "/backorders", label: "Backorders", icon: "↻" },
+      { to: "/returns", label: "Returns", icon: "↩" },
       { to: "/customers", label: "Customer", icon: "◉" },
     ],
   },
@@ -49,16 +52,29 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
       { to: "/items", label: "Item", icon: "◱" },
       { to: "/warehouses", label: "Warehouse", icon: "▦" },
       { to: "/locations", label: "Locations", icon: "▤" },
+      { to: "/employees", label: "Employees", icon: "☺", adminOnly: true },
+      { to: "/roles", label: "Roles", icon: "⚿", rolesAdminOnly: true },
       { to: "/workflow", label: "Workflow", icon: "↯" },
       { to: "/reports", label: "Reports", icon: "▤" },
     ],
   },
 ];
 
+function canSeeAdminNav(role: string | null) {
+  const r = (role || "").toLowerCase();
+  return r === "admin" || r === "wm" || r === "supervisor";
+}
+
+function canSeeRolesNav(role: string | null) {
+  return (role || "").toLowerCase() === "admin";
+}
+
 export default function Layout() {
   const navigate = useNavigate();
   const role = getRole();
   const initial = (role || "U").slice(0, 1).toUpperCase();
+  const showAdmin = canSeeAdminNav(role);
+  const showRoles = canSeeRolesNav(role);
 
   const logout = () => {
     clearSession();
@@ -76,10 +92,17 @@ export default function Layout() {
           </div>
         </div>
         <nav className="nav">
-          {sections.map((section) => (
+          {sections.map((section) => {
+            const items = section.items.filter((item) => {
+              if (item.rolesAdminOnly) return showRoles;
+              if (item.adminOnly) return showAdmin;
+              return true;
+            });
+            if (items.length === 0) return null;
+            return (
             <div key={section.title}>
               <div className="nav-section">{section.title}</div>
-              {section.items.map((item) => (
+              {items.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
@@ -91,7 +114,8 @@ export default function Layout() {
                 </NavLink>
               ))}
             </div>
-          ))}
+            );
+          })}
         </nav>
       </aside>
       <div className="main">

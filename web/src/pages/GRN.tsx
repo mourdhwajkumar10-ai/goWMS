@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
+import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
 
 export default function GRN() {
@@ -557,6 +558,64 @@ export default function GRN() {
 
             {/* Scan Forms */}
             <div className="p-6 space-y-6">
+              {/* Packing List Import */}
+              <div>
+                <h3 className="text-sm font-semibold mb-3">Import Packing List</h3>
+                <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>
+                  CSV or Excel (.xlsx) → grn_cartons / grn_lines
+                </p>
+                <div className="flex gap-2 flex-wrap">
+                  <CSVImport onImport={async (rows) => {
+                    const r = await api.packingListImport({ grn_session_id: session.id, rows })
+                    if (r.ok) {
+                      notify({
+                        type: 'success',
+                        title: 'Packing list imported',
+                        message: `${r.data.cartons_created} cartons, ${r.data.lines_created} lines`,
+                      })
+                      const refreshed = await api.grnSession(session.id)
+                      if (refreshed.ok) setSession(refreshed.data)
+                    } else {
+                      notify({ type: 'error', title: 'Import failed', message: r.error || '' })
+                    }
+                  }} />
+                  <label className="erpnext-btn-secondary text-sm" style={{ cursor: 'pointer' }}>
+                    📊 Import XLSX
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls"
+                      style={{ display: 'none' }}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0]
+                        if (!file || !session) return
+                        const fd = new FormData()
+                        fd.append('file', file)
+                        fd.append('grn_session_id', String(session.id))
+                        const token = localStorage.getItem('gowms_token')
+                        const res = await fetch('/api/packing-list/import-xlsx', {
+                          method: 'POST',
+                          headers: token ? { Authorization: `Bearer ${token}` } : {},
+                          body: fd,
+                        })
+                        const payload = await res.json().catch(() => ({}))
+                        if (res.ok && payload.ok) {
+                          notify({
+                            type: 'success',
+                            title: 'XLSX imported',
+                            message: `${payload.data.cartons_created} cartons, ${payload.data.lines_created} lines`,
+                          })
+                          const refreshed = await api.grnSession(session.id)
+                          if (refreshed.ok) setSession(refreshed.data)
+                        } else {
+                          notify({ type: 'error', title: 'XLSX failed', message: payload.error || 'Import failed' })
+                        }
+                        e.target.value = ''
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+
               {/* Carton Scan */}
               <div>
                 <h3 className="text-sm font-semibold mb-3">Scan Carton</h3>
@@ -579,7 +638,13 @@ export default function GRN() {
                   <div>
                     <label className="erpnext-label">Item Code</label>
                     <div className="flex gap-2">
-                      <input className="erpnext-input" value={item} onChange={e => setItem(e.target.value)} placeholder="ITEM-001" />
+                      <input
+                        className="erpnext-input"
+                        value={item}
+                        onChange={e => setItem(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addLine() } }}
+                        placeholder="ITEM-001"
+                      />
                       <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} className="erpnext-btn-secondary">📷</button>
                     </div>
                   </div>
@@ -589,7 +654,13 @@ export default function GRN() {
                   </div>
                   <div>
                     <label className="erpnext-label">Scanned Qty</label>
-                    <input className="erpnext-input" type="number" value={scan} onChange={e => setScan(e.target.value)} />
+                    <input
+                      className="erpnext-input"
+                      type="number"
+                      value={scan}
+                      onChange={e => setScan(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addLine() } }}
+                    />
                   </div>
                   <div>
                     <label className="erpnext-label">Damaged Qty</label>

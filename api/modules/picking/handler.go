@@ -19,6 +19,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/scan", logPickScan(db))
 	r.Get("/list", listPickLists(db))
 	r.Get("/lists", listPickLists(db)) // frontend alias
+	r.Get("/:id/print", printPickList(db))
+	r.Post("/:id/cancel", cancelPickList(db))
 	r.Get("/:id", getPickList(db))
 }
 
@@ -445,6 +447,102 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			"pick_list_item_id": itemID, "picked_qty": newPicked, "status": newStatus,
 			"expected_bin": expected,
 		})
+	}
+}
+
+func printPickList(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var name string
+		var so, customer *string
+		err = db.QueryRow(c.Context(), `
+			SELECT name, sales_order_no, customer FROM pick_lists WHERE id=$1`, id).Scan(&name, &so, &customer)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "pick list not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		rows, err := db.Query(c.Context(), `
+			SELECT item_code, COALESCE(location_code,''), COALESCE(batch_no,''),
+			       COALESCE(allocated_qty, ordered_qty), COALESCE(picked_qty,0), COALESCE(status,'pending')
+			FROM pick_list_items WHERE pick_list_id=$1 ORDER BY location_code NULLS LAST, id`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		type line struct {
+			ItemCode     string  `json:"item_code"`
+			LocationCode string  `json:"location_code"`
+			BatchNo      string  `json:"batch_no"`
+			Qty          float64 `json:"qty"`
+			PickedQty    float64 `json:"picked_qty"`
+			Status       string  `json:"status"`
+		}
+		var items []line
+		for rows.Next() {
+			var l line
+			if err := rows.Scan(&l.ItemCode, &l.LocationCode, &l.BatchNo, &l.Qty, &l.PickedQty, &l.Status); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			items = append(items, l)
+		}
+		if items == nil {
+			items = []line{}
+		}
+		soStr, custStr := "", ""
+		if so != nil {
+			soStr = *so
+		}
+		if customer != nil {
+			custStr = *customer
+		}
+		html := "<html><body><h1>" + name + "</h1><p>SO: " + soStr + " · " + custStr + "</p><table border=1 cellpadding=4><tr><th>Loc</th><th>Item</th><th>Batch</th><th>Qty</th><th>✓</th></tr>"
+		for _, it := range items {
+			html += "<tr><td>" + it.LocationCode + "</td><td>" + it.ItemCode + "</td><td>" + it.BatchNo + "</td><td>" +
+				strconv.FormatFloat(it.Qty, 'f', -1, 64) + "</td><td>□</td></tr>"
+		}
+		html += "</table></body></html>"
+		return shared.OK(c, fiber.Map{"id": id, "name": name, "sales_order_no": so, "customer": customer, "items": items, "html": html})
+	}
+}
+
+// cancelPickList releases FEFO reservations and marks the pick list cancelled.
+// Refuses if stock was already consumed by pack/dispatch.
+func cancelPickList(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var status string
+		err = db.QueryRow(c.Context(), `SELECT COALESCE(status,'') FROM pick_lists WHERE id=$1`, id).Scan(&status)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "pick list not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if strings.EqualFold(status, "cancelled") {
+			return shared.OK(c, fiber.Map{"id": id, "status": "cancelled", "already": true})
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		if err := shared.ReleasePickListReservations(c.Context(), tx, id); err != nil {
+			return shared.Err(c, fiber.StatusConflict, err.Error())
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": id, "status": "cancelled", "reservations_released": true})
 	}
 }
 

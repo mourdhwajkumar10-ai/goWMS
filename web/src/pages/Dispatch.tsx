@@ -32,6 +32,8 @@ export default function Dispatch() {
   const [vehicle, setVehicle] = useState('')
   const [driverName, setDriverName] = useState('')
   const [loadBoxId, setLoadBoxId] = useState('')
+  const [dnCustomer, setDnCustomer] = useState('')
+  const [podSig, setPodSig] = useState('')
 
   const loadTrips = () => api.dispatchTrips().then(r => { if (r.ok) setTrips(r.data ?? []) })
   useEffect(() => { loadTrips() }, [])
@@ -82,6 +84,7 @@ export default function Dispatch() {
     if (r.ok) {
       notify({ type: 'success', title: 'Trip Started', message: 'Vehicle departed' })
       loadTrips()
+      if (selectedTrip?.id === id) openTrip(id)
     }
   }
 
@@ -90,7 +93,43 @@ export default function Dispatch() {
     if (r.ok) {
       notify({ type: 'success', title: 'Trip Completed', message: 'All stops delivered' })
       loadTrips()
+      setSelectedTrip(null)
     }
+  }
+
+  const completeGated = async (id: number) => {
+    const r = await api.dispatchCompleteGated(id)
+    if (r.ok) {
+      notify({ type: 'success', title: 'Trip Completed (gated)', message: 'All stops visited' })
+      loadTrips(); setSelectedTrip(null)
+    } else {
+      notify({ type: 'error', title: 'Complete blocked', message: r.error || '' })
+    }
+  }
+
+  const generateDN = async () => {
+    if (!selectedTrip) return
+    const r = await api.dispatchGenerateDN(selectedTrip.id, {
+      customer: dnCustomer || undefined,
+      create_stop: true,
+    })
+    if (r.ok) {
+      notify({ type: 'success', title: 'DN Created', message: r.data.delivery_note })
+      setDnCustomer('')
+      openTrip(selectedTrip.id)
+    } else notify({ type: 'error', title: 'DN failed', message: r.error || '' })
+  }
+
+  const visitWithPOD = async (stopId: number) => {
+    if (!selectedTrip) return
+    const r = await api.dispatchVisitStop(selectedTrip.id, stopId, {
+      signature_data: podSig || `signed-at-${new Date().toISOString()}`,
+    })
+    if (r.ok) {
+      notify({ type: 'success', title: 'POD captured', message: 'Stop visited' })
+      setPodSig('')
+      openTrip(selectedTrip.id)
+    } else notify({ type: 'error', title: 'POD failed', message: r.error || '' })
   }
 
   const statusBadge = (status: string) => {
@@ -183,17 +222,26 @@ export default function Dispatch() {
               </p>
             </div>
             <div className="flex gap-2">
-              {selectedTrip.status === 'draft' && (
+              {selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled' ? (
                 <button onClick={() => startTrip(selectedTrip.id)} className="erpnext-btn-primary text-sm">Start Trip</button>
-              )}
+              ) : null}
               {selectedTrip.status === 'in_transit' && (
-                <button onClick={() => completeTrip(selectedTrip.id)} className="erpnext-btn-primary text-sm">Complete</button>
+                <>
+                  <button onClick={() => completeTrip(selectedTrip.id)} className="erpnext-btn-primary text-sm">Complete</button>
+                  <button onClick={() => completeGated(selectedTrip.id)} className="erpnext-btn-secondary text-sm">Complete (gated)</button>
+                </>
               )}
               <button onClick={() => setSelectedTrip(null)} className="erpnext-btn-secondary">Back</button>
             </div>
           </div>
 
           <div className="p-4">
+            <h4 className="font-medium text-sm mb-2">Auto-generate Delivery Note</h4>
+            <div className="flex gap-2 mb-4">
+              <input className="erpnext-input" value={dnCustomer} onChange={e => setDnCustomer(e.target.value)} placeholder="Customer" />
+              <button onClick={generateDN} className="erpnext-btn-primary">Generate DN + Stop</button>
+            </div>
+
             <h4 className="font-medium text-sm mb-2">Load Box</h4>
             <div className="flex gap-2">
               <input className="erpnext-input" value={loadBoxId} onChange={e => setLoadBoxId(e.target.value)} placeholder="Box ID" />
@@ -223,10 +271,14 @@ export default function Dispatch() {
 
             {selectedTrip.stops && selectedTrip.stops.length > 0 && (
               <div className="mt-4">
-                <h4 className="font-medium text-sm mb-2">Delivery Stops</h4>
+                <h4 className="font-medium text-sm mb-2">Delivery Stops + POD</h4>
+                <div className="mb-2">
+                  <label className="erpnext-label">Signature / POD note</label>
+                  <input className="erpnext-input" value={podSig} onChange={e => setPodSig(e.target.value)} placeholder="Recipient name or signature data" />
+                </div>
                 <table className="erpnext-table text-sm">
                   <thead>
-                    <tr><th>#</th><th>Delivery Note</th><th>Customer</th><th>Address</th><th>Status</th></tr>
+                    <tr><th>#</th><th>Delivery Note</th><th>Customer</th><th>Address</th><th>Status</th><th></th></tr>
                   </thead>
                   <tbody>
                     {selectedTrip.stops.map((s: Stop) => (
@@ -239,6 +291,11 @@ export default function Dispatch() {
                           <span className={`erpnext-badge ${s.visited ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
                             {s.visited ? 'delivered' : 'pending'}
                           </span>
+                        </td>
+                        <td>
+                          {!s.visited && (
+                            <button className="erpnext-btn-primary text-xs" onClick={() => visitWithPOD(s.id)}>POD + Visit</button>
+                          )}
                         </td>
                       </tr>
                     ))}

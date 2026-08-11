@@ -18,6 +18,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/pick-accuracy", pickAccuracy(db))
 	r.Get("/warehouse-metrics", warehouseMetrics(db))
 	r.Get("/supplier-performance", supplierPerformance(db))
+	r.Get("/outbound-kpis", outboundKPIs(db))
+	r.Get("/summary", summaryAlias(db))
 }
 
 func dashboard(db *pgxpool.Pool) fiber.Handler {
@@ -209,4 +211,44 @@ func supplierPerformance(db *pgxpool.Pool) fiber.Handler {
 		}
 		return shared.OK(c, list)
 	}
+}
+
+func outboundKPIs(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var openSO, confirmedSO, pickingSO, openPicks, packedBoxes, activeTrips, pendingReturns int64
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM sales_orders WHERE COALESCE(wms_status,status,'draft') ILIKE 'draft'`).Scan(&openSO)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM sales_orders WHERE COALESCE(wms_status,status) ILIKE 'confirmed'`).Scan(&confirmedSO)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM sales_orders WHERE COALESCE(wms_status,status) ILIKE 'picking'`).Scan(&pickingSO)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM pick_lists WHERE status IN ('draft','open','in_progress')`).Scan(&openPicks)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM boxes WHERE loaded=false`).Scan(&packedBoxes)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM delivery_trips WHERE status IN ('scheduled','in_transit')`).Scan(&activeTrips)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM return_claims WHERE status IN ('pending','inspected')`).Scan(&pendingReturns)
+
+		var fillRate float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(AVG(CASE WHEN ordered_qty>0 THEN LEAST(allocated_qty,ordered_qty)/ordered_qty*100 ELSE NULL END),0)
+			FROM pick_list_items`).Scan(&fillRate)
+
+		var highPriority int64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COUNT(*) FROM sales_orders
+			WHERE COALESCE(priority,4) >= 7
+			  AND COALESCE(wms_status,status) NOT IN ('cancelled','Cancelled','completed','Completed')`).Scan(&highPriority)
+
+		return shared.OK(c, fiber.Map{
+			"draft_sales_orders":     openSO,
+			"confirmed_sales_orders": confirmedSO,
+			"picking_sales_orders":   pickingSO,
+			"open_pick_lists":        openPicks,
+			"unloaded_boxes":         packedBoxes,
+			"active_trips":           activeTrips,
+			"pending_returns":        pendingReturns,
+			"fill_rate_pct":          fillRate,
+			"high_priority_open":     highPriority,
+		})
+	}
+}
+
+func summaryAlias(db *pgxpool.Pool) fiber.Handler {
+	return dashboard(db)
 }

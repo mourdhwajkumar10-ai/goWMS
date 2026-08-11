@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
@@ -47,6 +48,9 @@ export default function Pick() {
   const [customer, setCustomer] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
   const [items, setItems] = useState<{ item_code: string; qty: number }[]>([])
+  const [showWave, setShowWave] = useState(false)
+  const [waveSOIds, setWaveSOIds] = useState('')
+  const [confirmedSOs, setConfirmedSOs] = useState<any[]>([])
 
   const [scanItem, setScanItem] = useState('')
   const [scanBin, setScanBin] = useState('')
@@ -57,7 +61,25 @@ export default function Pick() {
   useEffect(() => {
     loadLists()
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
+    api.soList('status=confirmed').then(r => { if (r.ok) setConfirmedSOs(r.data ?? []) })
   }, [])
+
+  const createWave = async () => {
+    const ids = waveSOIds.split(/[,\s]+/).map(s => +s).filter(n => n > 0)
+    if (!ids.length) {
+      notify({ type: 'error', title: 'Need SO ids', message: 'Enter confirmed sales order IDs' })
+      return
+    }
+    const r = await api.pickWave({
+      sales_order_ids: ids,
+      warehouse_id: warehouseId ? +warehouseId : undefined,
+    })
+    if (r.ok) {
+      notify({ type: 'success', title: 'Wave created', message: r.data.name })
+      setShowWave(false); setWaveSOIds('')
+      loadLists(); openList(r.data.id)
+    } else notify({ type: 'error', title: 'Wave failed', message: r.error || '' })
+  }
 
   const addItem = () => {
     setItems([...items, { item_code: '', qty: 1 }])
@@ -121,6 +143,7 @@ export default function Pick() {
 
   const logScan = async () => {
     if (!scanItem || !selectedList) return
+    const currentLineId = scanLineId
     const expected = selectedList.items?.find((x: PickItem) => x.id === scanLineId)?.location_code
       || selectedList.items?.find((x: PickItem) => x.item_code === scanItem && x.status !== 'picked' && x.status !== 'shortage')?.location_code
       || ''
@@ -139,8 +162,25 @@ export default function Pick() {
         title: 'Item Picked',
         message: `${scanItem}: ${scanQty} units${drift}`,
       })
-      setScanItem(''); setScanBin(''); setScanQty('1'); setScanLineId(null)
-      openList(selectedList.id)
+      const detail = await api.get<any>(`/picking/${selectedList.id}`)
+      if (detail.ok && detail.data) {
+        setSelectedList(detail.data)
+        const items: PickItem[] = detail.data.items || []
+        const nextLine = items.find(
+          (x: PickItem) => x.status !== 'picked' && x.status !== 'shortage' && x.status !== 'delivered'
+            && (currentLineId == null || x.id > currentLineId)
+        ) || items.find(
+          (x: PickItem) => x.status !== 'picked' && x.status !== 'shortage' && x.status !== 'delivered'
+        )
+        if (nextLine) {
+          selectLine(nextLine)
+        } else {
+          setScanItem(''); setScanBin(''); setScanQty('1'); setScanLineId(null)
+        }
+      } else {
+        setScanItem(''); setScanBin(''); setScanQty('1'); setScanLineId(null)
+        openList(selectedList.id)
+      }
       loadLists()
     } else {
       notify({ type: 'error', title: 'Pick failed', message: r.error || 'Scan rejected' })
@@ -177,11 +217,37 @@ export default function Pick() {
         <h2 className="text-lg font-semibold">Picking</h2>
         <div className="flex gap-2">
           <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} className="erpnext-btn-secondary">📷 Scan</button>
-          <button onClick={() => { setShowNew(!showNew); setSelectedList(null) }} className="erpnext-btn-primary">
+          <button onClick={() => { setShowWave(!showWave); setShowNew(false); setSelectedList(null) }} className="erpnext-btn-secondary">
+            {showWave ? 'Cancel Wave' : 'Wave Pick'}
+          </button>
+          <button onClick={() => { setShowNew(!showNew); setShowWave(false); setSelectedList(null) }} className="erpnext-btn-primary">
             {showNew ? 'Cancel' : '+ New Pick List'}
           </button>
         </div>
       </div>
+
+      {showWave && (
+        <div className="erpnext-card p-4 space-y-3">
+          <h3 className="font-semibold">Create Wave (multi-SO FEFO)</h3>
+          <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+            Confirmed SOs: {confirmedSOs.slice(0, 8).map((s: any) => `${s.id}:${s.name}`).join(', ') || 'none'}
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="md:col-span-2">
+              <label className="erpnext-label">Sales Order IDs (comma-separated)</label>
+              <input className="erpnext-input" value={waveSOIds} onChange={e => setWaveSOIds(e.target.value)} placeholder="12,15,18" />
+            </div>
+            <div>
+              <label className="erpnext-label">Warehouse</label>
+              <select className="erpnext-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+                <option value="">Default</option>
+                {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.code || w.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <button className="erpnext-btn-primary" onClick={createWave}>Allocate Wave</button>
+        </div>
+      )}
 
       {showNew && (
         <div className="erpnext-card">
@@ -295,7 +361,42 @@ export default function Pick() {
                 {selectedList.stock_consumed ? ' · stock consumed' : ' · reserved until pack/dispatch'}
               </p>
             </div>
-            <button onClick={() => setSelectedList(null)} className="erpnext-btn-secondary">Back</button>
+            <div className="flex gap-2">
+              <Link to={`/pack?pick_list_id=${selectedList.id}`} className="erpnext-btn-primary">Go to Pack</Link>
+              <button
+                className="erpnext-btn-secondary"
+                onClick={async () => {
+                  const r = await api.pickPrint(selectedList.id)
+                  if (r.ok && r.data?.html) {
+                    const w = window.open('', '_blank')
+                    if (w) { w.document.write(r.data.html); w.document.close(); w.print() }
+                  } else notify({ type: 'error', title: 'Print failed', message: r.error || '' })
+                }}
+              >Print</button>
+              <button
+                className="erpnext-btn-secondary"
+                onClick={async () => {
+                  const r = await api.backorderAutoFromPick(selectedList.id)
+                  if (r.ok) notify({ type: 'success', title: 'Backorder', message: r.data.created ? r.data.backorder_no : r.data.message })
+                  else notify({ type: 'error', title: 'Backorder failed', message: r.error || '' })
+                }}
+              >BO from shortage</button>
+              {selectedList.status !== 'cancelled' && selectedList.status !== 'completed' && (
+                <button
+                  className="erpnext-btn-secondary"
+                  style={{ color: 'var(--red)' }}
+                  onClick={async () => {
+                    if (!confirm('Cancel pick list and release reserved stock?')) return
+                    const r = await api.pickCancel(selectedList.id)
+                    if (r.ok) {
+                      notify({ type: 'warning', title: 'Cancelled', message: 'Reservations released' })
+                      setSelectedList(null); loadLists()
+                    } else notify({ type: 'error', title: 'Cancel failed', message: r.error || '' })
+                  }}
+                >Cancel & Release</button>
+              )}
+              <button onClick={() => setSelectedList(null)} className="erpnext-btn-secondary">Back</button>
+            </div>
           </div>
 
           <div className="p-4">
@@ -304,20 +405,38 @@ export default function Pick() {
               <div>
                 <label className="erpnext-label">Item Code</label>
                 <div className="flex gap-1">
-                  <input className="erpnext-input" value={scanItem} onChange={e => setScanItem(e.target.value)} placeholder="ITEM-001" />
+                  <input
+                    className="erpnext-input"
+                    value={scanItem}
+                    onChange={e => setScanItem(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                    placeholder="ITEM-001"
+                  />
                   <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
                 </div>
               </div>
               <div>
                 <label className="erpnext-label">Suggested / Scanned Bin</label>
                 <div className="flex gap-1">
-                  <input className="erpnext-input" value={scanBin} onChange={e => setScanBin(e.target.value)} placeholder="A-01-01" />
+                  <input
+                    className="erpnext-input"
+                    value={scanBin}
+                    onChange={e => setScanBin(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                    placeholder="A-01-01"
+                  />
                   <button onClick={() => { setScanTarget('bin'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
                 </div>
               </div>
               <div>
                 <label className="erpnext-label">Quantity</label>
-                <input className="erpnext-input" type="number" value={scanQty} onChange={e => setScanQty(e.target.value)} />
+                <input
+                  className="erpnext-input"
+                  type="number"
+                  value={scanQty}
+                  onChange={e => setScanQty(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                />
               </div>
               <div className="flex items-end">
                 <button onClick={logScan} className="erpnext-btn-primary">Log Pick</button>

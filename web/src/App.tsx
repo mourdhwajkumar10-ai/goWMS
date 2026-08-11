@@ -27,6 +27,11 @@ import DeliveryNotes from "./pages/DeliveryNotes";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
 import StockEntries from "./pages/StockEntries";
 import StockReconciliations from "./pages/StockReconciliations";
+import SalesOrders from "./pages/SalesOrders";
+import Employees from "./pages/Employees";
+import Roles from "./pages/Roles";
+import Returns from "./pages/Returns";
+import Backorders from "./pages/Backorders";
 import { getToken } from "./services/api";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -56,6 +61,11 @@ export default function App() {
         <Route path="inventory-health" element={<InventoryHealth />} />
         <Route path="transfers" element={<Transfers />} />
         <Route path="po" element={<PurchaseOrders />} />
+        <Route path="sales-orders" element={<SalesOrders />} />
+        <Route path="backorders" element={<Backorders />} />
+        <Route path="returns" element={<Returns />} />
+        <Route path="employees" element={<Employees />} />
+        <Route path="roles" element={<Roles />} />
         <Route path="workflow" element={<Workflow />} />
         <Route path="reports" element={<Reports />} />
         <Route path="items" element={<Items />} />

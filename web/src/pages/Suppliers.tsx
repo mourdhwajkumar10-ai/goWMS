@@ -19,18 +19,32 @@ export default function Suppliers() {
   const [name, setName] = useState('')
   const [group, setGroup] = useState('')
   const [gstin, setGstin] = useState('')
+  const [isTransporter, setIsTransporter] = useState(false)
+  const [carrierCode, setCarrierCode] = useState('')
+  const [phone, setPhone] = useState('')
+  const [email, setEmail] = useState('')
 
   const loadList = () => api.supplierList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
 
   const createSupplier = async () => {
-    const r = await api.supplierCreate({ name, supplier_group: group, gstin })
+    const r = await api.supplierCreate({
+      name,
+      supplier_group: group,
+      gstin,
+      is_transporter: isTransporter,
+      carrier_code: carrierCode || undefined,
+      contact_phone: phone || undefined,
+      contact_email: email || undefined,
+    })
     if (r.ok) {
       setMsg(`Supplier "${name}" created`)
-      setName(''); setGroup(''); setGstin('')
+      setName(''); setGroup(''); setGstin(''); setIsTransporter(false); setCarrierCode(''); setPhone(''); setEmail('')
       setShowNew(false)
       loadList()
       notify({ type: 'success', title: 'Supplier Created', message: name })
+    } else {
+      notify({ type: 'error', title: 'Failed', message: r.error || '' })
     }
   }
 
@@ -73,6 +87,26 @@ export default function Suppliers() {
                 <label className="erpnext-label">GSTIN</label>
                 <input className="erpnext-input" value={gstin} onChange={e => setGstin(e.target.value)} placeholder="27AABCU9603R1ZM" />
               </div>
+              <div className="flex items-center gap-2 pt-6">
+                <input type="checkbox" id="isTx" checked={isTransporter} onChange={e => setIsTransporter(e.target.checked)} />
+                <label htmlFor="isTx" className="text-sm">Is Transporter / Carrier</label>
+              </div>
+              {isTransporter && (
+                <>
+                  <div>
+                    <label className="erpnext-label">Carrier Code</label>
+                    <input className="erpnext-input" value={carrierCode} onChange={e => setCarrierCode(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Contact Phone</label>
+                    <input className="erpnext-input" value={phone} onChange={e => setPhone(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Contact Email</label>
+                    <input className="erpnext-input" value={email} onChange={e => setEmail(e.target.value)} />
+                  </div>
+                </>
+              )}
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowNew(false)} className="erpnext-btn-secondary">Cancel</button>

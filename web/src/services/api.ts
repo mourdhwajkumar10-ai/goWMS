@@ -60,11 +60,50 @@ export const api = {
   // Auth
   login: (username: string, password: string) =>
     post<{ token: string; role: string }>("/auth/login", { username, password }),
+  pinLogin: (data: { badge_code?: string; employee_number?: string; pin: string; warehouse_id?: number }) =>
+    post<{ token: string; role: string; employee_name?: string }>("/auth/pin-login", data),
   register: (username: string, password: string, role: string) =>
     post<null>("/auth/register", { username, password, role }),
 
   // Health
   health: () => get<{ status: string }>("/health"),
+
+  // Sales Orders
+  soList: (qs?: string) => get<any[]>(`/sales-orders${qs ? `?${qs}` : ""}`),
+  soCreate: (data: any) => post<any>("/sales-orders/", data),
+  soGet: (id: number) => get<any>(`/sales-orders/${id}`),
+  soUpdate: (id: number, data: any) => put<any>(`/sales-orders/${id}`, data),
+  soConfirm: (id: number) => post<any>(`/sales-orders/${id}/confirm`, {}),
+  soCancel: (id: number) => post<any>(`/sales-orders/${id}/cancel`, {}),
+  soPriority: (id: number, data: any) => post<any>(`/sales-orders/${id}/priority`, data),
+  soCreatePick: (id: number) => post<any>(`/sales-orders/${id}/create-pick`, {}),
+  soImport: (data: any) => post<any>("/sales-orders/import", data),
+
+  // Packing list import
+  packingListTemplates: () => get<any[]>("/packing-list/templates"),
+  packingListImport: (data: any) => post<any>("/packing-list/import", data),
+
+  // Employees
+  employeeList: () => get<any[]>("/employees/list"),
+  employeeCreate: (data: any) => post<any>("/employees/", data),
+  employeeSetPin: (id: number, pin: string) => post<any>(`/employees/${id}/pin`, { pin }),
+  employeeAssignRole: (id: number, wms_role: string) => put<any>(`/employees/${id}/role`, { wms_role }),
+
+  // Roles / RBAC
+  rolesList: () => get<any[]>("/roles/list"),
+  roleGet: (id: number) => get<any>(`/roles/${id}`),
+  roleCreate: (data: any) => post<any>("/roles/", data),
+  roleUpdate: (id: number, data: any) => put<any>(`/roles/${id}`, data),
+  roleDelete: (id: number) => del<any>(`/roles/${id}`),
+  roleSetPermissions: (id: number, permissions: string[]) =>
+    put<any>(`/roles/${id}/permissions`, { permissions }),
+  permissionsCatalog: () => get<any[]>("/permissions"),
+
+  // Returns
+  returnsList: () => get<any[]>("/returns/list"),
+  returnsCreate: (data: any) => post<any>("/returns/", data),
+  returnsInspect: (id: number, data: any) => post<any>(`/returns/${id}/inspect`, data),
+  returnsRestock: (id: number, data: any) => post<any>(`/returns/${id}/restock`, data),
 
   // Items
   itemList: (q?: string) => get<any[]>(`/masterdata/items${q ? `?q=${encodeURIComponent(q)}` : ''}`),
@@ -96,12 +135,17 @@ export const api = {
   pickCreate: (data: any) => post<any>("/picking/", data),
   pickGet: (id: number) => get<any>(`/picking/${id}`),
   pickScan: (data: any) => post<any>("/picking/scan", data),
+  pickPrint: (id: number) => get<any>(`/picking/${id}/print`),
+  pickCancel: (id: number) => post<any>(`/picking/${id}/cancel`, {}),
+  pickWave: (data: any) => post<any>("/picking/wave", data),
+  pickWaves: () => get<any[]>("/picking/waves"),
 
   // Packing
   packSessions: () => get<any[]>("/packing/sessions"),
   packCreate: (data: any) => post<any>("/packing/", data),
   packGet: (id: number) => get<any>(`/packing/${id}`),
   packLoad: (id: number) => post<any>(`/packing/${id}/load`, {}),
+  packLabel: (id: number) => get<any>(`/packing/${id}/label`),
 
   // Dispatch
   dispatchTrips: () => get<any[]>("/dispatch/trips"),
@@ -109,6 +153,32 @@ export const api = {
   dispatchTrip: (id: number) => get<any>(`/dispatch/trip/${id}`),
   dispatchLoad: (tripId: number, boxId: number) =>
     post<any>(`/dispatch/trip/${tripId}/load`, { box_id: boxId }),
+  dispatchGenerateDN: (tripId: number, data?: any) =>
+    post<any>(`/dispatch/trip/${tripId}/generate-dn`, data || {}),
+  dispatchVisitStop: (tripId: number, stopId: number, data?: any) =>
+    post<any>(`/dispatch/trip/${tripId}/stop/${stopId}/visit`, data || {}),
+  dispatchCompleteGated: (tripId: number) =>
+    post<any>(`/dispatch/trip/${tripId}/complete-gated`, {}),
+  dispatchSignature: (data: any) => post<any>("/dispatch/signature", data),
+
+  // Backorder v2
+  backorderV2List: () => get<any[]>("/backorder/v2/list"),
+  backorderV2Create: (data: any) => post<any>("/backorder/v2/", data),
+  backorderAutoFromPick: (pickListId: number) =>
+    post<any>(`/backorder/v2/auto-from-pick/${pickListId}`, {}),
+  backorderV2Fulfill: (id: number) => post<any>(`/backorder/v2/${id}/fulfill`, {}),
+
+  // QC templates
+  qiTemplates: () => get<any[]>("/qi/templates"),
+  qiTemplateCreate: (data: any) => post<any>("/qi/templates", data),
+  qiFromTemplate: (data: any) => post<any>("/qi/from-template", data),
+
+  // Priority decay
+  soDecayPriorities: () => post<any>("/sales-orders/decay-priorities", {}),
+
+  // Exports
+  itemsExportUrl: () => "/api/masterdata/items/export",
+  employeesExportUrl: () => "/api/employees/export",
 
   // Quality
   qiList: () => get<any[]>("/qi/list"),
@@ -191,6 +261,7 @@ export const api = {
   // Analytics
   dashboard: () => get<any>("/analytics/dashboard"),
   analyticsSummary: () => get<any>("/analytics/summary"),
+  outboundKPIs: () => get<any>("/analytics/outbound-kpis"),
 
   // Workflow
   workflowList: () => get<any[]>("/workflow/list"),

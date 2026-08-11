@@ -11,6 +11,7 @@ import (
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/", create(db))
 	r.Get("/", list(db))
+	r.Get("/list", list(db))
 	r.Post("/:id/fulfill", fulfill(db))
 }
 

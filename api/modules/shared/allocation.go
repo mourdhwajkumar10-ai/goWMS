@@ -132,6 +132,71 @@ func ConsumeReserved(ctx context.Context, db DBTX, balanceID int, qty float64) e
 	return nil
 }
 
+// ReleasePickListReservations releases all unconsumed reserved qty for a pick list
+// and marks lines cancelled. Safe to call only when stock_consumed=false.
+// Does NOT touch actual_qty — only reserved_qty via ReleaseReserved.
+func ReleasePickListReservations(ctx context.Context, db DBTX, pickListID int) error {
+	if pickListID <= 0 {
+		return nil
+	}
+	var consumed bool
+	err := db.QueryRow(ctx, `
+		SELECT COALESCE(stock_consumed,false) FROM pick_lists WHERE id=$1 FOR UPDATE`, pickListID).Scan(&consumed)
+	if err != nil {
+		return err
+	}
+	if consumed {
+		return fmt.Errorf("cannot cancel: stock already consumed")
+	}
+
+	rows, err := db.Query(ctx, `
+		SELECT id, COALESCE(balance_id,0), COALESCE(allocated_qty,0), COALESCE(consumed_qty,0)
+		FROM pick_list_items WHERE pick_list_id=$1 ORDER BY id`, pickListID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	type line struct {
+		ID, BalanceID           int
+		Allocated, ConsumedQty  float64
+	}
+	var lines []line
+	for rows.Next() {
+		var l line
+		if err := rows.Scan(&l.ID, &l.BalanceID, &l.Allocated, &l.ConsumedQty); err != nil {
+			return err
+		}
+		lines = append(lines, l)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, l := range lines {
+		release := l.Allocated - l.ConsumedQty
+		if release < 0 {
+			release = 0
+		}
+		if l.BalanceID > 0 && release > 0 {
+			if err := ReleaseReserved(ctx, db, l.BalanceID, release); err != nil {
+				return err
+			}
+		}
+		_, err = db.Exec(ctx, `
+			UPDATE pick_list_items
+			SET allocated_qty=0, status='cancelled', balance_id=NULL
+			WHERE id=$1`, l.ID)
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = db.Exec(ctx, `
+		UPDATE pick_lists SET status='cancelled' WHERE id=$1 AND COALESCE(stock_consumed,false)=false`, pickListID)
+	return err
+}
+
 // ConsumePickListStock consumes reserved location stock for a pick list (idempotent per line).
 // Consumes picked_qty (or allocated if nothing picked yet but forceAllocated), releases unused reserve.
 func ConsumePickListStock(ctx context.Context, db DBTX, pickListID int) error {

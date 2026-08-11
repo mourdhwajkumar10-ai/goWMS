@@ -26,13 +26,37 @@ export default function Qi() {
   const [referenceType, setReferenceType] = useState('Purchase Receipt')
   const [referenceName, setReferenceName] = useState('')
   const [sampleSize, setSampleSize] = useState('10')
+  const [templates, setTemplates] = useState<any[]>([])
+  const [templateId, setTemplateId] = useState('')
+  const [showTmpl, setShowTmpl] = useState(false)
+  const [tmplName, setTmplName] = useState('')
+  const [tmplSpec, setTmplSpec] = useState('Visual,Quantity')
 
   const [rejectReason, setRejectReason] = useState('')
 
   const loadList = () => api.qiList().then(r => { if (r.ok) setList(r.data ?? []) })
-  useEffect(() => { loadList() }, [])
+  useEffect(() => {
+    loadList()
+    api.qiTemplates().then(r => { if (r.ok) setTemplates(r.data ?? []) })
+  }, [])
 
   const createInspection = async () => {
+    if (templateId) {
+      const r = await api.qiFromTemplate({
+        template_id: +templateId,
+        item_code: itemCode,
+        reference_type: referenceType,
+        reference_name: referenceName,
+        sample_size: +sampleSize || undefined,
+      })
+      if (r.ok) {
+        setMsg(`Inspection ${r.data.inspection_no} from template`)
+        setItemCode(''); setReferenceName('')
+        loadList()
+        notify({ type: 'success', title: 'From template', message: r.data.inspection_no })
+      } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
+      return
+    }
     const r = await api.qiCreate({
       item_code: itemCode,
       reference_type: referenceType,
@@ -45,6 +69,17 @@ export default function Qi() {
       loadList()
       notify({ type: 'success', title: 'Inspection Created', message: r.data.inspection_no })
     }
+  }
+
+  const createTemplate = async () => {
+    if (!tmplName) return
+    const checklist = tmplSpec.split(',').map(s => s.trim()).filter(Boolean).map(specification => ({ specification, required: true }))
+    const r = await api.qiTemplateCreate({ name: tmplName, checklist, sample_size: 1 })
+    if (r.ok) {
+      notify({ type: 'success', title: 'Template created', message: tmplName })
+      setShowTmpl(false); setTmplName('')
+      api.qiTemplates().then(res => { if (res.ok) setTemplates(res.data ?? []) })
+    } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
   }
 
   const openInspection = async (id: number) => {
@@ -112,14 +147,21 @@ export default function Qi() {
             <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Create Inspection</h3>
             </div>
-            <div className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+            <div className="p-4 space-y-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="erpnext-label">Item Code *</label>
                   <div className="flex gap-1">
                     <input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} placeholder="ITEM-001" />
                     <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
                   </div>
+                </div>
+                <div>
+                  <label className="erpnext-label">QC Template</label>
+                  <select className="erpnext-input" value={templateId} onChange={e => setTemplateId(e.target.value)}>
+                    <option value="">None</option>
+                    {templates.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
                 </div>
                 <div>
                   <label className="erpnext-label">Reference Type</label>
@@ -137,10 +179,18 @@ export default function Qi() {
                   <label className="erpnext-label">Sample Size</label>
                   <input className="erpnext-input" type="number" value={sampleSize} onChange={e => setSampleSize(e.target.value)} />
                 </div>
-                <div className="flex items-end">
+                <div className="flex items-end gap-2">
                   <button onClick={createInspection} className="erpnext-btn-primary">Create</button>
+                  <button onClick={() => setShowTmpl(!showTmpl)} className="erpnext-btn-secondary">+ Template</button>
                 </div>
               </div>
+              {showTmpl && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div><label className="erpnext-label">Template name</label><input className="erpnext-input" value={tmplName} onChange={e => setTmplName(e.target.value)} /></div>
+                  <div><label className="erpnext-label">Checklist specs (comma)</label><input className="erpnext-input" value={tmplSpec} onChange={e => setTmplSpec(e.target.value)} /></div>
+                  <div className="flex items-end"><button className="erpnext-btn-primary" onClick={createTemplate}>Save Template</button></div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -203,7 +253,7 @@ export default function Qi() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div className="flex gap-2">
                     <button onClick={acceptInspection} className="erpnext-btn-primary" style={{ background: 'var(--green)' }}>✓ Accept</button>
-                    <button onClick={() => {}} className="erpnext-btn-primary" style={{ background: 'var(--red)' }}>✕ Reject</button>
+                    <button onClick={() => rejectInspection()} className="erpnext-btn-primary" style={{ background: 'var(--red)' }}>✕ Reject</button>
                   </div>
                   <div className="md:col-span-2">
                     <label className="erpnext-label">Reject Reason (if rejecting)</label>

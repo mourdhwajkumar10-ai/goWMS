@@ -22,6 +22,9 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/trip/:id/start", startTrip(db))
 	r.Post("/trip/:id/complete", completeTrip(db))
 	r.Post("/signature", captureSignature(db))
+	r.Post("/trip/:id/generate-dn", generateDN(db))
+	r.Post("/trip/:id/stop/:stopId/visit", visitStop(db))
+	r.Post("/trip/:id/complete-gated", completeTripGated(db)) // feature-flag style alternate
 }
 
 func createTrip(db *pgxpool.Pool) fiber.Handler {
@@ -326,4 +329,134 @@ func userID(c *fiber.Ctx) int {
 		return v
 	}
 	return 0
+}
+
+// generateDN auto-creates a delivery note from trip stops / loaded boxes and links POD-ready DN.
+func generateDN(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		tripID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid trip id")
+		}
+		var body struct {
+			Customer       string `json:"customer"`
+			StopID         *int   `json:"stop_id"`
+			AgainstSO      string `json:"against_sales_order"`
+			CreateStop     bool   `json:"create_stop"`
+		}
+		_ = shared.Bind(c, &body)
+
+		var tripNo string
+		err = db.QueryRow(c.Context(), `SELECT trip_no FROM delivery_trips WHERE id=$1`, tripID).Scan(&tripNo)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "trip not found")
+		}
+
+		var dnID int
+		var dnName string
+		err = db.QueryRow(c.Context(), `
+			INSERT INTO delivery_notes (name, customer_name, status, against_sales_order, trip_id)
+			VALUES ('DN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('delivery_notes_id_seq')::TEXT,5,'0'),
+				$1, 'draft', $2, $3)
+			RETURNING id, name`,
+			nullEmpty(body.Customer), nullEmpty(body.AgainstSO), tripID).Scan(&dnID, &dnName)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		// Copy items from loaded boxes on this trip
+		_, _ = db.Exec(c.Context(), `
+			INSERT INTO delivery_note_items (delivery_note_id, item_code, qty, against_sales_order)
+			SELECT $1, bi.item_code, bi.quantity, $2
+			FROM box_load_logs bl
+			JOIN box_items bi ON bi.box_id = bl.box_id
+			WHERE bl.trip_id=$3`, dnID, body.AgainstSO, tripID)
+
+		stopID := 0
+		if body.StopID != nil {
+			stopID = *body.StopID
+			_, _ = db.Exec(c.Context(), `
+				UPDATE delivery_stops SET delivery_note_no=$2 WHERE id=$1 AND trip_id=$3`,
+				stopID, dnName, tripID)
+		} else if body.CreateStop || body.Customer != "" {
+			_ = db.QueryRow(c.Context(), `
+				INSERT INTO delivery_stops (trip_id, delivery_note_no, customer, stop_order, visited)
+				VALUES ($1,$2,$3, COALESCE((SELECT MAX(stop_order)+1 FROM delivery_stops WHERE trip_id=$1),1), false)
+				RETURNING id`, tripID, dnName, nullEmpty(body.Customer)).Scan(&stopID)
+		}
+
+		return shared.OK(c, fiber.Map{
+			"delivery_note_id": dnID, "delivery_note": dnName,
+			"trip_id": tripID, "stop_id": stopID,
+		})
+	}
+}
+
+func visitStop(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		tripID, _ := strconv.Atoi(c.Params("id"))
+		stopID, err := strconv.Atoi(c.Params("stopId"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid stop id")
+		}
+		var body struct {
+			Skipped       bool   `json:"skipped"`
+			SignatureData string `json:"signature_data"`
+			OrderNo       string `json:"order_no"`
+		}
+		_ = shared.Bind(c, &body)
+
+		tag, err := db.Exec(c.Context(), `
+			UPDATE delivery_stops SET visited=true, visited_time=NOW()
+			WHERE id=$1 AND trip_id=$2`, stopID, tripID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "stop not found on trip")
+		}
+
+		if body.SignatureData != "" {
+			var sigID int
+			_ = db.QueryRow(c.Context(), `
+				INSERT INTO delivery_signatures (stop_id, order_no, signature_data, captured_by)
+				VALUES ($1,$2,$3,$4) RETURNING id`,
+				stopID, body.OrderNo, body.SignatureData, userID(c)).Scan(&sigID)
+			// Link POD to DN if stop has DN
+			_, _ = db.Exec(c.Context(), `
+				UPDATE delivery_notes dn
+				SET pod_signature_id=$1, delivered_at=NOW(), status='Delivered'
+				FROM delivery_stops ds
+				WHERE ds.id=$2 AND ds.delivery_note_no = dn.name`, sigID, stopID)
+		}
+
+		return shared.OK(c, fiber.Map{"stop_id": stopID, "visited": true, "skipped": body.Skipped})
+	}
+}
+
+// completeTripGated blocks complete until all stops visited or explicitly skipped.
+// Use this path when ready; default /complete remains permissive.
+func completeTripGated(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var pending int
+		_ = db.QueryRow(c.Context(), `
+			SELECT COUNT(*) FROM delivery_stops WHERE trip_id=$1 AND visited=false`, id).Scan(&pending)
+		if pending > 0 {
+			return shared.Err(c, fiber.StatusBadRequest,
+				strconv.Itoa(pending)+" stop(s) not visited — mark visited/skipped or use /complete")
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE delivery_trips SET status='completed' WHERE id=$1 AND status IN ('in_transit','scheduled')`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "trip cannot be completed")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "status": "completed", "gated": true})
+	}
 }

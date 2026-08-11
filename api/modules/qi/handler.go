@@ -13,6 +13,7 @@ import (
 
 // Register wires the quality inspection routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
+	RegisterTemplates(r, db) // templates before /:id
 	r.Post("/", create(db))
 	r.Get("/", list(db))
 	r.Get("/list", list(db))

@@ -20,6 +20,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/:id/item", packItem(db))
 	r.Post("/:id/reverse", reverseItem(db))
 	r.Post("/:id/load", markLoaded(db)) // consume reserved stock
+	r.Get("/:id/label", boxLabel(db))
 }
 
 func listBoxes(db *pgxpool.Pool) fiber.Handler {
@@ -172,6 +173,25 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			batch = body.BatchNo
 		}
 
+		// Soft weight validation from item master
+		var unitWeight float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(weight_per_unit,0) FROM items WHERE code=$1`, body.ItemCode).Scan(&unitWeight)
+		addWeight := unitWeight * body.Quantity
+
+		var maxWeight *float64
+		var declared float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT max_weight, COALESCE(declared_weight,0) FROM boxes WHERE id=$1`, boxID).
+			Scan(&maxWeight, &declared)
+		newTotal := declared + addWeight
+		var warning string
+		if maxWeight != nil && *maxWeight > 0 && newTotal > *maxWeight {
+			warning = "box weight would exceed max_weight (" +
+				strconv.FormatFloat(newTotal, 'f', 2, 64) + " > " +
+				strconv.FormatFloat(*maxWeight, 'f', 2, 64) + ")"
+		}
+
 		var id int
 		err = db.QueryRow(c.Context(),
 			`INSERT INTO box_items (box_id,item_code,quantity,batch_no,scanned_by,scanned_at)
@@ -180,7 +200,18 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "box_id": boxID})
+		if addWeight > 0 {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE boxes SET declared_weight = COALESCE(declared_weight,0) + $1 WHERE id=$2`, addWeight, boxID)
+		}
+		resp := fiber.Map{"id": id, "box_id": boxID, "declared_weight": newTotal}
+		if warning != "" {
+			resp["warning"] = warning
+			resp["weight_ok"] = false
+		} else {
+			resp["weight_ok"] = true
+		}
+		return shared.OK(c, resp)
 	}
 }
 
@@ -278,6 +309,69 @@ func markLoaded(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"box_id": boxID, "loaded": true, "stock_consumed": true})
+	}
+}
+
+// boxLabel returns printable packing label payload (ZPL-ready fields + HTML snippet).
+func boxLabel(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var label string
+		var pickListID *int
+		var dn *string
+		err = db.QueryRow(c.Context(), `
+			SELECT label, pick_list_id, delivery_note FROM boxes WHERE id=$1`, id).
+			Scan(&label, &pickListID, &dn)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "box not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		rows, err := db.Query(c.Context(), `
+			SELECT item_code, quantity, COALESCE(batch_no,'') FROM box_items WHERE box_id=$1 ORDER BY id`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		type line struct {
+			ItemCode string  `json:"item_code"`
+			Qty      float64 `json:"quantity"`
+			BatchNo  string  `json:"batch_no"`
+		}
+		var items []line
+		for rows.Next() {
+			var l line
+			if err := rows.Scan(&l.ItemCode, &l.Qty, &l.BatchNo); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			items = append(items, l)
+		}
+		if items == nil {
+			items = []line{}
+		}
+
+		dnStr := ""
+		if dn != nil {
+			dnStr = *dn
+		}
+		html := "<div style='font-family:monospace;padding:12px;border:2px solid #000'>" +
+			"<h2>BOX " + label + "</h2>" +
+			"<p>DN: " + dnStr + "</p><ul>"
+		for _, it := range items {
+			html += "<li>" + it.ItemCode + " × " + strconv.FormatFloat(it.Qty, 'f', -1, 64) + "</li>"
+		}
+		html += "</ul></div>"
+
+		return shared.OK(c, fiber.Map{
+			"box_id": id, "label": label, "pick_list_id": pickListID,
+			"delivery_note": dn, "items": items, "html": html,
+			"zpl": "^XA^FO50,50^A0N,40,40^FD" + label + "^FS^XZ",
+		})
 	}
 }
 

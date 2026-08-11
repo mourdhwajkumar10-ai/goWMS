@@ -1,4 +1,5 @@
-import { FormEvent, useEffect, useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
@@ -22,13 +23,14 @@ interface BoxItem {
 }
 
 export default function Pack() {
+  const [searchParams] = useSearchParams()
   const [boxes, setBoxes] = useState<Box[]>([])
   const [selectedBox, setSelectedBox] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [msg, setMsg] = useState('')
 
   const [label, setLabel] = useState('')
-  const [pickListId, setPickListId] = useState('')
+  const [pickListId, setPickListId] = useState(searchParams.get('pick_list_id') || '')
   const [deliveryNote, setDeliveryNote] = useState('')
 
   const [packItem, setPackItem] = useState('')
@@ -37,6 +39,10 @@ export default function Pack() {
 
   const loadBoxes = () => api.packSessions().then(r => { if (r.ok) setBoxes(r.data ?? []) })
   useEffect(() => { loadBoxes() }, [])
+  useEffect(() => {
+    const fromUrl = searchParams.get('pick_list_id')
+    if (fromUrl) setPickListId(fromUrl)
+  }, [searchParams])
 
   const createBox = async () => {
     const r = await api.packCreate({
@@ -64,15 +70,35 @@ export default function Pack() {
 
   const packIntoBox = async () => {
     if (!packItem || !selectedBox) return
-    const r = await api.post(`/packing/${selectedBox.id}/item`, {
-      item_code: packItem,
-      quantity: +packQty || 1,
-      batch_no: packBatch || undefined,
-    })
-    if (r.ok) {
-      notify({ type: 'success', title: 'Item Packed', message: `${packItem}: ${packQty} units` })
-      setPackItem(''); setPackQty('1'); setPackBatch('')
-      openBox(selectedBox.id)
+    try {
+      const r = await api.post(`/packing/${selectedBox.id}/item`, {
+        item_code: packItem,
+        quantity: +packQty || 1,
+        batch_no: packBatch || undefined,
+      })
+      if (r.ok) {
+        if ((r.data as any)?.warning) {
+          notify({ type: 'warning', title: 'Packed (weight warning)', message: (r.data as any).warning })
+        } else {
+          notify({ type: 'success', title: 'Item Packed', message: `${packItem}: ${packQty} units` })
+        }
+        setPackItem(''); setPackQty('1'); setPackBatch('')
+        openBox(selectedBox.id)
+      } else if (!navigator.onLine) {
+        const { enqueueScan } = await import('../utils/offlineQueue')
+        enqueueScan(`/packing/${selectedBox.id}/item`, {
+          item_code: packItem, quantity: +packQty || 1, batch_no: packBatch || undefined,
+        })
+        notify({ type: 'warning', title: 'Offline queued', message: 'Will sync when online' })
+      } else {
+        notify({ type: 'error', title: 'Pack failed', message: r.error || '' })
+      }
+    } catch {
+      const { enqueueScan } = await import('../utils/offlineQueue')
+      enqueueScan(`/packing/${selectedBox.id}/item`, {
+        item_code: packItem, quantity: +packQty || 1, batch_no: packBatch || undefined,
+      })
+      notify({ type: 'warning', title: 'Queued offline', message: 'Network error — saved locally' })
     }
   }
 
@@ -178,7 +204,19 @@ export default function Pack() {
                 Pick List: {selectedBox.pick_list_id || '—'} | Delivery Note: {selectedBox.delivery_note || '—'}
               </p>
             </div>
-            <button onClick={() => setSelectedBox(null)} className="erpnext-btn-secondary">Back</button>
+            <div className="flex gap-2">
+              <button
+                className="erpnext-btn-secondary"
+                onClick={async () => {
+                  const r = await api.packLabel(selectedBox.id)
+                  if (r.ok && r.data?.html) {
+                    const w = window.open('', '_blank')
+                    if (w) { w.document.write(r.data.html); w.document.close(); w.print() }
+                  } else notify({ type: 'error', title: 'Label failed', message: r.error || '' })
+                }}
+              >Print Label</button>
+              <button onClick={() => setSelectedBox(null)} className="erpnext-btn-secondary">Back</button>
+            </div>
           </div>
 
           <div className="p-4">
@@ -187,17 +225,34 @@ export default function Pack() {
               <div>
                 <label className="erpnext-label">Item Code</label>
                 <div className="flex gap-1">
-                  <input className="erpnext-input" value={packItem} onChange={e => setPackItem(e.target.value)} placeholder="ITEM-001" />
+                  <input
+                    className="erpnext-input"
+                    value={packItem}
+                    onChange={e => setPackItem(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); packIntoBox() } }}
+                    placeholder="ITEM-001"
+                  />
                   <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
                 </div>
               </div>
               <div>
                 <label className="erpnext-label">Quantity</label>
-                <input className="erpnext-input" type="number" value={packQty} onChange={e => setPackQty(e.target.value)} />
+                <input
+                  className="erpnext-input"
+                  type="number"
+                  value={packQty}
+                  onChange={e => setPackQty(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); packIntoBox() } }}
+                />
               </div>
               <div>
                 <label className="erpnext-label">Batch No</label>
-                <input className="erpnext-input" value={packBatch} onChange={e => setPackBatch(e.target.value)} />
+                <input
+                  className="erpnext-input"
+                  value={packBatch}
+                  onChange={e => setPackBatch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); packIntoBox() } }}
+                />
               </div>
               <div className="flex items-end">
                 <button onClick={packIntoBox} className="erpnext-btn-primary">Pack</button>
