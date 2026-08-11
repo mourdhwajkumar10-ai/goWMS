@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { api, getRole } from '../services/api'
 import { notify } from '../components/Notifications'
 
-type Perm = { code: string; module: string; name: string; description: string }
+type AccessLevel = 'none' | 'view' | 'edit'
+type AccessProfile = { inbound: AccessLevel; outbound: AccessLevel; admin: AccessLevel }
+
 type Role = {
   id: number
   code: string
@@ -10,73 +12,69 @@ type Role = {
   description: string
   is_system: boolean
   permissions: string[]
+  access_profile?: AccessProfile
 }
+
+const LEVELS: AccessLevel[] = ['none', 'view', 'edit']
+const emptyProfile = (): AccessProfile => ({ inbound: 'none', outbound: 'none', admin: 'none' })
 
 export default function Roles() {
   const myRole = (getRole() || '').toLowerCase()
   const canManage = myRole === 'admin'
 
   const [roles, setRoles] = useState<Role[]>([])
-  const [catalog, setCatalog] = useState<Perm[]>([])
   const [selectedId, setSelectedId] = useState<number | null>(null)
-  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [profile, setProfile] = useState<AccessProfile>(emptyProfile())
   const [showNew, setShowNew] = useState(false)
   const [newCode, setNewCode] = useState('')
   const [newName, setNewName] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [seeding, setSeeding] = useState(false)
 
   const selected = roles.find(r => r.id === selectedId) || null
 
-  const byModule = useMemo(() => {
-    const m = new Map<string, Perm[]>()
-    for (const p of catalog) {
-      if (p.code === '*') continue
-      const list = m.get(p.module) || []
-      list.push(p)
-      m.set(p.module, list)
-    }
-    return Array.from(m.entries()).sort((a, b) => a[0].localeCompare(b[0]))
-  }, [catalog])
-
   const load = async () => {
-    const [r, p] = await Promise.all([api.rolesList(), api.permissionsCatalog()])
+    const r = await api.rolesList()
     if (r.ok) {
-      setRoles(r.data ?? [])
-      if (selectedId == null && (r.data?.length ?? 0) > 0) {
-        const first = r.data![0]
+      const data: Role[] = r.data ?? []
+      setRoles(data)
+      if (selectedId == null && data.length > 0) {
+        const first = data[0]
         setSelectedId(first.id)
-        setChecked(new Set(first.permissions || []))
+        setProfile({ ...emptyProfile(), ...(first.access_profile || {}) })
       } else if (selectedId != null) {
-        const cur = (r.data ?? []).find((x: Role) => x.id === selectedId)
-        if (cur) setChecked(new Set(cur.permissions || []))
+        const cur = data.find(x => x.id === selectedId)
+        if (cur) setProfile({ ...emptyProfile(), ...(cur.access_profile || {}) })
       }
+    } else {
+      setRoles([])
     }
-    if (p.ok) setCatalog(p.data ?? [])
   }
 
   useEffect(() => { load() }, [])
 
   const selectRole = (r: Role) => {
     setSelectedId(r.id)
-    setChecked(new Set(r.permissions || []))
+    setProfile({ ...emptyProfile(), ...(r.access_profile || {}) })
   }
 
-  const toggle = (code: string) => {
-    if (!canManage) return
-    setChecked(prev => {
-      const next = new Set(prev)
-      if (next.has(code)) next.delete(code)
-      else next.add(code)
-      return next
-    })
-  }
-
-  const savePerms = async () => {
-    if (!selected || !canManage) return
-    const perms = Array.from(checked)
-    const res = await api.roleSetPermissions(selected.id, perms)
+  const seedDefaults = async () => {
+    setSeeding(true)
+    const res = await api.rolesSeedDefaults()
+    setSeeding(false)
     if (res.ok) {
-      notify({ type: 'success', title: 'Permissions saved', message: selected.code })
+      notify({ type: 'success', title: 'Roles seeded', message: `${res.data?.ensured ?? 0} roles ready` })
+      await load()
+    } else {
+      notify({ type: 'error', title: 'Seed failed', message: res.error || 'Apply migrations 011+012 on the DB' })
+    }
+  }
+
+  const saveAccess = async () => {
+    if (!selected || !canManage) return
+    const res = await api.roleSetAccess(selected.id, profile)
+    if (res.ok) {
+      notify({ type: 'success', title: 'Access saved', message: selected.code })
       load()
     } else {
       notify({ type: 'error', title: 'Save failed', message: res.error || '' })
@@ -89,17 +87,14 @@ export default function Roles() {
       code: newCode.toLowerCase().trim(),
       name: newName.trim(),
       description: newDesc.trim() || undefined,
-      permissions: [],
+      access_profile: emptyProfile(),
     })
     if (res.ok) {
       notify({ type: 'success', title: 'Role created', message: newCode })
       setShowNew(false)
       setNewCode(''); setNewName(''); setNewDesc('')
       await load()
-      if (res.data?.id) {
-        const created = (await api.rolesList()).data?.find((x: Role) => x.id === res.data!.id)
-        if (created) selectRole(created)
-      }
+      if (res.data?.id) setSelectedId(res.data.id)
     } else {
       notify({ type: 'error', title: 'Create failed', message: res.error || '' })
     }
@@ -127,17 +122,48 @@ export default function Roles() {
     )
   }
 
+  const levelSelect = (area: keyof AccessProfile, label: string, hint: string) => (
+    <div className="erpnext-card p-4 space-y-2">
+      <div className="font-medium">{label}</div>
+      <p className="text-xs" style={{ color: 'var(--text-dim)' }}>{hint}</p>
+      <select
+        className="erpnext-input"
+        value={profile[area]}
+        onChange={e => setProfile(p => ({ ...p, [area]: e.target.value as AccessLevel }))}
+      >
+        {LEVELS.map(l => (
+          <option key={l} value={l}>{l.charAt(0).toUpperCase() + l.slice(1)}</option>
+        ))}
+      </select>
+    </div>
+  )
+
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
-          <h2 className="text-lg font-semibold">Roles & Permissions</h2>
+          <h2 className="text-lg font-semibold">Roles & Access</h2>
           <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            Configure what each role can access. API enforcement stays off until <code>GOWMS_RBAC=1</code>.
+            High-level access: Inbound, Outbound, Admin. Levels: None / View / Edit.
+            API enforcement stays off until <code>GOWMS_RBAC=1</code>.
           </p>
         </div>
-        <button className="erpnext-btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel' : '+ Custom role'}</button>
+        <div className="flex gap-2">
+          {roles.length === 0 && (
+            <button className="erpnext-btn-secondary" disabled={seeding} onClick={seedDefaults}>
+              {seeding ? 'Seeding…' : 'Seed default roles'}
+            </button>
+          )}
+          <button className="erpnext-btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel' : '+ Custom role'}</button>
+        </div>
       </div>
+
+      {roles.length === 0 && (
+        <div className="erpnext-card p-4 text-sm" style={{ color: 'var(--text-dim)' }}>
+          No roles in the database. Click <strong>Seed default roles</strong> (needs migrations 011+012),
+          or run them on the VM, then refresh. Employees will use the same role list.
+        </div>
+      )}
 
       {showNew && (
         <div className="erpnext-card p-4 space-y-3">
@@ -165,7 +191,10 @@ export default function Roles() {
                   <td>
                     <div className="font-medium">{r.name}</div>
                     <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
-                      {r.code}{r.is_system ? ' · system' : ''} · {(r.permissions || []).length} perms
+                      {r.code}{r.is_system ? ' · system' : ''}
+                      {r.access_profile && (
+                        <> · I:{r.access_profile.inbound} O:{r.access_profile.outbound} A:{r.access_profile.admin}</>
+                      )}
                     </div>
                   </td>
                   <td>
@@ -175,58 +204,31 @@ export default function Roles() {
                   </td>
                 </tr>
               ))}
-              {roles.length === 0 && (
-                <tr><td colSpan={2} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No roles — apply migration 011</td></tr>
-              )}
             </tbody>
           </table>
         </div>
 
-        <div className="erpnext-card p-4 lg:col-span-2 space-y-4">
+        <div className="lg:col-span-2 space-y-4">
           {!selected ? (
-            <p style={{ color: 'var(--text-dim)' }}>Select a role</p>
+            <div className="erpnext-card p-4" style={{ color: 'var(--text-dim)' }}>Select a role</div>
           ) : (
             <>
-              <div className="flex justify-between items-start">
+              <div className="flex justify-between items-start gap-3">
                 <div>
                   <h3 className="font-semibold">{selected.name}</h3>
                   <p className="text-sm" style={{ color: 'var(--text-dim)' }}>{selected.description || selected.code}</p>
                 </div>
-                <button className="erpnext-btn-primary" onClick={savePerms}>Save permissions</button>
+                <button className="erpnext-btn-primary" onClick={saveAccess}>Save access</button>
               </div>
-
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={checked.has('*')}
-                  onChange={() => toggle('*')}
-                />
-                <span><strong>Full access (*)</strong> — bypass all module checks</span>
-              </label>
-
-              {byModule.map(([mod, perms]) => (
-                <div key={mod}>
-                  <div className="text-xs uppercase tracking-wide mb-2" style={{ color: 'var(--text-dim)' }}>{mod.replace('_', ' ')}</div>
-                  <div className="space-y-2">
-                    {perms.map(p => (
-                      <label key={p.code} className="flex items-start gap-2 text-sm">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={checked.has(p.code) || checked.has('*')}
-                          disabled={checked.has('*')}
-                          onChange={() => toggle(p.code)}
-                        />
-                        <span>
-                          <span className="font-medium">{p.name}</span>
-                          <span className="ml-2 text-xs" style={{ color: 'var(--text-dim)' }}>{p.code}</span>
-                          {p.description && <div className="text-xs" style={{ color: 'var(--text-dim)' }}>{p.description}</div>}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              ))}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {levelSelect('inbound', 'Inbound', 'GRN, packing list, QI, putaway')}
+                {levelSelect('outbound', 'Outbound', 'Sales orders, pick, pack, dispatch, backorders, returns')}
+                {levelSelect('admin', 'Admin panel', 'Masters, employees, roles, analytics, import/export')}
+              </div>
+              <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                View = module access without employee/role manage. Edit = full area access.
+                Admin Edit also grants full (*).
+              </p>
             </>
           )}
         </div>

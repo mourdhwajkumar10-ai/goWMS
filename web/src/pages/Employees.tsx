@@ -8,42 +8,83 @@ export default function Employees() {
 
   const [list, setList] = useState<any[]>([])
   const [roles, setRoles] = useState<{ code: string; name: string }[]>([])
+  const [rolesLoaded, setRolesLoaded] = useState(false)
   const [showNew, setShowNew] = useState(false)
-  const [name, setName] = useState('')
-  const [number, setNumber] = useState('')
+  const [firstName, setFirstName] = useState('')
+  const [lastName, setLastName] = useState('')
+  const [previewId, setPreviewId] = useState('')
   const [badge, setBadge] = useState('')
-  const [role, setRole] = useState('picker')
+  const [role, setRole] = useState('')
   const [pin, setPin] = useState('')
   const [dept, setDept] = useState('')
+  const [seeding, setSeeding] = useState(false)
 
-  const load = () => {
+  const load = async () => {
     api.employeeList().then(r => { if (r.ok) setList(r.data ?? []) })
-    api.rolesList().then(r => {
-      if (r.ok && r.data?.length) {
-        setRoles(r.data.map((x: any) => ({ code: x.code, name: x.name })))
-      }
-    })
+    const r = await api.rolesList()
+    setRolesLoaded(true)
+    if (r.ok && r.data?.length) {
+      const opts = r.data.map((x: any) => ({ code: x.code, name: x.name }))
+      setRoles(opts)
+      setRole(prev => prev || opts.find(o => o.code === 'picker')?.code || opts[0].code)
+    } else {
+      setRoles([])
+    }
   }
   useEffect(() => { load() }, [])
 
-  const roleOptions = roles.length
-    ? roles
-    : ['admin','supervisor','picker','packer','qi','dispatcher','wm','driver','billing'].map(c => ({ code: c, name: c }))
+  useEffect(() => {
+    if (!firstName && !lastName) {
+      setPreviewId('')
+      return
+    }
+    const t = setTimeout(() => {
+      api.employeeNextId(firstName, lastName).then(r => {
+        if (r.ok) setPreviewId(r.data?.employee_number || '')
+        else setPreviewId('')
+      })
+    }, 250)
+    return () => clearTimeout(t)
+  }, [firstName, lastName])
+
+  const seedDefaults = async () => {
+    setSeeding(true)
+    const res = await api.rolesSeedDefaults()
+    setSeeding(false)
+    if (res.ok) {
+      notify({ type: 'success', title: 'Roles seeded', message: 'Same list as Roles page' })
+      await load()
+    } else {
+      notify({ type: 'error', title: 'Seed failed', message: res.error || 'Apply migrations 011+012' })
+    }
+  }
 
   const create = async () => {
-    if (!name) return
+    if (!firstName.trim() || !lastName.trim()) {
+      notify({ type: 'error', title: 'Name required', message: 'First and last name required' })
+      return
+    }
+    if (!role) {
+      notify({ type: 'error', title: 'Role required', message: 'Seed roles first' })
+      return
+    }
     const r = await api.employeeCreate({
-      employee_name: name,
-      employee_number: number || undefined,
+      first_name: firstName.trim(),
+      last_name: lastName.trim(),
+      employee_name: `${firstName.trim()} ${lastName.trim()}`,
       badge_code: badge || undefined,
       wms_role: role,
       department: dept || undefined,
       pin: pin || undefined,
     })
     if (r.ok) {
-      notify({ type: 'success', title: 'Employee created', message: name })
+      notify({
+        type: 'success',
+        title: 'Employee created',
+        message: `${r.data?.employee_name || ''} · ${r.data?.employee_number || previewId}`,
+      })
       setShowNew(false)
-      setName(''); setNumber(''); setBadge(''); setPin(''); setDept('')
+      setFirstName(''); setLastName(''); setPreviewId(''); setBadge(''); setPin(''); setDept('')
       load()
     } else {
       notify({ type: 'error', title: 'Failed', message: r.error || '' })
@@ -77,11 +118,11 @@ export default function Employees() {
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Employees</h2>
           <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            PIN login · badge · assign WMS role (JWT <code>role</code> claim). Configure permissions on Roles page.
+            Employee ID auto: first4 + last4 + 01/02… Roles come from the Roles page only.
           </p>
         </div>
         <div className="flex gap-2">
@@ -106,22 +147,38 @@ export default function Employees() {
         </div>
       </div>
 
+      {rolesLoaded && roles.length === 0 && (
+        <div className="erpnext-card p-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
+            No roles yet — same as Roles page. Seed defaults (migrations 011+012) before assigning.
+          </p>
+          <button className="erpnext-btn-secondary" disabled={seeding} onClick={seedDefaults}>
+            {seeding ? 'Seeding…' : 'Seed default roles'}
+          </button>
+        </div>
+      )}
+
       {showNew && (
         <div className="erpnext-card p-4 space-y-3">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div><label className="erpnext-label">Name *</label><input className="erpnext-input" value={name} onChange={e => setName(e.target.value)} /></div>
-            <div><label className="erpnext-label">Employee No</label><input className="erpnext-input" value={number} onChange={e => setNumber(e.target.value)} /></div>
+            <div><label className="erpnext-label">First name *</label><input className="erpnext-input" value={firstName} onChange={e => setFirstName(e.target.value)} /></div>
+            <div><label className="erpnext-label">Last name *</label><input className="erpnext-input" value={lastName} onChange={e => setLastName(e.target.value)} /></div>
+            <div>
+              <label className="erpnext-label">Employee ID (auto)</label>
+              <input className="erpnext-input" value={previewId || '—'} readOnly disabled />
+            </div>
             <div><label className="erpnext-label">Badge Code</label><input className="erpnext-input" value={badge} onChange={e => setBadge(e.target.value)} /></div>
             <div>
               <label className="erpnext-label">WMS Role</label>
-              <select className="erpnext-input" value={role} onChange={e => setRole(e.target.value)}>
-                {roleOptions.map(r => <option key={r.code} value={r.code}>{r.name} ({r.code})</option>)}
+              <select className="erpnext-input" value={role} onChange={e => setRole(e.target.value)} disabled={roles.length === 0}>
+                {roles.length === 0 && <option value="">No roles</option>}
+                {roles.map(r => <option key={r.code} value={r.code}>{r.name} ({r.code})</option>)}
               </select>
             </div>
             <div><label className="erpnext-label">Department</label><input className="erpnext-input" value={dept} onChange={e => setDept(e.target.value)} /></div>
             <div><label className="erpnext-label">PIN (optional)</label><input className="erpnext-input" value={pin} onChange={e => setPin(e.target.value)} type="password" /></div>
           </div>
-          <div className="flex justify-end"><button className="erpnext-btn-primary" onClick={create}>Create</button></div>
+          <div className="flex justify-end"><button className="erpnext-btn-primary" onClick={create} disabled={roles.length === 0}>Create</button></div>
         </div>
       )}
 
@@ -138,10 +195,15 @@ export default function Employees() {
                   <select
                     className="erpnext-input text-sm"
                     style={{ minWidth: 140 }}
-                    value={e.wms_role || 'picker'}
+                    value={e.wms_role || role || ''}
                     onChange={ev => assignRole(e.id, ev.target.value)}
+                    disabled={roles.length === 0}
                   >
-                    {roleOptions.map(r => <option key={r.code} value={r.code}>{r.code}</option>)}
+                    {roles.length === 0 && <option value={e.wms_role || ''}>{e.wms_role || '—'}</option>}
+                    {e.wms_role && !roles.some(r => r.code === e.wms_role) && (
+                      <option value={e.wms_role}>{e.wms_role} (not in roles)</option>
+                    )}
+                    {roles.map(r => <option key={r.code} value={r.code}>{r.code}</option>)}
                   </select>
                 </td>
                 <td>{e.has_pin ? '✓' : '—'}</td>

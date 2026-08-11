@@ -86,17 +86,22 @@ export const api = {
   // Employees
   employeeList: () => get<any[]>("/employees/list"),
   employeeCreate: (data: any) => post<any>("/employees/", data),
+  employeeNextId: (first: string, last: string) =>
+    get<any>(`/employees/next-id?first=${encodeURIComponent(first)}&last=${encodeURIComponent(last)}`),
   employeeSetPin: (id: number, pin: string) => post<any>(`/employees/${id}/pin`, { pin }),
   employeeAssignRole: (id: number, wms_role: string) => put<any>(`/employees/${id}/role`, { wms_role }),
 
   // Roles / RBAC
   rolesList: () => get<any[]>("/roles/list"),
+  rolesSeedDefaults: () => post<any>("/roles/seed-defaults", {}),
   roleGet: (id: number) => get<any>(`/roles/${id}`),
   roleCreate: (data: any) => post<any>("/roles/", data),
   roleUpdate: (id: number, data: any) => put<any>(`/roles/${id}`, data),
   roleDelete: (id: number) => del<any>(`/roles/${id}`),
   roleSetPermissions: (id: number, permissions: string[]) =>
     put<any>(`/roles/${id}/permissions`, { permissions }),
+  roleSetAccess: (id: number, access: { inbound: string; outbound: string; admin: string }) =>
+    put<any>(`/roles/${id}/access`, access),
   permissionsCatalog: () => get<any[]>("/permissions"),
 
   // Returns

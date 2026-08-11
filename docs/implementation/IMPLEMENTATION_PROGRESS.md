@@ -1,38 +1,44 @@
 # Implementation Progress — goWMS
 
-**Updated:** 2026-08-11 (admin-configurable RBAC)  
+**Updated:** 2026-08-11 (high-level Roles UX + auto employee IDs)  
 **Rule:** Extend integer/ERPNext schema only. Protect FEFO reserve→consume. Conflict designs in separate files.
 
 ---
 
-## Done (RBAC — this session)
+## Done (Roles UX + employee IDs — this session)
+
+### Sync Roles ↔ Employees
+- [x] Removed Employees hardcoded role fallback — dropdown = `/api/roles` only
+- [x] Empty-state + **Seed default roles** on both pages → `POST /api/roles/seed-defaults`
+- [x] Migration `012_role_access_profile.sql` — `roles.access_profile` JSONB
+
+### High-level access (Inbound / Outbound / Admin × None|View|Edit)
+- [x] `api/modules/rbac/access_levels.go` — expands profile → `role_permissions`
+- [x] `PUT /api/roles/:id/access` — save profile + rewrite permissions
+- [x] Roles UI rebuilt: 3 dropdowns (no fine-grained checkbox grid)
+- [x] Admin Edit ⇒ `*`; Admin View excludes `employees.manage` / `roles.manage`
+
+### Auto employee ID
+- [x] Format `{first4}{last4}{NN}` e.g. Rahul Sharma → `RAHUSHAR01`
+- [x] `GET /api/employees/next-id?first=&last=` preview
+- [x] Create form: first + last name; ID auto-generated server-side
+
+### Enable on VM
+```bash
+# After deploy / git pull:
+docker compose run --rm migrate   # or apply 011+012
+# In UI: Roles → Seed default roles (if empty) → set Inbound/Outbound/Admin → Employees assign
+```
+
+---
+
+## Done (RBAC — prior)
 
 ### Admin-configurable roles
 - [x] `migrations/011_rbac_roles_permissions.sql` — `roles`, `role_permissions`; seeds admin/supervisor/picker/packer/qi/dispatcher (+ legacy wm/driver/billing)
-- [x] Fixed permission catalog in `api/modules/rbac/catalog.go` (modules: masters, grn, qi, putaway, sales_orders, picking, packing, dispatch, backorders, returns, employees, roles, analytics, notifications, import_export)
-- [x] JWT still uses `roles.code` via `employees.wms_role` / `users.role` (no breaking claim change)
-- [x] Dropped `users_role_check` so custom role codes work
-
-### APIs
-- [x] `GET /api/permissions` — catalog
-- [x] `GET/POST /api/roles`, `GET/PUT/DELETE /api/roles/:id`, `PUT /api/roles/:id/permissions`
-- [x] System roles cannot be deleted; custom roles blocked if still assigned
-- [x] `PUT /api/employees/:id/role` — assign `wms_role` (requires `employees.manage`)
-- [x] Role mutations require `roles.manage` (admin always); employee mutations require `employees.manage`
-- [x] Path enforcement still **default OFF** — `GOWMS_RBAC=1` loads DB perms (in-process cache)
-
-### UI
-- [x] **Employees** — role dropdown from `/roles`, inline assign, admin soft-gate
-- [x] **Roles** — list, create custom, permission checkboxes by module
-- [x] Layout nav: Employees + Roles soft-hidden unless admin/wm/supervisor
-
-### Enable enforcement (after configuring roles)
-```bash
-psql "$DATABASE_URL" -f migrations/011_rbac_roles_permissions.sql
-# In UI: Roles → set permissions; Employees → assign roles
-export GOWMS_RBAC=1
-go run ./cmd/server
-```
+- [x] Fixed permission catalog in `api/modules/rbac/catalog.go`
+- [x] JWT still uses `roles.code` via `employees.wms_role` / `users.role`
+- [x] Path enforcement still **default OFF** — `GOWMS_RBAC=1`
 
 ---
 

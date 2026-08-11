@@ -2,8 +2,10 @@ package employee
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
@@ -19,6 +21,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/", list(db))
 	r.Get("/list", list(db))
 	r.Get("/export", exportCSV(db))
+	r.Get("/next-id", nextID(db))
 	r.Post("/", rbac.RequireEmployeesManage, create(db))
 	r.Get("/:id", get(db))
 	r.Put("/:id", rbac.RequireEmployeesManage, update(db))
@@ -69,10 +72,27 @@ func list(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func nextID(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		first := c.Query("first")
+		last := c.Query("last")
+		if first == "" && last == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "first or last required")
+		}
+		id, err := generateEmployeeNumber(db, c, first, last)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"employee_number": id, "prefix": namePrefix(first, last)})
+	}
+}
+
 func create(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
 			EmployeeName   string `json:"employee_name"`
+			FirstName      string `json:"first_name"`
+			LastName       string `json:"last_name"`
 			Company        string `json:"company"`
 			EmployeeNumber string `json:"employee_number"`
 			Department     string `json:"department"`
@@ -87,9 +107,26 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		if body.EmployeeName == "" {
-			return shared.Err(c, fiber.StatusBadRequest, "employee_name required")
+
+		first := strings.TrimSpace(body.FirstName)
+		last := strings.TrimSpace(body.LastName)
+		name := strings.TrimSpace(body.EmployeeName)
+		if name == "" {
+			name = strings.TrimSpace(first + " " + last)
 		}
+		if name == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "first_name and last_name (or employee_name) required")
+		}
+		if first == "" && last == "" {
+			parts := strings.Fields(name)
+			if len(parts) >= 1 {
+				first = parts[0]
+			}
+			if len(parts) >= 2 {
+				last = parts[len(parts)-1]
+			}
+		}
+
 		if body.Company == "" {
 			body.Company = "Nirvana"
 		}
@@ -100,7 +137,23 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		if ok, err := rbac.RoleExists(db, c, body.WMSRole); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		} else if !ok {
-			return shared.Err(c, fiber.StatusBadRequest, "unknown role: "+body.WMSRole)
+			return shared.Err(c, fiber.StatusBadRequest, "unknown role: "+body.WMSRole+" (seed roles first)")
+		}
+
+		empNo := strings.TrimSpace(body.EmployeeNumber)
+		if empNo == "" {
+			generated, err := generateEmployeeNumber(db, c, first, last)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			empNo = generated
+		} else {
+			var taken bool
+			_ = db.QueryRow(c.Context(), `
+				SELECT EXISTS(SELECT 1 FROM employees WHERE upper(employee_number)=upper($1))`, empNo).Scan(&taken)
+			if taken {
+				return shared.Err(c, fiber.StatusConflict, "employee_number already exists")
+			}
 		}
 
 		var pinHash any
@@ -121,13 +174,13 @@ func create(db *pgxpool.Pool) fiber.Handler {
 				employee_name, company, employee_number, department, designation,
 				warehouse_id, wms_role, badge_code, cell_number, company_email, pin_hash, status
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'Active') RETURNING id`,
-			body.EmployeeName, body.Company, nullEmpty(body.EmployeeNumber), nullEmpty(body.Department),
+			name, body.Company, empNo, nullEmpty(body.Department),
 			nullEmpty(body.Designation), body.WarehouseID, body.WMSRole, nullEmpty(body.BadgeCode),
 			nullEmpty(body.CellNumber), nullEmpty(body.CompanyEmail), pinHash).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id})
+		return shared.OK(c, fiber.Map{"id": id, "employee_number": empNo, "employee_name": name})
 	}
 }
 
@@ -221,7 +274,7 @@ func assignRole(db *pgxpool.Pool) fiber.Handler {
 		}
 		var body struct {
 			WMSRole string `json:"wms_role"`
-			Role    string `json:"role"` // alias
+			Role    string `json:"role"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -268,7 +321,6 @@ func setPIN(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to hash pin")
 		}
-		// bump token_version so old JWTs can be invalidated later
 		_, err = db.Exec(c.Context(), `
 			UPDATE employees SET pin_hash=$2, token_version = COALESCE(token_version,1)+1 WHERE id=$1`, id, string(h))
 		if err != nil {
@@ -283,6 +335,54 @@ func nullEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+var nonLetter = regexp.MustCompile(`[^A-Za-z]+`)
+
+func lettersOnly(s string) string {
+	s = nonLetter.ReplaceAllString(s, "")
+	var b strings.Builder
+	for _, r := range strings.ToUpper(s) {
+		if unicode.IsLetter(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func pad4(s string) string {
+	s = lettersOnly(s)
+	if len(s) >= 4 {
+		return s[:4]
+	}
+	for len(s) < 4 {
+		s += "X"
+	}
+	return s
+}
+
+func namePrefix(first, last string) string {
+	return pad4(first) + pad4(last)
+}
+
+func generateEmployeeNumber(db *pgxpool.Pool, c *fiber.Ctx, first, last string) (string, error) {
+	prefix := namePrefix(first, last)
+	if prefix == "XXXXXXXX" {
+		return "", fmt.Errorf("could not derive employee id from name")
+	}
+	for n := 1; n <= 99; n++ {
+		candidate := fmt.Sprintf("%s%02d", prefix, n)
+		var taken bool
+		err := db.QueryRow(c.Context(), `
+			SELECT EXISTS(SELECT 1 FROM employees WHERE upper(employee_number)=upper($1))`, candidate).Scan(&taken)
+		if err != nil {
+			return "", err
+		}
+		if !taken {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no free employee_number for prefix %s", prefix)
 }
 
 func exportCSV(db *pgxpool.Pool) fiber.Handler {
