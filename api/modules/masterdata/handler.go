@@ -449,16 +449,20 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 		}
 		rows, err := db.Query(c.Context(), `
 			SELECT wl.id, wl.code, wl.warehouse_id, COALESCE(wl.zone,''), COALESCE(wl.aisle,''),
-			       COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,'low'),
+			       COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,'lower'),
 			       COALESCE(wl.number, COALESCE(wl.bin,'')), COALESCE(wl.location_type,'storage'),
 			       wl.max_capacity_qty, COALESCE(wl.allow_mixed_items,true), COALESCE(wl.disabled,false),
-			       COALESCE(wl.is_occupied,false),
+			       COALESCE(wl.is_occupied,false), COALESCE(wl.putaway_priority, 5),
 			       COALESCE((SELECT SUM(actual_qty) FROM stock_location_balances slb WHERE slb.location_id = wl.id),0) AS on_hand_qty,
 			       (SELECT COUNT(DISTINCT item_code) FROM stock_location_balances slb WHERE slb.location_id = wl.id AND slb.actual_qty <> 0) AS item_count
 			FROM warehouse_locations wl
 			WHERE wl.warehouse_id = $1
-			ORDER BY wl.location_type, wl.code`, wid)
+			ORDER BY wl.aisle, wl.shelf, wl.level, wl.number, wl.code`, wid)
 		if err != nil {
+			// Pre-013 DBs without putaway_priority
+			if strings.Contains(err.Error(), "putaway_priority") {
+				return listWarehouseLocationsLegacy(db, c, wid)
+			}
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
@@ -470,13 +474,16 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 			Zone            string   `json:"zone"`
 			Aisle           string   `json:"aisle"`
 			Shelf           string   `json:"shelf"`
+			Bay             string   `json:"bay"`
 			Level           string   `json:"level"`
 			Number          string   `json:"number"`
+			Bin             string   `json:"bin"`
 			LocationType    string   `json:"location_type"`
 			MaxCapacityQty  *float64 `json:"max_capacity_qty"`
 			AllowMixedItems bool     `json:"allow_mixed_items"`
 			Disabled        bool     `json:"disabled"`
 			IsOccupied      bool     `json:"is_occupied"`
+			PutawayPriority int      `json:"putaway_priority"`
 			OnHandQty       float64  `json:"on_hand_qty"`
 			ItemCount       int      `json:"item_count"`
 		}
@@ -484,14 +491,56 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 		for rows.Next() {
 			var l loc
 			if err := rows.Scan(&l.ID, &l.Code, &l.WarehouseID, &l.Zone, &l.Aisle, &l.Shelf, &l.Level, &l.Number,
-				&l.LocationType, &l.MaxCapacityQty, &l.AllowMixedItems, &l.Disabled, &l.IsOccupied,
+				&l.LocationType, &l.MaxCapacityQty, &l.AllowMixedItems, &l.Disabled, &l.IsOccupied, &l.PutawayPriority,
 				&l.OnHandQty, &l.ItemCount); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
+			l.Bay = l.Shelf
+			l.Bin = l.Number
+			l.Level = displayLevel(l.Level)
 			list = append(list, l)
 		}
 		return shared.OK(c, list)
 	}
+}
+
+func listWarehouseLocationsLegacy(db *pgxpool.Pool, c *fiber.Ctx, wid int) error {
+	rows, err := db.Query(c.Context(), `
+		SELECT wl.id, wl.code, wl.warehouse_id, COALESCE(wl.zone,''), COALESCE(wl.aisle,''),
+		       COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,'lower'),
+		       COALESCE(wl.number, COALESCE(wl.bin,'')), COALESCE(wl.location_type,'storage'),
+		       wl.max_capacity_qty, COALESCE(wl.allow_mixed_items,true), COALESCE(wl.disabled,false),
+		       COALESCE(wl.is_occupied,false),
+		       COALESCE((SELECT SUM(actual_qty) FROM stock_location_balances slb WHERE slb.location_id = wl.id),0),
+		       (SELECT COUNT(DISTINCT item_code) FROM stock_location_balances slb WHERE slb.location_id = wl.id AND slb.actual_qty <> 0)
+		FROM warehouse_locations wl
+		WHERE wl.warehouse_id = $1
+		ORDER BY wl.aisle, wl.shelf, wl.level, wl.number, wl.code`, wid)
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	defer rows.Close()
+	list := []fiber.Map{}
+	for rows.Next() {
+		var id, whID, itemCount int
+		var code, zone, aisle, shelf, level, number, locType string
+		var maxCap *float64
+		var mixed, disabled, occupied bool
+		var onHand float64
+		if err := rows.Scan(&id, &code, &whID, &zone, &aisle, &shelf, &level, &number, &locType,
+			&maxCap, &mixed, &disabled, &occupied, &onHand, &itemCount); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		level = displayLevel(level)
+		list = append(list, fiber.Map{
+			"id": id, "code": code, "warehouse_id": whID, "zone": zone, "aisle": aisle,
+			"shelf": shelf, "bay": shelf, "level": level, "number": number, "bin": number,
+			"location_type": locType, "max_capacity_qty": maxCap, "allow_mixed_items": mixed,
+			"disabled": disabled, "is_occupied": occupied, "putaway_priority": 5,
+			"on_hand_qty": onHand, "item_count": itemCount,
+		})
+	}
+	return shared.OK(c, list)
 }
 
 func createLocation(db *pgxpool.Pool) fiber.Handler {
@@ -503,24 +552,45 @@ func createLocation(db *pgxpool.Pool) fiber.Handler {
 		var body struct {
 			Aisle           string   `json:"aisle"`
 			Shelf           string   `json:"shelf"`
+			Bay             string   `json:"bay"` // alias for shelf
 			Level           string   `json:"level"`
 			Number          string   `json:"number"`
+			Bin             string   `json:"bin"` // alias for number
 			LocationType    string   `json:"location_type"`
 			MaxCapacityQty  *float64 `json:"max_capacity_qty"`
 			AllowMixedItems *bool    `json:"allow_mixed_items"`
+			PutawayPriority *int     `json:"putaway_priority"`
 			Zone            string   `json:"zone"`
 			Code            string   `json:"code"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		loc, errMsg := normalizeLocationInput(body.Aisle, body.Shelf, body.Level, body.Number, body.LocationType, body.Code)
+		shelf := body.Shelf
+		if shelf == "" {
+			shelf = body.Bay
+		}
+		number := body.Number
+		if number == "" {
+			number = body.Bin
+		}
+		loc, errMsg := normalizeLocationInput(body.Aisle, shelf, body.Level, number, body.LocationType, body.Code)
 		if errMsg != "" {
 			return shared.Err(c, fiber.StatusBadRequest, errMsg)
 		}
 		mixed := true
 		if body.AllowMixedItems != nil {
 			mixed = *body.AllowMixedItems
+		}
+		priority := 5
+		if body.PutawayPriority != nil {
+			priority = *body.PutawayPriority
+			if priority < 1 {
+				priority = 1
+			}
+			if priority > 10 {
+				priority = 10
+			}
 		}
 		zone := body.Zone
 		if zone == "" {
@@ -531,16 +601,33 @@ func createLocation(db *pgxpool.Pool) fiber.Handler {
 		err = db.QueryRow(c.Context(), `
 			INSERT INTO warehouse_locations (
 				code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
-				location_type, max_capacity_qty, allow_mixed_items, disabled, is_occupied
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,false)
+				location_type, max_capacity_qty, allow_mixed_items, putaway_priority, disabled, is_occupied
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,false,false)
 			RETURNING id`,
 			loc.Code, wid, zone, loc.Aisle, loc.Shelf, loc.Number, loc.Shelf, loc.Level, loc.Number,
-			loc.LocationType, body.MaxCapacityQty, mixed,
+			loc.LocationType, body.MaxCapacityQty, mixed, priority,
 		).Scan(&id)
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			if strings.Contains(err.Error(), "putaway_priority") {
+				err = db.QueryRow(c.Context(), `
+					INSERT INTO warehouse_locations (
+						code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
+						location_type, max_capacity_qty, allow_mixed_items, disabled, is_occupied
+					) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,false,false)
+					RETURNING id`,
+					loc.Code, wid, zone, loc.Aisle, loc.Shelf, loc.Number, loc.Shelf, loc.Level, loc.Number,
+					loc.LocationType, body.MaxCapacityQty, mixed,
+				).Scan(&id)
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
-		return shared.OK(c, fiber.Map{"id": id, "code": loc.Code, "warehouse_id": wid})
+		return shared.OK(c, fiber.Map{
+			"id": id, "code": loc.Code, "warehouse_id": wid,
+			"aisle": loc.Aisle, "bay": loc.Shelf, "level": loc.Level, "bin": loc.Number,
+			"putaway_priority": priority,
+		})
 	}
 }
 
@@ -551,13 +638,17 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid warehouse id")
 		}
 		var body struct {
-			Aisle          string   `json:"aisle"`
-			ShelfFrom      int      `json:"shelf_from"`
-			ShelfTo        int      `json:"shelf_to"`
-			Levels         []string `json:"levels"`
-			BinsPerShelf   int      `json:"bins_per_shelf"`
-			LocationType   string   `json:"location_type"`
-			MaxCapacityQty *float64 `json:"max_capacity_qty"`
+			Aisle           string   `json:"aisle"`
+			BayFrom         int      `json:"bay_from"`
+			BayTo           int      `json:"bay_to"`
+			ShelfFrom       int      `json:"shelf_from"` // alias
+			ShelfTo         int      `json:"shelf_to"`
+			Levels          []string `json:"levels"`
+			BinsPerBay      int      `json:"bins_per_bay"`
+			BinsPerShelf    int      `json:"bins_per_shelf"` // alias
+			LocationType    string   `json:"location_type"`
+			MaxCapacityQty  *float64 `json:"max_capacity_qty"`
+			PutawayPriority *int     `json:"putaway_priority"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -566,34 +657,56 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 		if aisle == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "aisle required")
 		}
-		if body.ShelfFrom < 1 {
-			body.ShelfFrom = 1
+		bayFrom := body.BayFrom
+		if bayFrom < 1 {
+			bayFrom = body.ShelfFrom
 		}
-		if body.ShelfTo < body.ShelfFrom {
-			body.ShelfTo = body.ShelfFrom
+		bayTo := body.BayTo
+		if bayTo < 1 {
+			bayTo = body.ShelfTo
 		}
-		if body.BinsPerShelf < 1 {
-			body.BinsPerShelf = 1
+		if bayFrom < 1 {
+			bayFrom = 1
 		}
-		if body.ShelfTo-body.ShelfFrom > 50 || body.BinsPerShelf > 50 {
+		if bayTo < bayFrom {
+			bayTo = bayFrom
+		}
+		bins := body.BinsPerBay
+		if bins < 1 {
+			bins = body.BinsPerShelf
+		}
+		if bins < 1 {
+			bins = 1
+		}
+		if bayTo-bayFrom > 50 || bins > 50 {
 			return shared.Err(c, fiber.StatusBadRequest, "bulk range too large")
 		}
 		levels := body.Levels
 		if len(levels) == 0 {
-			levels = []string{"low", "upper"}
+			levels = []string{"lower", "middle", "upper"}
 		}
 		locType := body.LocationType
 		if locType == "" {
 			locType = "storage"
 		}
+		priority := 5
+		if body.PutawayPriority != nil {
+			priority = *body.PutawayPriority
+			if priority < 1 {
+				priority = 1
+			}
+			if priority > 10 {
+				priority = 10
+			}
+		}
 
 		created := []fiber.Map{}
-		for shelf := body.ShelfFrom; shelf <= body.ShelfTo; shelf++ {
+		for bay := bayFrom; bay <= bayTo; bay++ {
 			for _, level := range levels {
-				for n := 1; n <= body.BinsPerShelf; n++ {
+				for n := 1; n <= bins; n++ {
 					loc, errMsg := normalizeLocationInput(
 						aisle,
-						fmt.Sprintf("%02d", shelf),
+						fmt.Sprintf("%02d", bay),
 						level,
 						fmt.Sprintf("%02d", n),
 						locType,
@@ -606,13 +719,25 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 					err := db.QueryRow(c.Context(), `
 						INSERT INTO warehouse_locations (
 							code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
-							location_type, max_capacity_qty, allow_mixed_items, disabled, is_occupied
-						) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,false,false)
+							location_type, max_capacity_qty, allow_mixed_items, putaway_priority, disabled, is_occupied
+						) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,$12,false,false)
 						ON CONFLICT (warehouse_id, code) DO NOTHING
 						RETURNING id`,
 						loc.Code, wid, aisle, loc.Aisle, loc.Shelf, loc.Number, loc.Shelf, loc.Level, loc.Number,
-						loc.LocationType, body.MaxCapacityQty,
+						loc.LocationType, body.MaxCapacityQty, priority,
 					).Scan(&id)
+					if err != nil && strings.Contains(err.Error(), "putaway_priority") {
+						err = db.QueryRow(c.Context(), `
+							INSERT INTO warehouse_locations (
+								code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
+								location_type, max_capacity_qty, allow_mixed_items, disabled, is_occupied
+							) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,true,false,false)
+							ON CONFLICT (warehouse_id, code) DO NOTHING
+							RETURNING id`,
+							loc.Code, wid, aisle, loc.Aisle, loc.Shelf, loc.Number, loc.Shelf, loc.Level, loc.Number,
+							loc.LocationType, body.MaxCapacityQty,
+						).Scan(&id)
+					}
 					if err == nil {
 						created = append(created, fiber.Map{"id": id, "code": loc.Code})
 					}
@@ -634,9 +759,30 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 			MaxCapacityQty  *float64 `json:"max_capacity_qty"`
 			AllowMixedItems *bool    `json:"allow_mixed_items"`
 			Disabled        *bool    `json:"disabled"`
+			PutawayPriority *int     `json:"putaway_priority"`
+			Zone            *string  `json:"zone"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
+		}
+		if body.LocationType != nil {
+			t := strings.ToLower(strings.TrimSpace(*body.LocationType))
+			switch t {
+			case "storage", "pick_face", "staging", "hold", "damaged", "incoming", "quarantine", "returns":
+				body.LocationType = &t
+			default:
+				return shared.Err(c, fiber.StatusBadRequest, "invalid location_type")
+			}
+		}
+		if body.PutawayPriority != nil {
+			p := *body.PutawayPriority
+			if p < 1 {
+				p = 1
+			}
+			if p > 10 {
+				p = 10
+			}
+			body.PutawayPriority = &p
 		}
 		_, err = db.Exec(c.Context(), `
 			UPDATE warehouse_locations SET
@@ -644,12 +790,28 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 				max_capacity_qty = COALESCE($3, max_capacity_qty),
 				allow_mixed_items = COALESCE($4, allow_mixed_items),
 				disabled = COALESCE($5, disabled),
+				putaway_priority = COALESCE($6, putaway_priority),
+				zone = COALESCE($7, zone),
 				updated_at = now()
-			WHERE id=$1`, id, body.LocationType, body.MaxCapacityQty, body.AllowMixedItems, body.Disabled)
+			WHERE id=$1`, id, body.LocationType, body.MaxCapacityQty, body.AllowMixedItems, body.Disabled,
+			body.PutawayPriority, body.Zone)
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			if strings.Contains(err.Error(), "putaway_priority") {
+				_, err = db.Exec(c.Context(), `
+					UPDATE warehouse_locations SET
+						location_type = COALESCE($2, location_type),
+						max_capacity_qty = COALESCE($3, max_capacity_qty),
+						allow_mixed_items = COALESCE($4, allow_mixed_items),
+						disabled = COALESCE($5, disabled),
+						zone = COALESCE($6, zone),
+						updated_at = now()
+					WHERE id=$1`, id, body.LocationType, body.MaxCapacityQty, body.AllowMixedItems, body.Disabled, body.Zone)
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
-		return shared.OK(c, fiber.Map{"id": id})
+		return shared.OK(c, fiber.Map{"id": id, "updated": true})
 	}
 }
 
@@ -826,42 +988,50 @@ func normalizeLocationInput(aisle, shelf, level, number, locType, code string) (
 	number = strings.TrimSpace(number)
 	locType = strings.TrimSpace(strings.ToLower(locType))
 	if aisle == "" || shelf == "" || number == "" {
-		return locNorm{}, "aisle, shelf, and number required"
+		return locNorm{}, "aisle, bay (shelf), and bin (number) required"
 	}
-	if level == "" {
-		level = "low"
-	}
-	if level != "low" && level != "upper" {
-		// allow numeric / free levels but normalize common aliases
-		if level == "l" {
-			level = "low"
-		} else if level == "u" || level == "up" || level == "high" {
-			level = "upper"
-		}
-	}
+	level = normalizeLevel(level)
 	if locType == "" {
 		locType = "storage"
 	}
 	switch locType {
-	case "storage", "pick_face", "staging", "hold", "damaged", "incoming":
+	case "storage", "pick_face", "staging", "hold", "damaged", "incoming", "quarantine", "returns":
 	default:
 		return locNorm{}, "invalid location_type"
 	}
 	if code == "" {
-		code = fmt.Sprintf("%s-%s-%s-%s", aisle, shelf, strings.ToUpper(level[:1]), number)
-		// e.g. A-03-L-12 or A-03-U-12
-		lvl := "L"
-		if level == "upper" {
-			lvl = "U"
-		} else if level != "low" {
-			lvl = strings.ToUpper(level)
-			if len(lvl) > 3 {
-				lvl = lvl[:3]
-			}
-		}
+		lvl := levelCode(level)
 		code = fmt.Sprintf("%s-%s-%s-%s", aisle, shelf, lvl, number)
 	}
 	return locNorm{Aisle: aisle, Shelf: shelf, Level: level, Number: number, LocationType: locType, Code: code}, ""
+}
+
+func normalizeLevel(level string) string {
+	switch level {
+	case "", "l", "low", "lower", "bottom":
+		return "lower"
+	case "m", "mid", "middle", "med":
+		return "middle"
+	case "u", "up", "upper", "high", "top":
+		return "upper"
+	default:
+		return level
+	}
+}
+
+func displayLevel(level string) string {
+	return normalizeLevel(level)
+}
+
+func levelCode(level string) string {
+	switch normalizeLevel(level) {
+	case "upper":
+		return "U"
+	case "middle":
+		return "M"
+	default:
+		return "L"
+	}
 }
 
 func normalizePackType(v string) string {

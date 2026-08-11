@@ -164,9 +164,13 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			sql += ` AND wl.warehouse_id=$1`
 			args = append(args, warehouseID)
 		}
-		sql += ` ORDER BY wl.code LIMIT 1`
+		sql += ` ORDER BY COALESCE(wl.putaway_priority,5) ASC, wl.code LIMIT 1`
 
 		err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap)
+		if err != nil && strings.Contains(err.Error(), "putaway_priority") {
+			sql = strings.Replace(sql, "ORDER BY COALESCE(wl.putaway_priority,5) ASC, wl.code LIMIT 1", "ORDER BY wl.code LIMIT 1", 1)
+			err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap)
+		}
 		if err == nil {
 			s.OnHandQty = 0
 			if maxCap != nil {

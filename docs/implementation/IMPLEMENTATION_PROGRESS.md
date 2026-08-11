@@ -1,11 +1,21 @@
 # Implementation Progress — goWMS
 
-**Updated:** 2026-08-11 (high-level Roles UX + auto employee IDs)  
+**Updated:** 2026-08-11 (warehouse configure UI + location priority)  
 **Rule:** Extend integer/ERPNext schema only. Protect FEFO reserve→consume. Conflict designs in separate files.
 
 ---
 
-## Done (Roles UX + employee IDs — this session)
+## Done (Warehouse configure — this session)
+
+- [x] Migration `013_location_putaway_priority.sql` — `putaway_priority` (1–10), widen location types, normalize levels
+- [x] Levels: **lower / middle / upper** (legacy `low` → lower); UI labels **Aisle / Bay / Level / Bin**
+- [x] Create any location + bulk generate with level checkboxes + type + priority
+- [x] Inline **Edit** location: type, priority, capacity, mixed, disabled
+- [x] Putaway empty-bin suggest orders by `putaway_priority` ASC
+
+---
+
+## Done (Roles UX + employee IDs — prior)
 
 ### Sync Roles ↔ Employees
 - [x] Removed Employees hardcoded role fallback — dropdown = `/api/roles` only
