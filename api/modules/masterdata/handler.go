@@ -147,8 +147,18 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 		if body.Code == "" || body.Name == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "code and name required")
 		}
-		body.PackType = normalizePackType(body.PackType)
-		body.ControlMode = normalizeControlMode(body.ControlMode)
+		if len(body.Name) > 255 {
+			return shared.Err(c, fiber.StatusBadRequest, "name must be at most 255 characters")
+		}
+		var err error
+		body.PackType, err = normalizePackType(body.PackType)
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		body.ControlMode, err = normalizeControlMode(body.ControlMode)
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
 		if body.ControlMode == "bin_controlled" && body.HomeLocationID == nil {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
@@ -156,7 +166,7 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 		complete := itemMasterComplete(body.Code, body.Name, body.PackType, body.ControlMode, body.HomeLocationID, body.HasExpiryDate, body.ShelfLifeDays)
 
 		var id int
-		err := db.QueryRow(c.Context(), `
+		err = db.QueryRow(c.Context(), `
 			INSERT INTO items (
 				code, name, brand, has_serial, has_batch, has_expiry_date,
 				pack_type, control_mode, home_location_id, barcode, carton_qty,
@@ -217,12 +227,23 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 
 		if body.Name != nil {
 			name = strings.TrimSpace(*body.Name)
+			if len(name) > 255 {
+				return shared.Err(c, fiber.StatusBadRequest, "name must be at most 255 characters")
+			}
 		}
 		if body.PackType != nil {
-			packType = normalizePackType(*body.PackType)
+			pt, nerr := normalizePackType(*body.PackType)
+			if nerr != nil {
+				return shared.Err(c, fiber.StatusBadRequest, nerr.Error())
+			}
+			packType = pt
 		}
 		if body.ControlMode != nil {
-			controlMode = normalizeControlMode(*body.ControlMode)
+			cm, nerr := normalizeControlMode(*body.ControlMode)
+			if nerr != nil {
+				return shared.Err(c, fiber.StatusBadRequest, nerr.Error())
+			}
+			controlMode = cm
 		}
 		if body.HomeLocationID != nil {
 			homeID = body.HomeLocationID
@@ -291,8 +312,15 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 		if body.Code == "" || body.Name == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "code and name required")
 		}
-		body.PackType = normalizePackType(body.PackType)
-		body.ControlMode = normalizeControlMode(body.ControlMode)
+		var nerr error
+		body.PackType, nerr = normalizePackType(body.PackType)
+		if nerr != nil {
+			return shared.Err(c, fiber.StatusBadRequest, nerr.Error())
+		}
+		body.ControlMode, nerr = normalizeControlMode(body.ControlMode)
+		if nerr != nil {
+			return shared.Err(c, fiber.StatusBadRequest, nerr.Error())
+		}
 		if body.ControlMode == "bin_controlled" && body.HomeLocationID == nil {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
@@ -411,11 +439,27 @@ func createWarehouse(db *pgxpool.Pool) fiber.Handler {
 		if body.Code == "" || body.Name == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "code and name required")
 		}
+		if strings.ContainsAny(body.Code, " \t") {
+			return shared.Err(c, fiber.StatusBadRequest, "warehouse code cannot contain spaces")
+		}
+		for _, ch := range body.Code {
+			if (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-' {
+				continue
+			}
+			return shared.Err(c, fiber.StatusBadRequest, "warehouse code must match [A-Za-z0-9_-]+")
+		}
 		if body.PickingMode == "" {
 			body.PickingMode = "scan"
 		}
 		if body.WarehouseType == "" {
 			body.WarehouseType = "storage"
+		}
+		body.WarehouseType = strings.ToLower(strings.TrimSpace(body.WarehouseType))
+		switch body.WarehouseType {
+		case "hub", "satellite", "storage", "incoming", "returns", "transit", "warehouse", "stores", "distribution":
+		default:
+			return shared.Err(c, fiber.StatusBadRequest,
+				"warehouse_type must be one of: hub, satellite, storage, incoming, returns, transit, warehouse, stores, distribution")
 		}
 
 		var id int
@@ -425,6 +469,9 @@ func createWarehouse(db *pgxpool.Pool) fiber.Handler {
 			body.Code, body.Name, body.WarehouseType, body.PickingMode,
 		).Scan(&id)
 		if err != nil {
+			if strings.Contains(err.Error(), "warehouses_warehouse_type_check") {
+				return shared.Err(c, fiber.StatusBadRequest, "invalid warehouse_type for database constraint")
+			}
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
@@ -790,7 +837,7 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 			}
 			body.PutawayPriority = &p
 		}
-		_, err = db.Exec(c.Context(), `
+		tag, err := db.Exec(c.Context(), `
 			UPDATE warehouse_locations SET
 				location_type = COALESCE($2, location_type),
 				max_capacity_qty = COALESCE($3, max_capacity_qty),
@@ -803,7 +850,7 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 			body.PutawayPriority, body.Zone)
 		if err != nil {
 			if strings.Contains(err.Error(), "putaway_priority") {
-				_, err = db.Exec(c.Context(), `
+				tag, err = db.Exec(c.Context(), `
 					UPDATE warehouse_locations SET
 						location_type = COALESCE($2, location_type),
 						max_capacity_qty = COALESCE($3, max_capacity_qty),
@@ -816,6 +863,9 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "location not found")
 		}
 		return shared.OK(c, fiber.Map{"id": id, "updated": true})
 	}
@@ -1040,20 +1090,26 @@ func levelCode(level string) string {
 	}
 }
 
-func normalizePackType(v string) string {
+func normalizePackType(v string) (string, error) {
 	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "packed" {
-		return "packed"
+	if v == "" {
+		return "", fmt.Errorf("pack_type required (loose or packed)")
 	}
-	return "loose"
+	if v != "loose" && v != "packed" {
+		return "", fmt.Errorf("pack_type must be loose or packed")
+	}
+	return v, nil
 }
 
-func normalizeControlMode(v string) string {
+func normalizeControlMode(v string) (string, error) {
 	v = strings.ToLower(strings.TrimSpace(v))
-	if v == "bin_controlled" {
-		return "bin_controlled"
+	if v == "" {
+		return "", fmt.Errorf("control_mode required (item_controlled or bin_controlled)")
 	}
-	return "item_controlled"
+	if v != "item_controlled" && v != "bin_controlled" {
+		return "", fmt.Errorf("control_mode must be item_controlled or bin_controlled")
+	}
+	return v, nil
 }
 
 func itemMasterComplete(code, name, packType, controlMode string, homeID *int, hasExpiry bool, shelfLife *int) bool {
@@ -1477,32 +1533,54 @@ func setSupplierVehicles(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
 		}
-		var body struct {
-			Vehicles []map[string]any `json:"vehicles"`
+		var rawBody struct {
+			Vehicles json.RawMessage `json:"vehicles"`
 		}
-		if err := shared.Bind(c, &body); err != nil {
+		if err := shared.Bind(c, &rawBody); err != nil {
 			return err
 		}
-		if body.Vehicles == nil {
-			body.Vehicles = []map[string]any{}
-		}
-		raw, _ := json.Marshal(body.Vehicles)
-		fleet := ""
-		for i, v := range body.Vehicles {
-			if plate, ok := v["vehicle_no"].(string); ok && plate != "" {
-				if i > 0 {
-					fleet += ","
+		vehicles := []map[string]any{}
+		if len(rawBody.Vehicles) > 0 && string(rawBody.Vehicles) != "null" {
+			var asObjects []map[string]any
+			if err := json.Unmarshal(rawBody.Vehicles, &asObjects); err == nil {
+				vehicles = asObjects
+			} else {
+				var asStrings []string
+				if err := json.Unmarshal(rawBody.Vehicles, &asStrings); err != nil {
+					return shared.Err(c, fiber.StatusBadRequest,
+						`vehicles must be an array of strings or objects like {"vehicle_no":"..."}`)
 				}
-				fleet += plate
+				for _, plate := range asStrings {
+					plate = strings.TrimSpace(plate)
+					if plate == "" {
+						continue
+					}
+					vehicles = append(vehicles, map[string]any{"vehicle_no": plate})
+				}
 			}
 		}
-		_, err = db.Exec(c.Context(), `
+		raw, _ := json.Marshal(vehicles)
+		fleet := ""
+		for i, v := range vehicles {
+			plate, _ := v["vehicle_no"].(string)
+			if plate == "" {
+				continue
+			}
+			if i > 0 && fleet != "" {
+				fleet += ","
+			}
+			fleet += plate
+		}
+		tag, err := db.Exec(c.Context(), `
 			UPDATE suppliers SET vehicles=$2::jsonb, vehicle_fleet=COALESCE(NULLIF($3,''), vehicle_fleet)
 			WHERE id=$1`, id, string(raw), fleet)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "vehicles": body.Vehicles})
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "vehicles": vehicles})
 	}
 }
 

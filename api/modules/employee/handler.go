@@ -131,10 +131,10 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		if body.Company == "" {
 			body.Company = "Nirvana"
 		}
-		if body.WMSRole == "" {
-			body.WMSRole = "picker"
-		}
 		body.WMSRole = strings.ToLower(strings.TrimSpace(body.WMSRole))
+		if body.WMSRole == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "wms_role required")
+		}
 		if ok, err := rbac.RoleExists(db, c, body.WMSRole); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		} else if !ok {

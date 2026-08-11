@@ -96,6 +96,9 @@ func createOrder(db *pgxpool.Pool) fiber.Handler {
 		if body.CustomerName == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "customer_name required")
 		}
+		if len(body.CustomerName) > 255 {
+			return shared.Err(c, fiber.StatusBadRequest, "customer_name must be at most 255 characters")
+		}
 		if len(body.Items) == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "at least one item required")
 		}
@@ -123,6 +126,11 @@ func createOrder(db *pgxpool.Pool) fiber.Handler {
 		for _, it := range body.Items {
 			if it.ItemCode == "" || it.Qty <= 0 {
 				return shared.Err(c, fiber.StatusBadRequest, "each item needs item_code and qty > 0")
+			}
+			var exists bool
+			_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM items WHERE upper(code)=upper($1))`, it.ItemCode).Scan(&exists)
+			if !exists {
+				return shared.Err(c, fiber.StatusBadRequest, "item not found: "+it.ItemCode)
 			}
 			netTotal += it.Qty * it.Rate
 		}

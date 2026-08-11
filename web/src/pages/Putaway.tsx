@@ -105,6 +105,10 @@ export default function Putaway() {
 
   const doPutaway = async () => {
     if (!putawayItem || !putawayQty || (!putawayTarget && !putawayTargetId)) return
+    if (!putawaySource.trim()) {
+      notify({ type: 'error', title: 'Source required', message: 'Pick a queue row or enter source location (e.g. INCOMING-01)' })
+      return
+    }
     const r = await api.putawayCreate({
       item_code: putawayItem,
       source_warehouse: putawaySource || undefined,

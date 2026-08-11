@@ -292,15 +292,16 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 func createLog(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			GRNLineID       int     `json:"grn_line_id"`
-			ItemCode        string  `json:"item_code"`
-			BatchNo         string  `json:"batch_no"`
-			SourceWarehouse string  `json:"source_warehouse"`
-			SourceLocation  string  `json:"source_location"`
-			TargetLocation  string  `json:"target_location"`
-			TargetLocationID int    `json:"target_location_id"`
-			WarehouseID     int     `json:"warehouse_id"`
-			Quantity        float64 `json:"quantity"`
+			GRNLineID        int     `json:"grn_line_id"`
+			ItemCode         string  `json:"item_code"`
+			BatchNo          string  `json:"batch_no"`
+			SourceWarehouse  string  `json:"source_warehouse"`
+			SourceLocation   string  `json:"source_location"`
+			SourceLocationID int     `json:"source_location_id"`
+			TargetLocation   string  `json:"target_location"`
+			TargetLocationID int     `json:"target_location_id"`
+			WarehouseID      int     `json:"warehouse_id"`
+			Quantity         float64 `json:"quantity"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -311,6 +312,9 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 		}
 		if body.Quantity <= 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "quantity must be > 0")
+		}
+		if body.SourceLocationID == 0 && strings.TrimSpace(body.SourceLocation) == "" && strings.TrimSpace(body.SourceWarehouse) == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "source_location_id or source_location required")
 		}
 
 		var complete bool
@@ -353,33 +357,53 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 
 		batch := strings.TrimSpace(body.BatchNo)
 
-		// Decrease source incoming/hold if specified or default incoming for warehouse.
+		// Resolve source location — never silently invent one when caller sent an id.
 		var sourceID *int
-		if body.SourceLocation != "" {
-			var sid int
+		if body.SourceLocationID > 0 {
+			var sid, sWh int
 			if err := tx.QueryRow(c.Context(), `
-				SELECT id FROM warehouse_locations WHERE code=$1 AND warehouse_id=$2`,
-				body.SourceLocation, warehouseID).Scan(&sid); err == nil {
+				SELECT id, warehouse_id FROM warehouse_locations WHERE id=$1`, body.SourceLocationID).
+				Scan(&sid, &sWh); err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, "source location not found")
+			}
+			if warehouseID > 0 && sWh != warehouseID {
+				return shared.Err(c, fiber.StatusBadRequest, "source and target warehouses differ")
+			}
+			sourceID = &sid
+		} else {
+			srcCode := strings.TrimSpace(body.SourceLocation)
+			if srcCode == "" {
+				srcCode = strings.TrimSpace(body.SourceWarehouse)
+			}
+			if srcCode != "" {
+				var sid int
+				if err := tx.QueryRow(c.Context(), `
+					SELECT id FROM warehouse_locations WHERE code=$1 AND warehouse_id=$2`,
+					srcCode, warehouseID).Scan(&sid); err != nil {
+					return shared.Err(c, fiber.StatusBadRequest, "source location not found")
+				}
 				sourceID = &sid
 			}
 		}
 		if sourceID == nil {
-			var sid int
-			if err := tx.QueryRow(c.Context(), `
-				SELECT id FROM warehouse_locations
-				WHERE warehouse_id=$1 AND location_type IN ('incoming','hold','staging')
-				ORDER BY CASE location_type WHEN 'incoming' THEN 0 WHEN 'staging' THEN 1 ELSE 2 END, id
-				LIMIT 1`, warehouseID).Scan(&sid); err == nil {
-				sourceID = &sid
-			}
+			return shared.Err(c, fiber.StatusBadRequest, "source_location_id or source_location required")
 		}
-		if sourceID != nil {
-			_, _ = tx.Exec(c.Context(), `
-				UPDATE stock_location_balances
-				SET actual_qty = GREATEST(actual_qty - $1, 0), updated_at=now()
-				WHERE location_id=$2 AND item_code=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
-				body.Quantity, *sourceID, body.ItemCode, nullBatch(batch))
+
+		var avail float64
+		_ = tx.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(actual_qty - reserved_qty),0) FROM stock_location_balances
+			WHERE location_id=$1 AND item_code=$2 AND COALESCE(batch_no,'')=COALESCE($3,'')`,
+			*sourceID, body.ItemCode, nullBatch(batch)).Scan(&avail)
+		if avail < body.Quantity {
+			return shared.Err(c, fiber.StatusBadRequest,
+				fmt.Sprintf("insufficient stock at source (available %.0f, requested %.0f)", avail, body.Quantity))
 		}
+
+		_, _ = tx.Exec(c.Context(), `
+			UPDATE stock_location_balances
+			SET actual_qty = GREATEST(actual_qty - $1, 0), updated_at=now()
+			WHERE location_id=$2 AND item_code=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
+			body.Quantity, *sourceID, body.ItemCode, nullBatch(batch))
 
 		// Increase target location balance (manual upsert — expression unique index).
 		var existingID int

@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"strings"
 	"time"
 
 	"goWMS/api/config"
@@ -30,8 +31,13 @@ func register(db *pgxpool.Pool) fiber.Handler {
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
+		body.Username = strings.TrimSpace(body.Username)
+		body.Password = strings.TrimSpace(body.Password)
 		if body.Username == "" || body.Password == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "username and password required")
+		}
+		if len(body.Password) < 4 {
+			return shared.Err(c, fiber.StatusBadRequest, "password must be at least 4 characters")
 		}
 		if body.Role == "" {
 			body.Role = "wm"
@@ -61,6 +67,11 @@ func login(db *pgxpool.Pool) fiber.Handler {
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
+		}
+		body.Username = strings.TrimSpace(body.Username)
+		body.Password = strings.TrimSpace(body.Password)
+		if body.Username == "" || body.Password == "" {
+			return shared.Err(c, fiber.StatusUnauthorized, "invalid credentials")
 		}
 
 		var (

@@ -168,6 +168,12 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code and quantity > 0 required")
 		}
 
+		var exists bool
+		_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM items WHERE upper(code)=upper($1))`, body.ItemCode).Scan(&exists)
+		if !exists {
+			return shared.Err(c, fiber.StatusBadRequest, "item not found: "+body.ItemCode)
+		}
+
 		var batch any
 		if body.BatchNo != "" {
 			batch = body.BatchNo
@@ -229,6 +235,9 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
+		}
+		if body.ItemCode == "" || body.Quantity <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "item_code and quantity > 0 required")
 		}
 
 		var itemID int

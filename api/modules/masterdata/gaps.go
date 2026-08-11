@@ -60,8 +60,26 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 			}
 			brand := firstKey(row, "brand", "Brand")
 			barcode := firstKey(row, "barcode", "Barcode")
-			packType := normalizePackType(firstKey(row, "pack_type", "pack_mode", "Pack Type"))
-			controlMode := normalizeControlMode(firstKey(row, "control_mode", "Control Mode"))
+			packType := "loose"
+			if raw := firstKey(row, "pack_type", "pack_mode", "Pack Type"); raw != "" {
+				pt, err := normalizePackType(raw)
+				if err != nil {
+					skipped++
+					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					continue
+				}
+				packType = pt
+			}
+			controlMode := "item_controlled"
+			if raw := firstKey(row, "control_mode", "Control Mode"); raw != "" {
+				cm, err := normalizeControlMode(raw)
+				if err != nil {
+					skipped++
+					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					continue
+				}
+				controlMode = cm
+			}
 			hasBatch := truthy(firstKey(row, "has_batch", "Has Batch"))
 			hasSerial := truthy(firstKey(row, "has_serial", "Has Serial"))
 			hasExpiry := truthy(firstKey(row, "has_expiry_date", "has_expiry", "Has Expiry"))

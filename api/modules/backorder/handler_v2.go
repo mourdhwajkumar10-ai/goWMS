@@ -74,12 +74,23 @@ func createV2(db *pgxpool.Pool) fiber.Handler {
 				ItemCode string  `json:"item_code"`
 				Qty      float64 `json:"qty"`
 			} `json:"lines"`
+			Items []struct {
+				ItemCode string  `json:"item_code"`
+				Qty      float64 `json:"qty"`
+			} `json:"items"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
 		if body.SalesOrderNo == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "sales_order_no required")
+		}
+		lines := body.Lines
+		if len(lines) == 0 {
+			lines = body.Items
+		}
+		if len(lines) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "items (or lines) array required and must not be empty")
 		}
 
 		var id int
@@ -93,7 +104,7 @@ func createV2(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError,
 				err.Error()+" — apply migrations/010_backorders_v2_qc_templates.sql")
 		}
-		for _, ln := range body.Lines {
+		for _, ln := range lines {
 			if ln.ItemCode == "" || ln.Qty <= 0 {
 				continue
 			}

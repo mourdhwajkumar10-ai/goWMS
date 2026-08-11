@@ -22,12 +22,24 @@ func create(db *pgxpool.Pool) fiber.Handler {
 			Customer     string `json:"customer"`
 			Warehouse    string `json:"warehouse"`
 			Notes        string `json:"notes"`
+			Items        []struct {
+				ItemCode string  `json:"item_code"`
+				Qty      float64 `json:"qty"`
+			} `json:"items"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
 		if body.SalesOrderNo == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "sales_order_no required")
+		}
+		if len(body.Items) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "items array required and must not be empty")
+		}
+		for _, it := range body.Items {
+			if it.ItemCode == "" || it.Qty <= 0 {
+				return shared.Err(c, fiber.StatusBadRequest, "each item needs item_code and qty > 0")
+			}
 		}
 
 		var id int
@@ -39,7 +51,7 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "backorder_no": backorderNo, "status": "pending"})
+		return shared.OK(c, fiber.Map{"id": id, "backorder_no": backorderNo, "status": "pending", "items": len(body.Items)})
 	}
 }
 

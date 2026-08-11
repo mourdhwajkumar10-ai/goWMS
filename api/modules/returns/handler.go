@@ -62,11 +62,12 @@ func create(db *pgxpool.Pool) fiber.Handler {
 			CustomerID     *int   `json:"customer_id"`
 			SalesInvoiceNo string `json:"sales_invoice_no"`
 			DeliveryNoteNo string `json:"delivery_note_no"`
+			DeliveryNoteID *int   `json:"delivery_note_id"`
 			Reason         string `json:"reason"`
 			Items          []struct {
-				ItemCode string  `json:"item_code"`
-				Qty      float64 `json:"qty"`
-				Condition string `json:"condition"` // good|damaged
+				ItemCode  string  `json:"item_code"`
+				Qty       float64 `json:"qty"`
+				Condition string  `json:"condition"` // good|damaged
 			} `json:"items"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
@@ -74,6 +75,18 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		}
 		if body.Reason == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "reason required")
+		}
+		if len(body.Items) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "items array required and must not be empty")
+		}
+		for _, it := range body.Items {
+			if it.ItemCode == "" || it.Qty <= 0 {
+				return shared.Err(c, fiber.StatusBadRequest, "each item needs item_code and qty > 0")
+			}
+		}
+		if body.DeliveryNoteNo == "" && body.DeliveryNoteID != nil {
+			_ = db.QueryRow(c.Context(), `SELECT name FROM delivery_notes WHERE id=$1`, *body.DeliveryNoteID).
+				Scan(&body.DeliveryNoteNo)
 		}
 
 		var id int
