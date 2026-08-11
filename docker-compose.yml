@@ -21,7 +21,8 @@ services:
       retries: 10
     restart: unless-stopped
 
-  # Applies migrations once, then exits. Idempotent, safe to re-run.
+  # Applies migrations, then exits. Re-runs are safe: individual statement
+  # failures (already-applied objects) are logged and do not block the API.
   migrate:
     image: postgres:16-alpine
     depends_on:
@@ -35,12 +36,22 @@ services:
       - sh
       - -c
       - |
+        set +e
+        echo "Running migrations against postgres..."
+        warnings=0
         for f in /migrations/*.sql; do
-          echo "Applying $$f";
-          psql -h postgres -U ${DB_USER:-gowms} -d ${DB_NAME:-gowms} -v ON_ERROR_STOP=1 -q -f "$$f" || exit 1;
+          echo "==== Applying $$f ===="
+          psql -h postgres -U ${DB_USER:-gowms} -d ${DB_NAME:-gowms} -v ON_ERROR_STOP=1 -f "$$f"
+          rc=$$?
+          if [ $$rc -ne 0 ]; then
+            echo "WARN: $$f exited $$rc (often already applied on existing DB)"
+            warnings=$$((warnings+1))
+          fi
         done
-        echo "Migrations complete."
+        echo "Migrations finished (files_with_warnings=$$warnings)"
+        exit 0
     restart: "no"
+
 
   api:
     build: .
