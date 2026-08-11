@@ -11,15 +11,24 @@ CREATE INDEX IF NOT EXISTS idx_wl_putaway_priority
     ON warehouse_locations (warehouse_id, putaway_priority, code)
     WHERE COALESCE(disabled, false) = false;
 
--- Widen location_type for returns/quarantine used by returns flow
+-- Widen location_type for returns/quarantine used by returns flow (idempotent)
 ALTER TABLE warehouse_locations DROP CONSTRAINT IF EXISTS warehouse_locations_location_type_check;
-ALTER TABLE warehouse_locations
-  ADD CONSTRAINT warehouse_locations_location_type_check
-  CHECK (
-    location_type IS NULL OR location_type IN (
-      'storage', 'pick_face', 'staging', 'hold', 'damaged', 'incoming', 'quarantine', 'returns'
-    )
-  );
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'warehouse_locations_location_type_check'
+      AND conrelid = 'public.warehouse_locations'::regclass
+  ) THEN
+    ALTER TABLE warehouse_locations
+      ADD CONSTRAINT warehouse_locations_location_type_check
+      CHECK (
+        location_type IS NULL OR location_type IN (
+          'storage', 'pick_face', 'staging', 'hold', 'damaged', 'incoming', 'quarantine', 'returns'
+        )
+      );
+  END IF;
+END $$;
 
 -- Normalize legacy low → lower for display consistency
 UPDATE warehouse_locations SET level = 'lower' WHERE level IN ('low', 'l', 'bottom');
