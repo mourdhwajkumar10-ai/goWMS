@@ -86,6 +86,7 @@ export const api = {
   // Employees
   employeeList: () => get<any[]>("/employees/list"),
   employeeCreate: (data: any) => post<any>("/employees/", data),
+  employeeImport: (data: any) => post<any>("/employees/import", data),
   employeeNextId: (first: string, last: string) =>
     get<any>(`/employees/next-id?first=${encodeURIComponent(first)}&last=${encodeURIComponent(last)}`),
   employeeSetPin: (id: number, pin: string) => post<any>(`/employees/${id}/pin`, { pin }),
@@ -104,19 +105,31 @@ export const api = {
     put<any>(`/roles/${id}/access`, access),
   permissionsCatalog: () => get<any[]>("/permissions"),
 
-  // Returns
+	// Returns
   returnsList: () => get<any[]>("/returns/list"),
   returnsCreate: (data: any) => post<any>("/returns/", data),
   returnsInspect: (id: number, data: any) => post<any>(`/returns/${id}/inspect`, data),
   returnsRestock: (id: number, data: any) => post<any>(`/returns/${id}/restock`, data),
+  returnsReceive: (id: number, data?: any) => post<any>(`/returns/${id}/receive`, data || {}),
+  returnsDecide: (id: number, data: any) => post<any>(`/returns/${id}/decide`, data),
+  returnsScrap: (id: number, data: any) => post<any>(`/returns/${id}/scrap`, data),
 
   // Items
   itemList: (q?: string) => get<any[]>(`/masterdata/items${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
+  itemImport: (data: any) => post<any>("/masterdata/items/import", data),
+  itemGroups: () => get<any[]>("/masterdata/item-groups"),
+  itemGroupCreate: (data: any) => post<any>("/masterdata/item-groups", data),
   itemComplete: (data: any) => post<any>("/masterdata/items/complete", data),
   itemCheck: (code: string) => get<any>(`/masterdata/items/check/${encodeURIComponent(code)}`),
   itemInventory: (code: string) => get<any[]>(`/masterdata/items/${encodeURIComponent(code)}/inventory`),
   stockAdjust: (data: any) => post<any>("/masterdata/stock/adjust", data),
+
+  // Carriers / suppliers
+  carriersList: () => get<any[]>("/masterdata/carriers"),
+  carrierCreate: (data: any) => post<any>("/masterdata/carriers", data),
+  supplierGet: (id: number) => get<any>(`/masterdata/suppliers/${id}`),
+  supplierUpdate: (id: number, data: any) => put<any>(`/masterdata/suppliers/${id}`, data),
 
   // PO
   poList: () => get<any[]>("/po/list"),

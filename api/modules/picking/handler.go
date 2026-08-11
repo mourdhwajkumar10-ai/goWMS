@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/notifications"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -153,18 +154,21 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 			if ln.Expiry != nil {
 				expiry = ln.Expiry.Format("2006-01-02")
 			}
+			shortageQty := 0.0
+			if ln.Status == "shortage" {
+				shortageQty = ln.OrderedQty
+			}
 			_, err = tx.Exec(c.Context(), `
 				INSERT INTO pick_list_items (
 					pick_list_id, item_code, warehouse, ordered_qty, picked_qty,
 					allocated_qty, status, batch_no, location_id, location_code,
 					balance_id, expiry_date, shortage_qty
 				) VALUES (
-					$1,$2,$3,$4,0,$5,$6,$7,$8,$9,$10,$11,
-					CASE WHEN $6='shortage' THEN $4 ELSE 0 END
+					$1,$2,$3,$4,0,$5,$6,$7,$8,$9,$10,$11,$12
 				)`,
 				id, ln.ItemCode, ln.Warehouse, ln.OrderedQty, ln.AllocatedQty,
 				ln.Status, batch, ln.LocationID, nullEmpty(ln.LocationCode),
-				ln.BalanceID, expiry)
+				ln.BalanceID, expiry, shortageQty)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
@@ -179,7 +183,44 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "name": name, "status": "open", "warehouse_id": whID})
+
+		notifications.EmitPickCreated(c.Context(), db, name, body.SalesOrder)
+
+		// Auto-create backorder from shortage lines
+		shortageCount := 0
+		for _, ln := range lines {
+			if ln.Status == "shortage" {
+				shortageCount++
+				notifications.EmitShortage(c.Context(), db, name, ln.ItemCode)
+			}
+		}
+		boCreated := false
+		var boNo string
+		if shortageCount > 0 {
+			var boID int
+			err = db.QueryRow(c.Context(), `
+				INSERT INTO backorders_v2 (backorder_no, sales_order_no, customer, notes, status, source_pick_list_id)
+				VALUES ('BO2-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('backorders_v2_id_seq')::TEXT,5,'0'),
+					$1,$2,$3,'pending',$4) RETURNING id, backorder_no`,
+				body.SalesOrder, body.Customer, "auto from pick create", id).Scan(&boID, &boNo)
+			if err == nil {
+				boCreated = true
+				for _, ln := range lines {
+					if ln.Status != "shortage" {
+						continue
+					}
+					_, _ = db.Exec(c.Context(), `
+						INSERT INTO backorder_lines_v2 (backorder_id, item_code, qty, status)
+						VALUES ($1,$2,$3,'pending')`, boID, ln.ItemCode, ln.OrderedQty)
+				}
+				notifications.EmitBackorderCreated(c.Context(), db, boNo, shortageCount)
+			}
+		}
+
+		return shared.OK(c, fiber.Map{
+			"id": id, "name": name, "status": "open", "warehouse_id": whID,
+			"shortage_lines": shortageCount, "backorder_auto": boCreated, "backorder_no": boNo,
+		})
 	}
 }
 

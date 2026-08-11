@@ -21,6 +21,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/", list(db))
 	r.Get("/list", list(db))
 	r.Get("/export", exportCSV(db))
+	r.Post("/import", rbac.RequireEmployeesManage, importCSV(db))
 	r.Get("/next-id", nextID(db))
 	r.Post("/", rbac.RequireEmployeesManage, create(db))
 	r.Get("/:id", get(db))
@@ -410,4 +411,105 @@ func exportCSV(db *pgxpool.Pool) fiber.Handler {
 		c.Set("Content-Disposition", "attachment; filename=employees.csv")
 		return c.SendString(b.String())
 	}
+}
+
+func importCSV(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Rows []map[string]string `json:"rows"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if len(body.Rows) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "rows required")
+		}
+		created, skipped, errors := 0, 0, []string{}
+		for i, row := range body.Rows {
+			name := firstEmp(row, "employee_name", "name", "Name")
+			first := firstEmp(row, "first_name", "first", "First Name")
+			last := firstEmp(row, "last_name", "last", "Last Name")
+			if name == "" {
+				name = strings.TrimSpace(first + " " + last)
+			}
+			if name == "" {
+				skipped++
+				errors = append(errors, "row "+strconv.Itoa(i+2)+": name required")
+				continue
+			}
+			parts := strings.Fields(name)
+			if first == "" && len(parts) > 0 {
+				first = parts[0]
+			}
+			if last == "" && len(parts) > 1 {
+				last = parts[len(parts)-1]
+			}
+			role := firstEmp(row, "wms_role", "role", "Role")
+			if role == "" {
+				role = "picker"
+			}
+			empNo := firstEmp(row, "employee_number", "emp_id", "Employee Number")
+			badge := firstEmp(row, "badge_code", "badge", "Badge")
+			dept := firstEmp(row, "department", "Department")
+			pin := firstEmp(row, "pin", "PIN")
+			whID, _ := strconv.Atoi(firstEmp(row, "warehouse_id", "Warehouse ID"))
+
+			if empNo == "" {
+				generated, err := generateEmployeeNumber(db, c, first, last)
+				if err != nil {
+					errors = append(errors, name+": "+err.Error())
+					continue
+				}
+				empNo = generated
+			} else {
+				var taken bool
+				_ = db.QueryRow(c.Context(), `
+					SELECT EXISTS(SELECT 1 FROM employees WHERE upper(employee_number)=upper($1))`, empNo).Scan(&taken)
+				if taken {
+					skipped++
+					continue
+				}
+			}
+
+			var pinHash any
+			if pin != "" {
+				h, err := bcrypt.GenerateFromPassword([]byte(pin), bcrypt.DefaultCost)
+				if err == nil {
+					pinHash = string(h)
+				}
+			}
+			var wh any
+			if whID > 0 {
+				wh = whID
+			}
+			_, err := db.Exec(c.Context(), `
+				INSERT INTO employees (
+					employee_name, employee_number, department, warehouse_id, wms_role,
+					badge_code, pin_hash, status
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,'Active')`,
+				name, empNo, nullEmpty(dept), wh, role, nullEmpty(badge), pinHash)
+			if err != nil {
+				errors = append(errors, name+": "+err.Error())
+				continue
+			}
+			created++
+		}
+		return shared.OK(c, fiber.Map{
+			"created": created, "skipped": skipped, "errors": errors, "total": len(body.Rows),
+		})
+	}
+}
+
+func firstEmp(row map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := row[k]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+		for rk, rv := range row {
+			if strings.EqualFold(rk, k) && strings.TrimSpace(rv) != "" {
+				return strings.TrimSpace(rv)
+			}
+		}
+	}
+	return ""
 }

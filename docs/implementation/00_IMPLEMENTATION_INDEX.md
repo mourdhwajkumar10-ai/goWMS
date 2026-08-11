@@ -83,7 +83,7 @@
 | # | File | Feature | Status | Priority |
 |---|------|---------|--------|----------|
 | 17 | `17_FEATURE_SUPPLIER_MASTER.md` | Enhanced supplier UI, carrier config | PARTIAL | HIGH |
-| 18 | `18_FEATURE_PACKING_LIST_IMPORT.md` | Configurable packing list templates, import | NOT DONE | HIGH |
+| 18 | `18_FEATURE_PACKING_LIST_IMPORT.md` | Configurable packing list templates, import | PARTIAL | HIGH |
 | 19 | `19_FEATURE_CARRIER_DELIVERY.md` | Carrier management, delivery notes, POD | NOT DONE | MEDIUM |
 
 ### Packing List Format (spares_packing_list.xlsx)

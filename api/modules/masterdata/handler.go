@@ -44,6 +44,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	md.Get("/stock-entries", listStockEntries(db))
 	md.Get("/stock-reconciliations", listStockReconciliations(db))
 	registerStockRoutes(md, db)
+	registerGapRoutes(md, db)
 
 	// Legacy root aliases (older callers).
 	r.Get("/items", listItems(db))

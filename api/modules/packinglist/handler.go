@@ -20,6 +20,24 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	RegisterXLSX(r, db)
 }
 
+// RegisterGRNAlias mounts docs/QA paths under /grn/:id/...
+func RegisterGRNAlias(r fiber.Router, db *pgxpool.Pool) {
+	r.Post("/:id/import-packing-list", importPackingListViaGRN(db))
+	r.Post("/:id/import-xlsx", importXLSX(db))
+}
+
+func importPackingListViaGRN(db *pgxpool.Pool) fiber.Handler {
+	xlsx := importXLSX(db)
+	jsonImport := importIntoGRN(db)
+	return func(c *fiber.Ctx) error {
+		ct := string(c.Request().Header.ContentType())
+		if strings.Contains(ct, "multipart") {
+			return xlsx(c)
+		}
+		return jsonImport(c)
+	}
+}
+
 func listTemplates(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
@@ -104,6 +122,9 @@ func importIntoGRN(db *pgxpool.Pool) fiber.Handler {
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
+		}
+		if body.GRNSessionID == 0 {
+			body.GRNSessionID, _ = strconv.Atoi(c.Params("id"))
 		}
 		if body.GRNSessionID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "grn_session_id required")

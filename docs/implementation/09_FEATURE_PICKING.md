@@ -1,7 +1,7 @@
 # Feature 09 — Picking
 
 **Spec References:** SPEC_03_OUTBOUND.md §3-4, SPEC.md §6 Phase D
-**Status:** PARTIAL (single-order only)
+**Status:** PARTIAL (wave picking done; SO dropdown + PDF polish remaining)
 **Priority:** HIGH
 
 ---
@@ -13,7 +13,7 @@
 - `pick_list_items`: id, pick_list_id, item_code, part_name, allocated_qty, picked_qty, shortage_qty, location_id, location_code, batch_no, expiry_date, status
 - `pick_scan_logs`: audit trail for each scan
 
-### Backend (api/modules/picking/handler.go — 456 lines)
+### Backend (api/modules/picking/handler.go + wave_handler.go)
 - `POST /picking/` — create pick list:
   1. Accepts item list with qty_ordered
   2. FEFO allocation: ListFEFOCandidates → ReserveBalance per slice
@@ -25,44 +25,29 @@
   - Auto-completes when all lines picked
 - `GET /picking/list` and `/picking/lists` — list
 - `GET /picking/:id` — detail with FEFO badges
+- `GET /picking/:id/print` — HTML print view
+- `POST /picking/:id/cancel` — release unconsumed reservations
+- `POST /picking/wave` — wave pick (multi SO → one FEFO list)
+- `POST /picking/generate-wave` — **alias** for `/wave` (docs/QA path)
+- `GET /picking/waves` — list wave pick lists
 
-### Frontend (Pick.tsx — 367 lines)
+### Frontend (Pick.tsx)
 - Pick list list, create form (SO No + items), active pick with scan form
+- **Wave Pick** UI (multi SO IDs)
 
 ---
 
 ## Gaps
 
-### 1. No Wave/Batch Picking
-- Currently one pick list per SO
-- SPEC_03 §3.1 Method B defines wave picking (multiple SOs in one pick)
-- **Impact:** At ₹20Cr with multiple daily orders, single-order picking wastes 30-50% travel time
-- **Plan:**
-  1. Add `POST /picking/generate-wave` endpoint:
-     - Accept: list of SO IDs or min_priority threshold
-     - Combine items across SOs, dedup by item_code
-     - FEFO allocate combined list
-     - Create one pick list with pick_so_map entries
-  2. Add wave pick UI to Pick.tsx:
-     - "Generate Wave Pick" button
-     - Show pending SOs sorted by priority
-     - Select multiple → preview combined items → generate
-  3. Pick list detail shows which SO each line belongs to
-- **Files:** picking/handler.go, Pick.tsx
-- **Effort:** 2-3 days
+### 1. Wave/Batch Picking — DONE
+- Implemented as `POST /picking/wave` (alias: `/picking/generate-wave`)
+- Combines multiple confirmed SOs, FEFO allocates, creates one pick list with `picking_mode='wave'`
 
-### 2. No Pick List Printing
-- No PDF generation anywhere in codebase
+### 2. No Pick List PDF (HTML print only)
+- `GET /picking/:id/print` returns HTML, not PDF
 - Paper pick slips still needed in Indian warehouses
-- **Plan:**
-  1. Add `GET /picking/:id/print` endpoint returning PDF
-  2. Use a Go PDF library (e.g., go-pdf or wkhtmltopdf)
-  3. Pick slip layout: Pick List ID, Customer, Items with bin locations, quantities, barcodes
-  4. Add "Print" button to Pick.tsx detail view
-  5. Support thermal printer format (4x6 inch)
-- **Files:** New PDF utility, picking handler, Pick.tsx
-- **Effort:** 2-3 days
-- **Conflict:** None — additive
+- **Plan:** PDF library later; HTML print works for v1
+- **Effort:** 1–2 days for true PDF
 
 ### 3. Sales Order Reference is Free-Text
 - Pick.tsx accepts SO No as text input, no FK validation
@@ -71,6 +56,14 @@
 - **Plan:** After SO module exists, replace text input with dropdown
 - **Effort:** 0.5 day
 
+---
+
+## Doc corrections (was wrong)
+
+| Old doc claim | Actual |
+|---------------|--------|
+| `POST /picking/generate-wave` not built | Built as `/picking/wave`; alias `/generate-wave` added |
+| Wave picking missing | Wired in `main.go` via `picking.RegisterWave` |
 ---
 
 ## Conflict Analysis

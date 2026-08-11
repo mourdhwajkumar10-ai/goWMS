@@ -18,6 +18,7 @@ import (
 // RegisterWave wires wave-picking endpoints under /picking.
 func RegisterWave(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/wave", createWave(db))
+	r.Post("/generate-wave", createWave(db)) // docs/QA alias
 	r.Get("/waves", listWaves(db))
 }
 

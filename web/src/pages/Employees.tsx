@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, getRole } from '../services/api'
 import { notify } from '../components/Notifications'
+import CSVImport from '../components/CSVTools'
 
 export default function Employees() {
   const myRole = (getRole() || '').toLowerCase()
@@ -126,6 +127,13 @@ export default function Employees() {
           </p>
         </div>
         <div className="flex gap-2">
+          <CSVImport onImport={async (rows) => {
+            const r = await api.employeeImport({ rows })
+            if (r.ok) {
+              notify({ type: 'success', title: 'Employees imported', message: `created ${r.data?.created ?? 0}, skipped ${r.data?.skipped ?? 0}` })
+              load()
+            } else notify({ type: 'error', title: 'Import failed', message: r.error || '' })
+          }} />
           <a
             className="erpnext-btn-secondary"
             href={api.employeesExportUrl()}

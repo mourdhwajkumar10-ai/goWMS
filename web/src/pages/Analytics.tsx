@@ -35,8 +35,9 @@ export default function Analytics() {
   const [slow, setSlow] = useState<FastSlow[]>([])
   const [dead, setDead] = useState<FastSlow[]>([])
   const [expiry, setExpiry] = useState<ExpiryItem[]>([])
+  const [outbound, setOutbound] = useState<any>(null)
   const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState<'fast' | 'slow' | 'dead' | 'expiry'>('fast')
+  const [activeTab, setActiveTab] = useState<'fast' | 'slow' | 'dead' | 'expiry' | 'outbound'>('fast')
 
   useEffect(() => {
     api.dashboard().then(r => { if (r.ok) setDash(r.data) }).catch((e) => setError((e as Error).message))
@@ -44,6 +45,7 @@ export default function Analytics() {
     api.get<FastSlow[]>('/analytics/slow-moving').then(r => { if (r.ok) setSlow(r.data ?? []) }).catch(() => {})
     api.get<FastSlow[]>('/analytics/dead-stock').then(r => { if (r.ok) setDead(r.data ?? []) }).catch(() => {})
     api.get<ExpiryItem[]>('/analytics/expiry').then(r => { if (r.ok) setExpiry(r.data ?? []) }).catch(() => {})
+    api.outboundKPIs().then(r => { if (r.ok) setOutbound(r.data) }).catch(() => {})
   }, [])
 
   const kpis = dash ? [
@@ -60,6 +62,7 @@ export default function Analytics() {
     { key: 'slow', label: 'Slow Moving', count: slow.length },
     { key: 'dead', label: 'Dead Stock', count: dead.length },
     { key: 'expiry', label: 'Expiring', count: expiry.length },
+    { key: 'outbound', label: 'Outbound', count: outbound ? 1 : 0 },
   ] as const
 
   const renderMovementTable = (rows: FastSlow[], type: string) => (
@@ -134,6 +137,43 @@ export default function Analytics() {
       {activeTab === 'fast' && renderMovementTable(fast, 'Fast Moving Items')}
       {activeTab === 'slow' && renderMovementTable(slow, 'Slow Moving Items')}
       {activeTab === 'dead' && renderMovementTable(dead, 'Dead Stock')}
+      {activeTab === 'outbound' && outbound && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Fill rate %', value: Number(outbound.fill_rate_pct || 0).toFixed(1) },
+              { label: 'Fulfillment %', value: Number(outbound.fulfillment_rate_pct || 0).toFixed(1) },
+              { label: 'Dispatch SLA %', value: Number(outbound.dispatch_sla_pct || 0).toFixed(1) },
+              { label: 'Avg pick (min)', value: Number(outbound.avg_pick_minutes || 0).toFixed(0) },
+              { label: 'Open picks', value: outbound.open_pick_lists },
+              { label: 'Active trips', value: outbound.active_trips },
+              { label: 'High priority SO', value: outbound.high_priority_open },
+              { label: 'Pending returns', value: outbound.pending_returns },
+            ].map(k => (
+              <div className="erpnext-card p-4" key={k.label}>
+                <div className="text-2xl font-semibold">{k.value}</div>
+                <div className="text-sm" style={{ color: 'var(--text-dim)' }}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+          <div className="erpnext-card">
+            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+              <h3 className="font-semibold">Priority distribution</h3>
+            </div>
+            <table className="erpnext-table">
+              <thead><tr><th>Priority</th><th>Count</th></tr></thead>
+              <tbody>
+                {(outbound.priority_distribution || []).map((p: any) => (
+                  <tr key={p.priority}><td>{p.priority}</td><td>{p.count}</td></tr>
+                ))}
+                {!(outbound.priority_distribution || []).length && (
+                  <tr><td colSpan={2} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No data</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {activeTab === 'expiry' && (
         <div className="erpnext-card">
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>

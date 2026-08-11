@@ -31,21 +31,27 @@ export default function Dispatch() {
 
   const [vehicle, setVehicle] = useState('')
   const [driverName, setDriverName] = useState('')
+  const [carrierId, setCarrierId] = useState('')
+  const [carriers, setCarriers] = useState<any[]>([])
   const [loadBoxId, setLoadBoxId] = useState('')
   const [dnCustomer, setDnCustomer] = useState('')
   const [podSig, setPodSig] = useState('')
 
   const loadTrips = () => api.dispatchTrips().then(r => { if (r.ok) setTrips(r.data ?? []) })
-  useEffect(() => { loadTrips() }, [])
+  useEffect(() => {
+    loadTrips()
+    api.carriersList().then(r => { if (r.ok) setCarriers(r.data ?? []) })
+  }, [])
 
   const createTrip = async () => {
     const r = await api.dispatchCreate({
       vehicle_no: vehicle,
       driver_name: driverName,
+      carrier_id: carrierId ? +carrierId : undefined,
     })
     if (r.ok) {
       setMsg(`Trip ${r.data.trip_no} created`)
-      setVehicle(''); setDriverName('')
+      setVehicle(''); setDriverName(''); setCarrierId('')
       loadTrips()
       notify({ type: 'success', title: 'Trip Created', message: r.data.trip_no })
     }
@@ -89,9 +95,14 @@ export default function Dispatch() {
   }
 
   const completeTrip = async (id: number) => {
-    const r = await api.post(`/dispatch/trip/${id}/complete`, {})
+    const r = await api.post<{ delivery_notes?: { delivery_note?: string }[] }>(`/dispatch/trip/${id}/complete`, {})
     if (r.ok) {
-      notify({ type: 'success', title: 'Trip Completed', message: 'All stops delivered' })
+      const dns = r.data?.delivery_notes?.map(d => d.delivery_note).filter(Boolean) || []
+      notify({
+        type: 'success',
+        title: 'Trip Completed',
+        message: dns.length ? `DNs: ${dns.join(', ')}` : 'All stops delivered',
+      })
       loadTrips()
       setSelectedTrip(null)
     }
@@ -100,7 +111,12 @@ export default function Dispatch() {
   const completeGated = async (id: number) => {
     const r = await api.dispatchCompleteGated(id)
     if (r.ok) {
-      notify({ type: 'success', title: 'Trip Completed (gated)', message: 'All stops visited' })
+      const dns = (r.data as any)?.delivery_notes?.map((d: any) => d.delivery_note).filter(Boolean) || []
+      notify({
+        type: 'success',
+        title: 'Trip Completed (gated)',
+        message: dns.length ? `DNs: ${dns.join(', ')}` : 'All stops visited',
+      })
       loadTrips(); setSelectedTrip(null)
     } else {
       notify({ type: 'error', title: 'Complete blocked', message: r.error || '' })
@@ -156,7 +172,7 @@ export default function Dispatch() {
               <h3 className="font-semibold">Create Trip</h3>
             </div>
             <div className="p-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div>
                   <label className="erpnext-label">Vehicle No *</label>
                   <input className="erpnext-input" value={vehicle} onChange={e => setVehicle(e.target.value)} placeholder="MH-12-AB-1234" />
@@ -164,6 +180,15 @@ export default function Dispatch() {
                 <div>
                   <label className="erpnext-label">Driver Name</label>
                   <input className="erpnext-input" value={driverName} onChange={e => setDriverName(e.target.value)} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Carrier</label>
+                  <select className="erpnext-input" value={carrierId} onChange={e => setCarrierId(e.target.value)}>
+                    <option value="">— none —</option>
+                    {carriers.map((c: any) => (
+                      <option key={c.id} value={c.id}>{c.name}{c.carrier_code ? ` (${c.carrier_code})` : ''}</option>
+                    ))}
+                  </select>
                 </div>
                 <div className="flex items-end">
                   <button onClick={createTrip} className="erpnext-btn-primary">Create Trip</button>

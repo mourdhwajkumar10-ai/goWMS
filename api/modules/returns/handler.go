@@ -20,6 +20,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/:id", get(db))
 	r.Post("/:id/inspect", inspect(db))
 	r.Post("/:id/restock", restock(db))
+	registerWorkflowRoutes(r, db)
 }
 
 func list(db *pgxpool.Pool) fiber.Handler {
@@ -78,23 +79,36 @@ func create(db *pgxpool.Pool) fiber.Handler {
 		var id int
 		var claimNo string
 		err := db.QueryRow(c.Context(), `
-			INSERT INTO return_claims (claim_no, customer_id, sales_invoice_no, reason, status)
+			INSERT INTO return_claims (claim_no, customer_id, sales_invoice_no, reason, status, delivery_note_no)
 			VALUES ('RC-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('return_claims_id_seq')::TEXT,5,'0'),
-				$1, $2, $3, 'pending')
-			RETURNING id, claim_no`, body.CustomerID, nullEmpty(body.SalesInvoiceNo), body.Reason).
+				$1, $2, $3, 'pending', $4)
+			RETURNING id, claim_no`, body.CustomerID, nullEmpty(body.SalesInvoiceNo), body.Reason, nullEmpty(body.DeliveryNoteNo)).
 			Scan(&id, &claimNo)
+		if err != nil {
+			err = db.QueryRow(c.Context(), `
+				INSERT INTO return_claims (claim_no, customer_id, sales_invoice_no, reason, status)
+				VALUES ('RC-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('return_claims_id_seq')::TEXT,5,'0'),
+					$1, $2, $3, 'pending')
+				RETURNING id, claim_no`, body.CustomerID, nullEmpty(body.SalesInvoiceNo), body.Reason).
+				Scan(&id, &claimNo)
+		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		// Store line details in reason appendix / notifications for now (no return_lines table in live schema)
 		for _, it := range body.Items {
-			_, _ = db.Exec(c.Context(), `
-				INSERT INTO notifications (type, title, message, user_id)
-				VALUES ('info', $1, $2, $3)`,
-				claimNo+": "+it.ItemCode,
-				"qty="+strconv.FormatFloat(it.Qty, 'f', -1, 64)+" condition="+it.Condition+" dn="+body.DeliveryNoteNo,
-				userID(c))
+			_, err2 := db.Exec(c.Context(), `
+				INSERT INTO return_claim_lines (return_claim_id, item_code, qty, condition, decision)
+				VALUES ($1,$2,$3,$4,'pending')`,
+				id, it.ItemCode, it.Qty, it.Condition)
+			if err2 != nil {
+				_, _ = db.Exec(c.Context(), `
+					INSERT INTO notifications (type, title, message, user_id)
+					VALUES ('info', $1, $2, $3)`,
+					claimNo+": "+it.ItemCode,
+					"qty="+strconv.FormatFloat(it.Qty, 'f', -1, 64)+" condition="+it.Condition+" dn="+body.DeliveryNoteNo,
+					userID(c))
+			}
 		}
 
 		return shared.OK(c, fiber.Map{"id": id, "claim_no": claimNo, "status": "pending"})
@@ -147,7 +161,7 @@ func inspect(db *pgxpool.Pool) fiber.Handler {
 		}
 		tag, err := db.Exec(c.Context(), `
 			UPDATE return_claims SET status=$2, reason = COALESCE(reason,'') || CASE WHEN $3<>'' THEN E'\n[inspect] '||$3 ELSE '' END
-			WHERE id=$1 AND status IN ('pending','open')`, id, status, body.Notes)
+			WHERE id=$1 AND status IN ('pending','open','received')`, id, status, body.Notes)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}

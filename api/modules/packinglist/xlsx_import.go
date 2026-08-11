@@ -24,6 +24,9 @@ func importXLSX(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sessionID, _ := strconv.Atoi(c.FormValue("grn_session_id"))
 		if sessionID == 0 {
+			sessionID, _ = strconv.Atoi(c.Params("id"))
+		}
+		if sessionID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "grn_session_id required")
 		}
 		templateID := 0

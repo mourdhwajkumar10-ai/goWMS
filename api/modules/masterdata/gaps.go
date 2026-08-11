@@ -1,0 +1,380 @@
+package masterdata
+
+// Item CSV import, item-groups CRUD, supplier get/update, carriers list.
+// Kept in a separate file to avoid bloating handler.go further.
+
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+
+	"goWMS/api/modules/shared"
+
+	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func registerGapRoutes(md fiber.Router, db *pgxpool.Pool) {
+	md.Post("/items/import", importItemsCSV(db))
+
+	md.Get("/item-groups", listItemGroups(db))
+	md.Post("/item-groups", createItemGroup(db))
+	md.Put("/item-groups/:id", updateItemGroup(db))
+	md.Delete("/item-groups/:id", deleteItemGroup(db))
+
+	md.Get("/suppliers/:id", getSupplier(db))
+	md.Put("/suppliers/:id", updateSupplier(db))
+	md.Patch("/suppliers/:id", updateSupplier(db))
+
+	md.Get("/carriers", listCarriers(db))
+	md.Post("/carriers", createCarrier(db))
+}
+
+// RegisterCarriersRoot mounts /carriers at API root (QA/docs path).
+func RegisterCarriersRoot(r fiber.Router, db *pgxpool.Pool) {
+	r.Get("/carriers", listCarriers(db))
+	r.Post("/carriers", createCarrier(db))
+}
+
+func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Rows []map[string]string `json:"rows"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if len(body.Rows) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "rows required")
+		}
+
+		created, skipped, errors := 0, 0, []string{}
+		for i, row := range body.Rows {
+			code := firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code")
+			name := firstKey(row, "name", "item_name", "Item Name", "Part Name")
+			if code == "" || name == "" {
+				skipped++
+				errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
+				continue
+			}
+			brand := firstKey(row, "brand", "Brand")
+			barcode := firstKey(row, "barcode", "Barcode")
+			packType := normalizePackType(firstKey(row, "pack_type", "pack_mode", "Pack Type"))
+			controlMode := normalizeControlMode(firstKey(row, "control_mode", "Control Mode"))
+			hasBatch := truthy(firstKey(row, "has_batch", "Has Batch"))
+			hasSerial := truthy(firstKey(row, "has_serial", "Has Serial"))
+			hasExpiry := truthy(firstKey(row, "has_expiry_date", "has_expiry", "Has Expiry"))
+			safety, _ := strconv.ParseFloat(firstKey(row, "safety_stock", "min_stock", "Safety Stock"), 64)
+			carton, _ := strconv.Atoi(firstKey(row, "carton_qty", "Carton Qty"))
+			var shelf *int
+			if s := firstKey(row, "shelf_life_in_days", "shelf_life", "Shelf Life"); s != "" {
+				if v, err := strconv.Atoi(s); err == nil {
+					shelf = &v
+				}
+			}
+
+			var exists bool
+			_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM items WHERE upper(code)=upper($1))`, code).Scan(&exists)
+			if exists {
+				skipped++
+				continue
+			}
+
+			complete := itemMasterComplete(code, name, packType, controlMode, nil, hasExpiry, shelf)
+			_, err := db.Exec(c.Context(), `
+				INSERT INTO items (
+					code, name, brand, has_serial, has_batch, has_expiry_date,
+					pack_type, control_mode, barcode, carton_qty, shelf_life_in_days,
+					safety_stock, master_complete
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+				code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
+				packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete)
+			if err != nil {
+				errors = append(errors, code+": "+err.Error())
+				continue
+			}
+			created++
+		}
+		return shared.OK(c, fiber.Map{
+			"created": created, "skipped": skipped, "errors": errors, "total": len(body.Rows),
+		})
+	}
+}
+
+func listItemGroups(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT id, name, parent_id, COALESCE(is_group,false)
+			FROM item_groups ORDER BY name`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		type g struct {
+			ID       int    `json:"id"`
+			Name     string `json:"name"`
+			ParentID *int   `json:"parent_id"`
+			IsGroup  bool   `json:"is_group"`
+		}
+		list := []g{}
+		for rows.Next() {
+			var x g
+			if err := rows.Scan(&x.ID, &x.Name, &x.ParentID, &x.IsGroup); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, x)
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func createItemGroup(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Name     string `json:"name"`
+			ParentID *int   `json:"parent_id"`
+			IsGroup  bool   `json:"is_group"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		body.Name = strings.TrimSpace(body.Name)
+		if body.Name == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "name required")
+		}
+		var id int
+		err := db.QueryRow(c.Context(), `
+			INSERT INTO item_groups (name, parent_id, is_group) VALUES ($1,$2,$3) RETURNING id`,
+			body.Name, body.ParentID, body.IsGroup).Scan(&id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": id, "name": body.Name})
+	}
+}
+
+func updateItemGroup(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Name     *string `json:"name"`
+			ParentID *int    `json:"parent_id"`
+			IsGroup  *bool   `json:"is_group"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE item_groups SET
+				name = COALESCE($2, name),
+				parent_id = COALESCE($3, parent_id),
+				is_group = COALESCE($4, is_group)
+			WHERE id=$1`, id, body.Name, body.ParentID, body.IsGroup)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "item group not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id})
+	}
+}
+
+func deleteItemGroup(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		tag, err := db.Exec(c.Context(), `DELETE FROM item_groups WHERE id=$1`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "item group not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "deleted": true})
+	}
+}
+
+func getSupplier(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var name string
+		var disabled, isT bool
+		var sg, gstin, cc, phone, email, fleet, svc *string
+		var vehicles []byte
+		err = db.QueryRow(c.Context(), `
+			SELECT name, supplier_group, gstin, disabled,
+			       COALESCE(is_transporter,false), carrier_code, contact_phone, contact_email,
+			       vehicle_fleet, default_service_level, COALESCE(vehicles::text,'[]')
+			FROM suppliers WHERE id=$1`, id).Scan(
+			&name, &sg, &gstin, &disabled, &isT, &cc, &phone, &email, &fleet, &svc, &vehicles)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+		}
+		if err != nil {
+			err = db.QueryRow(c.Context(), `
+				SELECT name, supplier_group, gstin, disabled,
+				       COALESCE(is_transporter,false), carrier_code, contact_phone, contact_email,
+				       vehicle_fleet, default_service_level
+				FROM suppliers WHERE id=$1`, id).Scan(
+				&name, &sg, &gstin, &disabled, &isT, &cc, &phone, &email, &fleet, &svc)
+			if err == pgx.ErrNoRows {
+				return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			vehicles = []byte("[]")
+		}
+		var veh any
+		_ = json.Unmarshal(vehicles, &veh)
+		if veh == nil {
+			veh = []any{}
+		}
+		return shared.OK(c, fiber.Map{
+			"id": id, "name": name, "supplier_group": sg, "gstin": gstin, "disabled": disabled,
+			"is_transporter": isT, "carrier_code": cc, "contact_phone": phone, "contact_email": email,
+			"vehicle_fleet": fleet, "default_service_level": svc, "vehicles": veh,
+		})
+	}
+}
+
+func updateSupplier(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Name                *string `json:"name"`
+			SupplierGroup       *string `json:"supplier_group"`
+			GSTIN               *string `json:"gstin"`
+			Disabled            *bool   `json:"disabled"`
+			IsTransporter       *bool   `json:"is_transporter"`
+			CarrierCode         *string `json:"carrier_code"`
+			ContactPhone        *string `json:"contact_phone"`
+			ContactEmail        *string `json:"contact_email"`
+			VehicleFleet        *string `json:"vehicle_fleet"`
+			DefaultServiceLevel *string `json:"default_service_level"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE suppliers SET
+				name = COALESCE($2, name),
+				supplier_group = COALESCE($3, supplier_group),
+				gstin = COALESCE($4, gstin),
+				disabled = COALESCE($5, disabled),
+				is_transporter = COALESCE($6, is_transporter),
+				carrier_code = COALESCE($7, carrier_code),
+				contact_phone = COALESCE($8, contact_phone),
+				contact_email = COALESCE($9, contact_email),
+				vehicle_fleet = COALESCE($10, vehicle_fleet),
+				default_service_level = COALESCE($11, default_service_level)
+			WHERE id=$1`,
+			id, body.Name, body.SupplierGroup, body.GSTIN, body.Disabled, body.IsTransporter,
+			body.CarrierCode, body.ContactPhone, body.ContactEmail, body.VehicleFleet, body.DefaultServiceLevel)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id, "updated": true})
+	}
+}
+
+func listCarriers(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT id, name, carrier_code, contact_phone, contact_email,
+			       vehicle_fleet, default_service_level, COALESCE(vehicles::text,'[]')
+			FROM suppliers
+			WHERE disabled=false AND COALESCE(is_transporter,false)=true
+			ORDER BY name`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		list := []fiber.Map{}
+		for rows.Next() {
+			var id int
+			var name string
+			var cc, phone, email, fleet, svc *string
+			var vehRaw string
+			if err := rows.Scan(&id, &name, &cc, &phone, &email, &fleet, &svc, &vehRaw); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			var veh any
+			_ = json.Unmarshal([]byte(vehRaw), &veh)
+			list = append(list, fiber.Map{
+				"id": id, "name": name, "carrier_code": cc, "contact_phone": phone,
+				"contact_email": email, "vehicle_fleet": fleet, "default_service_level": svc,
+				"vehicles": veh, "is_transporter": true,
+			})
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func createCarrier(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			Name                string `json:"name"`
+			CarrierCode         string `json:"carrier_code"`
+			ContactPhone        string `json:"contact_phone"`
+			ContactEmail        string `json:"contact_email"`
+			VehicleFleet        string `json:"vehicle_fleet"`
+			DefaultServiceLevel string `json:"default_service_level"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if strings.TrimSpace(body.Name) == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "name required")
+		}
+		var id int
+		err := db.QueryRow(c.Context(), `
+			INSERT INTO suppliers (
+				name, is_transporter, carrier_code, contact_phone, contact_email,
+				vehicle_fleet, default_service_level, supplier_group
+			) VALUES ($1,true,$2,$3,$4,$5,$6,'Carrier') RETURNING id`,
+			body.Name, nullIfEmpty(body.CarrierCode), nullIfEmpty(body.ContactPhone),
+			nullIfEmpty(body.ContactEmail), nullIfEmpty(body.VehicleFleet),
+			nullIfEmpty(body.DefaultServiceLevel)).Scan(&id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": id, "name": body.Name, "is_transporter": true})
+	}
+}
+
+func firstKey(row map[string]string, keys ...string) string {
+	for _, k := range keys {
+		if v, ok := row[k]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+		// case-insensitive
+		for rk, rv := range row {
+			if strings.EqualFold(rk, k) && strings.TrimSpace(rv) != "" {
+				return strings.TrimSpace(rv)
+			}
+		}
+	}
+	return ""
+}
+
+func truthy(s string) bool {
+	s = strings.ToLower(strings.TrimSpace(s))
+	return s == "1" || s == "true" || s == "yes" || s == "y"
+}

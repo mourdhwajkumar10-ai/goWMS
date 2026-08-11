@@ -20,6 +20,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/:id", get(db))
 	r.Post("/:id/reading", addReading(db))
 	r.Post("/:id/submit", submit(db))
+	r.Post("/:id/accept", accept(db))   // alias → submit status=accepted
+	r.Post("/:id/reject", reject(db))   // alias → submit status=rejected
 }
 
 func create(db *pgxpool.Pool) fiber.Handler {
@@ -184,79 +186,111 @@ func submit(db *pgxpool.Pool) fiber.Handler {
 		if body.Status == "" {
 			body.Status = "accepted"
 		}
-		body.Status = strings.ToLower(body.Status)
-		if body.Status != "accepted" && body.Status != "rejected" {
-			return shared.Err(c, fiber.StatusBadRequest, "status must be accepted or rejected")
-		}
+		return doSubmit(c, db, id, body.Status, body.Reason)
+	}
+}
 
-		var itemCode string
-		var warehouseID, locationID *int
-		var qty float64
-		var batch *string
-		var currentStatus string
-		err = db.QueryRow(c.Context(), `
+func accept(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		_ = shared.Bind(c, &body)
+		return doSubmit(c, db, id, "accepted", body.Reason)
+	}
+}
+
+func reject(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		_ = shared.Bind(c, &body)
+		return doSubmit(c, db, id, "rejected", body.Reason)
+	}
+}
+
+func doSubmit(c *fiber.Ctx, db *pgxpool.Pool, id int, status, reason string) error {
+	status = strings.ToLower(status)
+	if status != "accepted" && status != "rejected" {
+		return shared.Err(c, fiber.StatusBadRequest, "status must be accepted or rejected")
+	}
+
+	var itemCode string
+	var warehouseID, locationID *int
+	var qty float64
+	var batch *string
+	var currentStatus string
+	err := db.QueryRow(c.Context(), `
 			SELECT item_code, warehouse_id, location_id, COALESCE(qty, sample_size, 0), batch_no, COALESCE(status,'pending')
 			FROM quality_inspections WHERE id=$1`, id).
-			Scan(&itemCode, &warehouseID, &locationID, &qty, &batch, &currentStatus)
-		if err == pgx.ErrNoRows {
-			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
-		}
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if currentStatus != "pending" {
-			return shared.Err(c, fiber.StatusBadRequest, "inspection already submitted")
-		}
-
-		movedTo := ""
-		if warehouseID != nil && locationID != nil && qty > 0 {
-			wid := *warehouseID
-			fromID := *locationID
-			batchStr := ""
-			if batch != nil {
-				batchStr = *batch
-			}
-
-			var toID int
-			var toCode string
-			if body.Status == "accepted" {
-				toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "INCOMING-01", "incoming")
-			} else {
-				toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "DAMAGED-01", "damaged")
-			}
-			if err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-			}
-
-			// Move hold → incoming (accepted) or damaged (rejected).
-			_ = shared.AdjustLocationQty(c.Context(), db, itemCode, wid, fromID, batchStr, -qty)
-			if err := shared.AdjustLocationQty(c.Context(), db, itemCode, wid, toID, batchStr, qty); err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-			}
-			movedTo = toCode
-		}
-
-		if body.Reason != "" {
-			_, _ = db.Exec(c.Context(), `
-				UPDATE quality_inspections SET remarks = COALESCE(remarks,'') || $1 WHERE id=$2`,
-				"\n"+body.Reason, id)
-		}
-
-		tag, err := db.Exec(c.Context(),
-			`UPDATE quality_inspections SET status=$1, inspected_by=$2, inspected_at=NOW() WHERE id=$3`,
-			body.Status, userID(c), id)
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if tag.RowsAffected() == 0 {
-			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
-		}
-
-		return shared.OK(c, fiber.Map{
-			"id": id, "status": body.Status, "moved_to": movedTo,
-			"putaway_ready": body.Status == "accepted" && movedTo != "",
-		})
+		Scan(&itemCode, &warehouseID, &locationID, &qty, &batch, &currentStatus)
+	if err == pgx.ErrNoRows {
+		return shared.Err(c, fiber.StatusNotFound, "inspection not found")
 	}
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	if currentStatus != "pending" {
+		return shared.Err(c, fiber.StatusBadRequest, "inspection already submitted")
+	}
+
+	movedTo := ""
+	if warehouseID != nil && locationID != nil && qty > 0 {
+		wid := *warehouseID
+		fromID := *locationID
+		batchStr := ""
+		if batch != nil {
+			batchStr = *batch
+		}
+
+		var toID int
+		var toCode string
+		if status == "accepted" {
+			toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "INCOMING-01", "incoming")
+		} else {
+			toID, toCode, err = shared.EnsureLocation(c.Context(), db, wid, "DAMAGED-01", "damaged")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		// Move hold → incoming (accepted) or damaged (rejected).
+		_ = shared.AdjustLocationQty(c.Context(), db, itemCode, wid, fromID, batchStr, -qty)
+		if err := shared.AdjustLocationQty(c.Context(), db, itemCode, wid, toID, batchStr, qty); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		movedTo = toCode
+	}
+
+	if reason != "" {
+		_, _ = db.Exec(c.Context(), `
+				UPDATE quality_inspections SET remarks = COALESCE(remarks,'') || $1 WHERE id=$2`,
+			"\n"+reason, id)
+	}
+
+	tag, err := db.Exec(c.Context(),
+		`UPDATE quality_inspections SET status=$1, inspected_by=$2, inspected_at=NOW() WHERE id=$3`,
+		status, userID(c), id)
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	if tag.RowsAffected() == 0 {
+		return shared.Err(c, fiber.StatusNotFound, "inspection not found")
+	}
+
+	return shared.OK(c, fiber.Map{
+		"id": id, "status": status, "moved_to": movedTo,
+		"putaway_ready": status == "accepted" && movedTo != "",
+	})
 }
 
 func nullInt(v int) any {

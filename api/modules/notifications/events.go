@@ -5,6 +5,7 @@ package notifications
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -36,4 +37,33 @@ func EmitShortage(ctx context.Context, db *pgxpool.Pool, pickName, itemCode stri
 // EmitTripComplete notifies trip completion.
 func EmitTripComplete(ctx context.Context, db *pgxpool.Pool, tripNo string) {
 	Emit(ctx, db, "success", "Trip completed", tripNo, 0)
+}
+
+// EmitGRNClosed notifies inbound session closed.
+func EmitGRNClosed(ctx context.Context, db *pgxpool.Pool, sessionID int, supplier string) {
+	msg := "GRN session #" + strconv.Itoa(sessionID) + " closed"
+	if supplier != "" {
+		msg += " — " + supplier
+	}
+	Emit(ctx, db, "success", "GRN closed", msg, 0)
+}
+
+// EmitPickCreated notifies a new pick list is ready.
+func EmitPickCreated(ctx context.Context, db *pgxpool.Pool, pickName, soNo string) {
+	msg := pickName
+	if soNo != "" {
+		msg += " for " + soNo
+	}
+	Emit(ctx, db, "info", "Pick list created", msg, 0)
+}
+
+// EmitBackorderCreated notifies auto/manual backorder creation.
+func EmitBackorderCreated(ctx context.Context, db *pgxpool.Pool, boNo string, lineCount int) {
+	Emit(ctx, db, "warning", "Backorder created", boNo+" ("+strconv.Itoa(lineCount)+" lines)", 0)
+}
+
+// EmitOpenBOsForItem alerts open backorders when stock arrives (e.g. GRN close).
+func EmitOpenBOsForItem(ctx context.Context, db *pgxpool.Pool, itemCode string, openQty float64) {
+	Emit(ctx, db, "info", "Stock can fulfill backorder",
+		itemCode+" — open BO qty "+strconv.FormatFloat(openQty, 'f', -1, 64), 0)
 }

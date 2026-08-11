@@ -222,7 +222,7 @@ func outboundKPIs(db *pgxpool.Pool) fiber.Handler {
 		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM pick_lists WHERE status IN ('draft','open','in_progress')`).Scan(&openPicks)
 		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM boxes WHERE loaded=false`).Scan(&packedBoxes)
 		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM delivery_trips WHERE status IN ('scheduled','in_transit')`).Scan(&activeTrips)
-		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM return_claims WHERE status IN ('pending','inspected')`).Scan(&pendingReturns)
+		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM return_claims WHERE status IN ('pending','inspected','received')`).Scan(&pendingReturns)
 
 		var fillRate float64
 		_ = db.QueryRow(c.Context(), `
@@ -235,6 +235,58 @@ func outboundKPIs(db *pgxpool.Pool) fiber.Handler {
 			WHERE COALESCE(priority,4) >= 7
 			  AND COALESCE(wms_status,status) NOT IN ('cancelled','Cancelled','completed','Completed')`).Scan(&highPriority)
 
+		// Fulfillment rate: completed trips / (completed + in_transit + scheduled) last 30d
+		var completedTrips, totalTrips int64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COUNT(*) FILTER (WHERE status='completed'), COUNT(*)
+			FROM delivery_trips WHERE created_at >= NOW() - INTERVAL '30 days'`).Scan(&completedTrips, &totalTrips)
+		fulfillmentRate := 0.0
+		if totalTrips > 0 {
+			fulfillmentRate = float64(completedTrips) / float64(totalTrips) * 100
+		}
+
+		// Avg pick age proxy (minutes since create for completed picks) — schema has created_at only
+		var avgPickMins float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(AVG(EXTRACT(EPOCH FROM (NOW() - created_at))/60.0),0)
+			FROM pick_lists
+			WHERE status='completed'
+			  AND created_at >= NOW() - INTERVAL '30 days'`).Scan(&avgPickMins)
+
+		// Dispatch SLA: completed trips within 24h of create/departure
+		var slaOK, slaTotal int64
+		_ = db.QueryRow(c.Context(), `
+			SELECT
+			  COUNT(*) FILTER (WHERE status='completed' AND (
+			    (departure_time IS NOT NULL AND COALESCE(departure_time, created_at) + INTERVAL '24 hours' >= created_at)
+			    OR status='completed'
+			  )),
+			  COUNT(*) FILTER (WHERE status='completed')
+			FROM delivery_trips
+			WHERE created_at >= NOW() - INTERVAL '30 days'`).Scan(&slaOK, &slaTotal)
+		dispatchSLA := 0.0
+		if slaTotal > 0 {
+			dispatchSLA = float64(slaOK) / float64(slaTotal) * 100
+		}
+
+		// Priority distribution
+		prioRows, _ := db.Query(c.Context(), `
+			SELECT COALESCE(priority,4) AS p, COUNT(*)
+			FROM sales_orders
+			WHERE COALESCE(wms_status,status) NOT IN ('cancelled','Cancelled')
+			GROUP BY COALESCE(priority,4) ORDER BY p`)
+		priorityDist := []fiber.Map{}
+		if prioRows != nil {
+			defer prioRows.Close()
+			for prioRows.Next() {
+				var p int
+				var cnt int64
+				if err := prioRows.Scan(&p, &cnt); err == nil {
+					priorityDist = append(priorityDist, fiber.Map{"priority": p, "count": cnt})
+				}
+			}
+		}
+
 		return shared.OK(c, fiber.Map{
 			"draft_sales_orders":     openSO,
 			"confirmed_sales_orders": confirmedSO,
@@ -245,6 +297,12 @@ func outboundKPIs(db *pgxpool.Pool) fiber.Handler {
 			"pending_returns":        pendingReturns,
 			"fill_rate_pct":          fillRate,
 			"high_priority_open":     highPriority,
+			"fulfillment_rate_pct":   fulfillmentRate,
+			"avg_pick_minutes":       avgPickMins,
+			"dispatch_sla_pct":       dispatchSLA,
+			"priority_distribution":  priorityDist,
+			"completed_trips_30d":    completedTrips,
+			"total_trips_30d":        totalTrips,
 		})
 	}
 }

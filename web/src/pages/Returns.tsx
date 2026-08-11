@@ -7,6 +7,7 @@ export default function Returns() {
   const [showNew, setShowNew] = useState(false)
   const [reason, setReason] = useState('')
   const [invoice, setInvoice] = useState('')
+  const [dnNo, setDnNo] = useState('')
   const [itemCode, setItemCode] = useState('')
   const [qty, setQty] = useState('1')
   const [selected, setSelected] = useState<any>(null)
@@ -21,13 +22,23 @@ export default function Returns() {
     const r = await api.returnsCreate({
       reason,
       sales_invoice_no: invoice || undefined,
+      delivery_note_no: dnNo || undefined,
       items: itemCode ? [{ item_code: itemCode, qty: +qty || 1, condition: 'damaged' }] : [],
     })
     if (r.ok) {
       notify({ type: 'success', title: 'Return claim', message: r.data.claim_no })
-      setShowNew(false); setReason(''); setInvoice(''); setItemCode('')
+      setShowNew(false); setReason(''); setInvoice(''); setDnNo(''); setItemCode('')
       load()
     } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
+  }
+
+  const receive = async (id: number) => {
+    const r = await api.returnsReceive(id, {})
+    if (r.ok) {
+      notify({ type: 'success', title: 'Received', message: 'At dock' })
+      load()
+      if (selected?.id === id) setSelected({ ...selected, status: 'received' })
+    } else notify({ type: 'error', title: 'Receive failed', message: r.error || '' })
   }
 
   const inspect = async (id: number, result: string) => {
@@ -37,6 +48,28 @@ export default function Returns() {
       load()
       if (selected?.id === id) setSelected({ ...selected, status: r.data.status })
     }
+  }
+
+  const decide = async (decision: 'restock' | 'scrap' | 'rts') => {
+    if (!selected) return
+    if ((decision === 'restock' || decision === 'scrap') && (!restockItem || !restockQty)) {
+      notify({ type: 'error', title: 'Item + qty required', message: '' })
+      return
+    }
+    if (decision === 'restock' && !locId) {
+      notify({ type: 'error', title: 'Location required for restock', message: '' })
+      return
+    }
+    const r = await api.returnsDecide(selected.id, {
+      decision,
+      item_code: restockItem || undefined,
+      qty: +restockQty || undefined,
+      location_id: locId ? +locId : undefined,
+    })
+    if (r.ok) {
+      notify({ type: 'success', title: 'Decision', message: decision })
+      load(); setSelected(null)
+    } else notify({ type: 'error', title: 'Decide failed', message: r.error || '' })
   }
 
   const restock = async () => {
@@ -58,7 +91,7 @@ export default function Returns() {
       <div className="flex justify-between">
         <div>
           <h2 className="text-lg font-semibold">Returns</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Claims · inspect · restock to hold/damaged only</p>
+          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Receive → Inspect → Decide (restock / scrap / RTS)</p>
         </div>
         <button className="erpnext-btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel' : '+ Claim'}</button>
       </div>
@@ -68,6 +101,7 @@ export default function Returns() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="md:col-span-2"><label className="erpnext-label">Reason *</label><input className="erpnext-input" value={reason} onChange={e => setReason(e.target.value)} /></div>
             <div><label className="erpnext-label">Sales Invoice</label><input className="erpnext-input" value={invoice} onChange={e => setInvoice(e.target.value)} /></div>
+            <div><label className="erpnext-label">Delivery Note</label><input className="erpnext-input" value={dnNo} onChange={e => setDnNo(e.target.value)} /></div>
             <div><label className="erpnext-label">Item</label><input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} /></div>
             <div><label className="erpnext-label">Qty</label><input className="erpnext-input" type="number" value={qty} onChange={e => setQty(e.target.value)} /></div>
           </div>
@@ -86,9 +120,12 @@ export default function Returns() {
                   <td>{r.sales_invoice_no || '—'}</td>
                   <td>{r.reason || '—'}</td>
                   <td>{r.status}</td>
-                  <td className="flex gap-1">
+                  <td className="flex gap-1 flex-wrap">
                     <button className="erpnext-btn-secondary text-xs" onClick={() => setSelected(r)}>Open</button>
                     {r.status === 'pending' && (
+                      <button className="erpnext-btn-primary text-xs" onClick={() => receive(r.id)}>Receive</button>
+                    )}
+                    {(r.status === 'pending' || r.status === 'received') && (
                       <>
                         <button className="erpnext-btn-primary text-xs" onClick={() => inspect(r.id, 'accepted')}>Accept</button>
                         <button className="erpnext-btn-secondary text-xs" onClick={() => inspect(r.id, 'rejected')}>Reject</button>
@@ -108,12 +145,20 @@ export default function Returns() {
             <button className="erpnext-btn-secondary" onClick={() => setSelected(null)}>Back</button>
           </div>
           <p className="text-sm">{selected.reason}</p>
+          {selected.status === 'pending' && (
+            <button className="erpnext-btn-primary" onClick={() => receive(selected.id)}>Mark Received</button>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div><label className="erpnext-label">Item to restock</label><input className="erpnext-input" value={restockItem} onChange={e => setRestockItem(e.target.value)} /></div>
+            <div><label className="erpnext-label">Item</label><input className="erpnext-input" value={restockItem} onChange={e => setRestockItem(e.target.value)} /></div>
             <div><label className="erpnext-label">Qty</label><input className="erpnext-input" type="number" value={restockQty} onChange={e => setRestockQty(e.target.value)} /></div>
             <div><label className="erpnext-label">Hold/Damaged Location ID</label><input className="erpnext-input" value={locId} onChange={e => setLocId(e.target.value)} /></div>
           </div>
-          <button className="erpnext-btn-primary" onClick={restock}>Restock</button>
+          <div className="flex gap-2 flex-wrap">
+            <button className="erpnext-btn-primary" onClick={() => decide('restock')}>Decide: Restock</button>
+            <button className="erpnext-btn-secondary" onClick={() => decide('scrap')}>Decide: Scrap</button>
+            <button className="erpnext-btn-secondary" onClick={() => decide('rts')}>Decide: RTS</button>
+            <button className="erpnext-btn-secondary" onClick={restock}>Legacy Restock</button>
+          </div>
         </div>
       )}
     </div>

@@ -1,6 +1,7 @@
 package putaway
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -83,6 +84,26 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			Reason       string   `json:"reason"`
 			FreeCapacity *float64 `json:"free_capacity"`
 			OnHandQty    float64  `json:"on_hand_qty"`
+			RulePriority *int     `json:"rule_priority,omitempty"`
+		}
+
+		// Optional putaway_rules: capacity cap + preferred priority for this item
+		var rulePriority *int
+		var ruleCapacity *float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT priority, stock_capacity FROM putaway_rules
+			WHERE active=true AND item_code=$1
+			  AND ($2=0 OR warehouse IS NULL OR warehouse='' OR warehouse IN (
+			        SELECT COALESCE(code,'') FROM warehouses WHERE id=$2
+			      ))
+			ORDER BY priority ASC NULLS LAST LIMIT 1`, itemCode, warehouseID).
+			Scan(&rulePriority, &ruleCapacity)
+
+		passesRule := func(onHand float64) bool {
+			if ruleCapacity == nil || *ruleCapacity <= 0 {
+				return true
+			}
+			return onHand < *ruleCapacity
 		}
 
 		// 1) bin_controlled home location with capacity
@@ -108,10 +129,52 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				if warehouseID > 0 && s.WarehouseID != warehouseID {
 					ok = false
 				}
+				if !passesRule(s.OnHandQty) {
+					ok = false
+				}
 				if ok {
 					s.Reason = "home_location"
+					s.RulePriority = rulePriority
 					return shared.OK(c, s)
 				}
+			}
+		}
+
+		// 1b) rule-preferred bins already holding item under rule capacity
+		if rulePriority != nil || ruleCapacity != nil {
+			args := []any{itemCode, qty}
+			sql := `
+				SELECT wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty,
+				       COALESCE(SUM(slb.actual_qty),0) AS on_hand
+				FROM warehouse_locations wl
+				JOIN stock_location_balances slb ON slb.location_id = wl.id
+				WHERE slb.item_code=$1
+				  AND COALESCE(wl.disabled,false)=false
+				  AND wl.location_type IN ('storage','pick_face')
+				  AND (wl.max_capacity_qty IS NULL OR wl.max_capacity_qty - COALESCE((
+				        SELECT SUM(actual_qty) FROM stock_location_balances WHERE location_id=wl.id
+				      ),0) >= $2)`
+			if warehouseID > 0 {
+				sql += ` AND wl.warehouse_id=$3`
+				args = append(args, warehouseID)
+			}
+			sql += ` GROUP BY wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty`
+			if ruleCapacity != nil && *ruleCapacity > 0 {
+				sql += fmt.Sprintf(` HAVING COALESCE(SUM(slb.actual_qty),0) < %g`, *ruleCapacity)
+			}
+			sql += ` ORDER BY on_hand DESC LIMIT 1`
+
+			var s suggestion
+			var maxCap *float64
+			err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap, &s.OnHandQty)
+			if err == nil {
+				if maxCap != nil {
+					free := *maxCap - s.OnHandQty
+					s.FreeCapacity = &free
+				}
+				s.Reason = "putaway_rule"
+				s.RulePriority = rulePriority
+				return shared.OK(c, s)
 			}
 		}
 

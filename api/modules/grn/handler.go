@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/notifications"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -726,6 +727,21 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		`UPDATE grn_sessions SET status='closed', closed_at=NOW(), warehouse_id=COALESCE(warehouse_id,$2) WHERE id=$1`,
 		sessionID, wid); err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+
+	var supplierName string
+	_ = db.QueryRow(c.Context(), `SELECT COALESCE(supplier_name,'') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&supplierName)
+	notifications.EmitGRNClosed(c.Context(), db, sessionID, supplierName)
+
+	// Alert open backorders for items just received
+	for _, l := range lines {
+		var openQty float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(qty),0) FROM backorder_lines_v2
+			WHERE status='pending' AND item_code=$1`, l.itemCode).Scan(&openQty)
+		if openQty > 0 {
+			notifications.EmitOpenBOsForItem(c.Context(), db, l.itemCode, openQty)
+		}
 	}
 
 	return shared.OK(c, fiber.Map{

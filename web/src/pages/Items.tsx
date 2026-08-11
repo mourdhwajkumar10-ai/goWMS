@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import CSVImport from '../components/CSVTools'
 
 interface Item {
   id: number
@@ -128,9 +129,35 @@ export default function Items() {
             Item master with pack/control modes and stock by location
           </p>
         </div>
-        <button onClick={() => setShowNew(!showNew)} className="erpnext-btn-primary">
-          {showNew ? '✕ Cancel' : '+ New Item'}
-        </button>
+        <div className="flex gap-2">
+          <CSVImport onImport={async (rows) => {
+            const r = await api.itemImport({ rows })
+            if (r.ok) {
+              notify({ type: 'success', title: 'Items imported', message: `created ${r.data?.created ?? 0}, skipped ${r.data?.skipped ?? 0}` })
+              loadList()
+            } else notify({ type: 'error', title: 'Import failed', message: r.error || '' })
+          }} />
+          <a
+            className="erpnext-btn-secondary text-sm"
+            href={api.itemsExportUrl()}
+            onClick={(e) => {
+              e.preventDefault()
+              const token = localStorage.getItem('gowms_token')
+              fetch(api.itemsExportUrl(), { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+                .then(r => r.text())
+                .then(text => {
+                  const blob = new Blob([text], { type: 'text/csv' })
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url; a.download = 'items.csv'; a.click()
+                  URL.revokeObjectURL(url)
+                })
+            }}
+          >Export CSV</a>
+          <button onClick={() => setShowNew(!showNew)} className="erpnext-btn-primary">
+            {showNew ? '✕ Cancel' : '+ New Item'}
+          </button>
+        </div>
       </div>
 
       {msg && (

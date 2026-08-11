@@ -1,7 +1,7 @@
 # Feature 18 — Packing List Import (Configurable Templates)
 
 **Spec References:** SPEC_02_INBOUND.md §2.1 Option C, spares_packing_list.xlsx
-**Status:** NOT DONE (full build)
+**Status:** PARTIAL (import + templates exist; supplier-scoped template UI polish TODO)
 **Priority:** HIGH — core receiving workflow
 
 ---
@@ -134,29 +134,26 @@ ALTER TABLE suppliers ADD COLUMN IF NOT EXISTS default_pack_list_template_id INT
 ## API Endpoints
 
 ```
-# Template Management
-GET    /api/suppliers/:id/packing-templates        -- list templates for supplier
-POST   /api/suppliers/:id/packing-templates        -- create template
-PUT    /api/suppliers/:id/packing-templates/:tid   -- update template
-DELETE /api/suppliers/:id/packing-templates/:tid   -- delete template
+# Template Management (actual)
+GET    /api/packing-list/templates
+POST   /api/packing-list/templates
 
-# Packing List Import (into GRN session)
-POST   /api/grn/:id/import-packing-list
-  Body: multipart/form-data
-    - file: CSV/Excel
-    - template_id: integer (optional, auto-detect if blank)
-    - supplier_id: integer (optional, for template lookup)
-  Response: {
-    session_id: 15,
-    boxes_created: 60,
-    lines_created: 64,
-    items_matched: 20,
-    items_unknown: ["PART-A", "PART-B"],
-    warnings: ["Row 65 skipped (summary row)"],
-    invoice_no: "0541626874",
-    delivery_no: "0043996767"
-  }
+# Packing List Import (actual primary paths)
+POST   /api/packing-list/import              -- JSON rows + grn_session_id
+POST   /api/packing-list/import-xlsx         -- multipart file + grn_session_id
+
+# Docs/QA aliases under GRN (also registered)
+POST   /api/grn/:id/import-packing-list      -- multipart xlsx OR JSON rows (session from :id)
+POST   /api/grn/:id/import-xlsx              -- multipart xlsx (session from :id)
 ```
+
+### Doc corrections (was wrong)
+
+| Old doc claim | Actual |
+|---------------|--------|
+| Status NOT DONE / no handler | Built: `api/modules/packinglist/` |
+| Only `POST /api/grn/:id/import-packing-list` | Primary paths are under `/packing-list/...`; GRN aliases added |
+| Templates under `/api/suppliers/:id/packing-templates` | Templates at `/api/packing-list/templates` |
 
 ---
 

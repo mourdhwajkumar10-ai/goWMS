@@ -99,6 +99,7 @@ func main() {
 
 	// Master-data + comments routes live at the API root (no module prefix).
 	masterdata.Register(api, pool)
+	masterdata.RegisterCarriersRoot(api, pool) // /api/carriers
 	comments.Register(api, pool)
 
 	// Operational modules are namespaced under their own prefix so no
@@ -119,6 +120,7 @@ func main() {
 	notifications.Register(api.Group("/notifications"), pool)
 	packing.Register(api.Group("/packing"), pool)
 	packinglist.Register(api.Group("/packing-list"), pool)
+	packinglist.RegisterGRNAlias(api.Group("/grn"), pool) // docs alias: /grn/:id/import-packing-list
 	picking.Register(api.Group("/picking"), pool)
 	picking.RegisterWave(api.Group("/picking"), pool)
 	po.Register(api.Group("/po"), pool)
