@@ -1,7 +1,7 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { clearSession, getRole } from "../services/api";
 
-const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean }[] }[] = [
+const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean; supervisorOnly?: boolean }[] }[] = [
   {
     title: "Home",
     items: [
@@ -11,14 +11,22 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
     ],
   },
   {
+    title: "Inward",
+    items: [
+      { to: "/grn", label: "GRN", icon: "⇩" },
+      { to: "/grn-exceptions", label: "Exceptions", icon: "⚠", supervisorOnly: true },
+      { to: "/grn-followups", label: "Follow-Up Receipts", icon: "↻", supervisorOnly: true },
+      { to: "/putaway", label: "Putaway", icon: "⇨" },
+    ],
+  },
+  {
     title: "Stock",
     items: [
-      { to: "/grn", label: "GRN / Inbound", icon: "⇩" },
-      { to: "/putaway", label: "Putaway", icon: "⇨" },
       { to: "/pick", label: "Picking", icon: "☑" },
       { to: "/pack", label: "Packing", icon: "▣" },
       { to: "/dispatch", label: "Dispatch", icon: "➤" },
       { to: "/cycle-count", label: "Cycle Count", icon: "↻" },
+      { to: "/stock-scan", label: "Stock Scan", icon: "⌖" },
       { to: "/inventory-health", label: "Inventory Health", icon: "♥" },
       { to: "/transfers", label: "Transfers", icon: "⇄" },
       { to: "/stock-entries", label: "Stock Entry", icon: "≡" },
@@ -56,6 +64,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
       { to: "/roles", label: "Roles", icon: "⚿", rolesAdminOnly: true },
       { to: "/workflow", label: "Workflow", icon: "↯" },
       { to: "/reports", label: "Reports", icon: "▤" },
+      { to: "/audit-logs", label: "Transaction Logs", icon: "☰" },
     ],
   },
 ];
@@ -95,7 +104,7 @@ export default function Layout() {
           {sections.map((section) => {
             const items = section.items.filter((item) => {
               if (item.rolesAdminOnly) return showRoles;
-              if (item.adminOnly) return showAdmin;
+              if (item.adminOnly || item.supervisorOnly) return showAdmin;
               return true;
             });
             if (items.length === 0) return null;

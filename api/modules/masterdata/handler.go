@@ -24,15 +24,18 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	md.Post("/items/complete", completeItemMaster(db))
 	md.Get("/items/:code/inventory", itemInventory(db))
 	md.Get("/items/check/:code", checkItem(db))
+	md.Get("/scan-lookup", scanLookup(db))
 
 	md.Get("/warehouses", listWarehouses(db))
 	md.Post("/warehouses", createWarehouse(db))
 	md.Get("/warehouses/:id/locations", listWarehouseLocations(db))
 	md.Post("/warehouses/:id/locations", createLocation(db))
 	md.Post("/warehouses/:id/locations/bulk", bulkCreateLocations(db))
+	md.Post("/warehouses/:id/locations/qr-labels", locationQRLabels(db))
 
 	md.Patch("/locations/:id", updateLocation(db))
 	md.Get("/locations/:id/inventory", locationInventory(db))
+	md.Get("/locations/:id/qr-label", locationQRLabel(db))
 	md.Get("/locations", listAllLocations(db))
 
 	md.Get("/suppliers", listSuppliers(db))
@@ -69,12 +72,19 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       has_serial, has_batch, has_expiry_date, safety_stock, valuation_rate,
 			       COALESCE(pack_type,'loose'), COALESCE(control_mode,'item_controlled'),
 			       home_location_id, COALESCE(master_complete,false), COALESCE(barcode,''),
-			       COALESCE(carton_qty,0), shelf_life_in_days
+			       COALESCE(carton_qty,0), shelf_life_in_days,
+			       COALESCE(mrp,0), COALESCE(hsn_no,''), COALESCE(gst_percentage,0),
+			       COALESCE(vech,''), COALESCE(make,''), COALESCE(uom,'PCS'), COALESCE(category,''),
+			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
+			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
+			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
+			       COALESCE(standard_rate,0)
 			FROM items
 			WHERE disabled=false`
 		args := []any{}
 		if q != "" {
-			sql += ` AND (code ILIKE $1 OR name ILIKE $1 OR COALESCE(brand,'') ILIKE $1)`
+			sql += ` AND (code ILIKE $1 OR name ILIKE $1 OR COALESCE(brand,'') ILIKE $1
+				OR COALESCE(hsn_no,'') ILIKE $1 OR COALESCE(category,'') ILIKE $1)`
 			args = append(args, "%"+q+"%")
 		}
 		sql += ` ORDER BY code`
@@ -86,23 +96,39 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type item struct {
-			ID            int      `json:"id"`
-			Code          string   `json:"code"`
-			Name          string   `json:"name"`
-			Brand         string   `json:"brand"`
-			ItemGroup     string   `json:"item_group"`
-			HasSerial     bool     `json:"has_serial"`
-			HasBatch      bool     `json:"has_batch"`
-			HasExpiryDate bool     `json:"has_expiry_date"`
-			SafetyStock   *float64 `json:"safety_stock"`
-			ValuationRate *float64 `json:"valuation_rate"`
-			PackType      string   `json:"pack_type"`
-			ControlMode   string   `json:"control_mode"`
-			HomeLocationID *int    `json:"home_location_id"`
-			MasterComplete bool    `json:"master_complete"`
-			Barcode       string   `json:"barcode"`
-			CartonQty     int      `json:"carton_qty"`
-			ShelfLifeDays *int     `json:"shelf_life_in_days"`
+			ID               int      `json:"id"`
+			Code             string   `json:"code"`
+			Name             string   `json:"name"`
+			Brand            string   `json:"brand"`
+			ItemGroup        string   `json:"item_group"`
+			HasSerial        bool     `json:"has_serial"`
+			HasBatch         bool     `json:"has_batch"`
+			HasExpiryDate    bool     `json:"has_expiry_date"`
+			SafetyStock      *float64 `json:"safety_stock"`
+			ValuationRate    *float64 `json:"valuation_rate"`
+			PackType         string   `json:"pack_type"`
+			ControlMode      string   `json:"control_mode"`
+			HomeLocationID   *int     `json:"home_location_id"`
+			MasterComplete   bool     `json:"master_complete"`
+			Barcode          string   `json:"barcode"`
+			CartonQty        int      `json:"carton_qty"`
+			ShelfLifeDays    *int     `json:"shelf_life_in_days"`
+			MRP              float64  `json:"mrp"`
+			HSNNo            string   `json:"hsn_no"`
+			GSTPercentage    float64  `json:"gst_percentage"`
+			Vech             string   `json:"vech"`
+			Make             string   `json:"make"`
+			UOM              string   `json:"uom"`
+			Category         string   `json:"category"`
+			PartsMovement    string   `json:"parts_movement"`
+			PartsPBO         string   `json:"parts_pbo"`
+			ThresholdValue   float64  `json:"threshold_value"`
+			MaxRateDiscount  float64  `json:"max_rate_discount"`
+			Remark           string   `json:"remark"`
+			Description      string   `json:"description"`
+			MinOrderQty      float64  `json:"min_order_qty"`
+			WeightPerUnit    float64  `json:"weight_per_unit"`
+			StandardRate     float64  `json:"standard_rate"`
 		}
 		list := []item{}
 		for rows.Next() {
@@ -111,7 +137,10 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			if err := rows.Scan(&i.ID, &i.Code, &i.Name, &i.Brand, &groupID,
 				&i.HasSerial, &i.HasBatch, &i.HasExpiryDate, &i.SafetyStock, &i.ValuationRate,
 				&i.PackType, &i.ControlMode, &i.HomeLocationID, &i.MasterComplete, &i.Barcode,
-				&i.CartonQty, &i.ShelfLifeDays); err != nil {
+				&i.CartonQty, &i.ShelfLifeDays,
+				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.Category,
+				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
+				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			i.ItemGroup = groupID
@@ -138,6 +167,21 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			CartonQty      int     `json:"carton_qty"`
 			ShelfLifeDays  *int    `json:"shelf_life_in_days"`
 			SafetyStock    float64 `json:"safety_stock"`
+			MRP            float64 `json:"mrp"`
+			HSNNo          string  `json:"hsn_no"`
+			GSTPercentage  float64 `json:"gst_percentage"`
+			Vech           string  `json:"vech"`
+			Make           string  `json:"make"`
+			UOM            string  `json:"uom"`
+			Category       string  `json:"category"`
+			PartsMovement  string  `json:"parts_movement"`
+			PartsPBO       string  `json:"parts_pbo"`
+			ThresholdValue float64 `json:"threshold_value"`
+			MaxRateDiscount float64 `json:"max_rate_discount"`
+			Remark         string  `json:"remark"`
+			Description    string  `json:"description"`
+			MinOrderQty    float64 `json:"min_order_qty"`
+			WeightPerUnit  float64 `json:"weight_per_unit"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -163,6 +207,9 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
 
+		if body.UOM == "" {
+			body.UOM = "PCS"
+		}
 		complete := itemMasterComplete(body.Code, body.Name, body.PackType, body.ControlMode, body.HomeLocationID, body.HasExpiryDate, body.ShelfLifeDays)
 
 		var id int
@@ -170,16 +217,27 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			INSERT INTO items (
 				code, name, brand, has_serial, has_batch, has_expiry_date,
 				pack_type, control_mode, home_location_id, barcode, carton_qty,
-				shelf_life_in_days, safety_stock, master_complete
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+				shelf_life_in_days, safety_stock, master_complete,
+				mrp, hsn_no, gst_percentage, vech, make, uom, category,
+				parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
+				description, min_order_qty, weight_per_unit
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+			          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
 			RETURNING id`,
 			body.Code, body.Name, nullIfEmpty(body.Brand), body.HasSerial, body.HasBatch, body.HasExpiryDate,
 			body.PackType, body.ControlMode, body.HomeLocationID, nullIfEmpty(body.Barcode), body.CartonQty,
 			body.ShelfLifeDays, body.SafetyStock, complete,
+			body.MRP, nullIfEmpty(body.HSNNo), body.GSTPercentage, nullIfEmpty(body.Vech), nullIfEmpty(body.Make),
+			body.UOM, nullIfEmpty(body.Category), nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
+			body.ThresholdValue, body.MaxRateDiscount, nullIfEmpty(body.Remark),
+			nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit,
 		).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.create", "item", id, nil, fiber.Map{
+			"code": body.Code, "name": body.Name, "master_complete": complete,
+		})
 		return shared.OK(c, fiber.Map{
 			"id": id, "code": body.Code, "master_complete": complete,
 		})
@@ -193,18 +251,33 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
 		}
 		var body struct {
-			Name           *string `json:"name"`
-			Brand          *string `json:"brand"`
-			HasSerial      *bool   `json:"has_serial"`
-			HasBatch       *bool   `json:"has_batch"`
-			HasExpiryDate  *bool   `json:"has_expiry_date"`
-			PackType       *string `json:"pack_type"`
-			ControlMode    *string `json:"control_mode"`
-			HomeLocationID *int    `json:"home_location_id"`
-			Barcode        *string `json:"barcode"`
-			CartonQty      *int    `json:"carton_qty"`
-			ShelfLifeDays  *int    `json:"shelf_life_in_days"`
-			SafetyStock    *float64 `json:"safety_stock"`
+			Name            *string  `json:"name"`
+			Brand           *string  `json:"brand"`
+			HasSerial       *bool    `json:"has_serial"`
+			HasBatch        *bool    `json:"has_batch"`
+			HasExpiryDate   *bool    `json:"has_expiry_date"`
+			PackType        *string  `json:"pack_type"`
+			ControlMode     *string  `json:"control_mode"`
+			HomeLocationID  *int     `json:"home_location_id"`
+			Barcode         *string  `json:"barcode"`
+			CartonQty       *int     `json:"carton_qty"`
+			ShelfLifeDays   *int     `json:"shelf_life_in_days"`
+			SafetyStock     *float64 `json:"safety_stock"`
+			MRP             *float64 `json:"mrp"`
+			HSNNo           *string  `json:"hsn_no"`
+			GSTPercentage   *float64 `json:"gst_percentage"`
+			Vech            *string  `json:"vech"`
+			Make            *string  `json:"make"`
+			UOM             *string  `json:"uom"`
+			Category        *string  `json:"category"`
+			PartsMovement   *string  `json:"parts_movement"`
+			PartsPBO        *string  `json:"parts_pbo"`
+			ThresholdValue  *float64 `json:"threshold_value"`
+			MaxRateDiscount *float64 `json:"max_rate_discount"`
+			Remark          *string  `json:"remark"`
+			Description     *string  `json:"description"`
+			MinOrderQty     *float64 `json:"min_order_qty"`
+			WeightPerUnit   *float64 `json:"weight_per_unit"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -273,16 +346,37 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 				carton_qty = COALESCE($11, carton_qty),
 				shelf_life_in_days = COALESCE($12, shelf_life_in_days),
 				safety_stock = COALESCE($13, safety_stock),
-				master_complete = $14
+				master_complete = $14,
+				mrp = COALESCE($15, mrp),
+				hsn_no = COALESCE($16, hsn_no),
+				gst_percentage = COALESCE($17, gst_percentage),
+				vech = COALESCE($18, vech),
+				make = COALESCE($19, make),
+				uom = COALESCE($20, uom),
+				category = COALESCE($21, category),
+				parts_movement = COALESCE($22, parts_movement),
+				parts_pbo = COALESCE($23, parts_pbo),
+				threshold_value = COALESCE($24, threshold_value),
+				max_rate_discount = COALESCE($25, max_rate_discount),
+				remark = COALESCE($26, remark),
+				description = COALESCE($27, description),
+				min_order_qty = COALESCE($28, min_order_qty),
+				weight_per_unit = COALESCE($29, weight_per_unit)
 			WHERE id=$1`,
 			id,
 			body.Name, body.Brand, body.HasSerial, body.HasBatch, body.HasExpiryDate,
 			packType, controlMode, homeID, body.Barcode, body.CartonQty, body.ShelfLifeDays,
 			body.SafetyStock, complete,
+			body.MRP, body.HSNNo, body.GSTPercentage, body.Vech, body.Make, body.UOM, body.Category,
+			body.PartsMovement, body.PartsPBO, body.ThresholdValue, body.MaxRateDiscount, body.Remark,
+			body.Description, body.MinOrderQty, body.WeightPerUnit,
 		)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.update", "item", id, nil, fiber.Map{
+			"name": name, "master_complete": complete,
+		})
 		return shared.OK(c, fiber.Map{"id": id, "master_complete": complete})
 	}
 }
@@ -400,6 +494,9 @@ func itemInventory(db *pgxpool.Pool) fiber.Handler {
 			       slb.actual_qty, slb.reserved_qty,
 			       (slb.actual_qty - slb.reserved_qty) AS available_qty,
 			       CASE
+			         WHEN COALESCE(slb.allocation_status,'') = 'unallocatable'
+			              OR wl.location_type IN ('incoming','hold','damaged','staging')
+			           THEN 'unallocatable'
 			         WHEN slb.reserved_qty <= 0 THEN 'available'
 			         WHEN slb.reserved_qty >= slb.actual_qty THEN 'fully_allocated'
 			         ELSE 'partial'
@@ -676,6 +773,9 @@ func createLocation(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 		}
+		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "location.create", "location", id, nil, fiber.Map{
+			"code": loc.Code, "warehouse_id": wid, "level": loc.Level,
+		})
 		return shared.OK(c, fiber.Map{
 			"id": id, "code": loc.Code, "warehouse_id": wid,
 			"aisle": loc.Aisle, "bay": loc.Shelf, "level": loc.Level, "bin": loc.Number,
@@ -697,6 +797,7 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 			ShelfFrom       int      `json:"shelf_from"` // alias
 			ShelfTo         int      `json:"shelf_to"`
 			Levels          []string `json:"levels"`
+			LevelCount      int      `json:"level_count"` // progressive shelves from bottom: 01..N
 			BinsPerBay      int      `json:"bins_per_bay"`
 			BinsPerShelf    int      `json:"bins_per_shelf"` // alias
 			LocationType    string   `json:"location_type"`
@@ -736,7 +837,20 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 		}
 		levels := body.Levels
 		if len(levels) == 0 {
-			levels = []string{"lower", "middle", "upper"}
+			n := body.LevelCount
+			if n < 1 {
+				n = 3
+			}
+			if n > 20 {
+				return shared.Err(c, fiber.StatusBadRequest, "level_count must be 1–20")
+			}
+			levels = make([]string, 0, n)
+			for i := 1; i <= n; i++ {
+				levels = append(levels, fmt.Sprintf("%02d", i))
+			}
+		}
+		if (bayTo-bayFrom+1)*len(levels)*bins > 2000 {
+			return shared.Err(c, fiber.StatusBadRequest, "bulk range too large (max 2000 locations)")
 		}
 		locType := body.LocationType
 		if locType == "" {
@@ -797,6 +911,9 @@ func bulkCreateLocations(db *pgxpool.Pool) fiber.Handler {
 				}
 			}
 		}
+		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "location.bulk_create", "warehouse", wid, nil, fiber.Map{
+			"created": len(created), "aisle": aisle,
+		})
 		return shared.OK(c, fiber.Map{"created": len(created), "locations": created})
 	}
 }
@@ -871,6 +988,107 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+type locationLabel struct {
+	ID          int    `json:"id"`
+	Code        string `json:"code"`
+	WarehouseID int    `json:"warehouse_id"`
+	Aisle       string `json:"aisle"`
+	Bay         string `json:"bay"`
+	Level       string `json:"level"`
+	Bin         string `json:"bin"`
+	LocationType string `json:"location_type"`
+}
+
+func scanLocationLabel(id, wid int, code, aisle, shelf, level, number, locType string) locationLabel {
+	return locationLabel{
+		ID: id, Code: code, WarehouseID: wid,
+		Aisle: aisle, Bay: shelf, Level: displayLevel(level), Bin: number,
+		LocationType: locType,
+	}
+}
+
+func locationQRLabel(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var code, aisle, shelf, level, number, locType string
+		var wid int
+		err = db.QueryRow(c.Context(), `
+			SELECT id, code, warehouse_id, COALESCE(aisle,''), COALESCE(shelf, COALESCE(rack,'')),
+			       COALESCE(level,'01'), COALESCE(number, COALESCE(bin,'')), COALESCE(location_type,'storage')
+			FROM warehouse_locations WHERE id=$1`, id).
+			Scan(&id, &code, &wid, &aisle, &shelf, &level, &number, &locType)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return shared.Err(c, fiber.StatusNotFound, "location not found")
+			}
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, scanLocationLabel(id, wid, code, aisle, shelf, level, number, locType))
+	}
+}
+
+func locationQRLabels(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		wid, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid warehouse id")
+		}
+		var body struct {
+			LocationIDs []int  `json:"location_ids"`
+			Aisle       string `json:"aisle"`
+			Bay         string `json:"bay"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		aisle := strings.TrimSpace(strings.ToUpper(body.Aisle))
+		bay := strings.TrimSpace(body.Bay)
+
+		sql := `
+			SELECT id, code, warehouse_id, COALESCE(aisle,''), COALESCE(shelf, COALESCE(rack,'')),
+			       COALESCE(level,'01'), COALESCE(number, COALESCE(bin,'')), COALESCE(location_type,'storage')
+			FROM warehouse_locations
+			WHERE warehouse_id = $1 AND COALESCE(disabled,false) = false`
+		args := []any{wid}
+		argN := 2
+		if len(body.LocationIDs) > 0 {
+			sql += fmt.Sprintf(` AND id = ANY($%d)`, argN)
+			args = append(args, body.LocationIDs)
+			argN++
+		}
+		if aisle != "" {
+			sql += fmt.Sprintf(` AND UPPER(COALESCE(aisle,'')) = $%d`, argN)
+			args = append(args, aisle)
+			argN++
+		}
+		if bay != "" {
+			sql += fmt.Sprintf(` AND COALESCE(shelf, COALESCE(rack,'')) = $%d`, argN)
+			args = append(args, bay)
+			argN++
+		}
+		sql += ` ORDER BY aisle, shelf, level, number, code`
+
+		rows, err := db.Query(c.Context(), sql, args...)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		out := []locationLabel{}
+		for rows.Next() {
+			var id, whID int
+			var code, a, shelf, level, number, locType string
+			if err := rows.Scan(&id, &code, &whID, &a, &shelf, &level, &number, &locType); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			out = append(out, scanLocationLabel(id, whID, code, a, shelf, level, number, locType))
+		}
+		return shared.OK(c, fiber.Map{"labels": out, "count": len(out)})
+	}
+}
+
 func locationInventory(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		id, err := strconv.Atoi(c.Params("id"))
@@ -885,6 +1103,9 @@ func locationInventory(db *pgxpool.Pool) fiber.Handler {
 			       slb.actual_qty, slb.reserved_qty,
 			       (slb.actual_qty - slb.reserved_qty) AS available_qty,
 			       CASE
+			         WHEN COALESCE(slb.allocation_status,'') = 'unallocatable'
+			              OR wl.location_type IN ('incoming','hold','damaged','staging')
+			           THEN 'unallocatable'
 			         WHEN slb.reserved_qty <= 0 THEN 'available'
 			         WHEN slb.reserved_qty >= slb.actual_qty THEN 'fully_allocated'
 			         ELSE 'partial'
@@ -1055,6 +1276,16 @@ func normalizeLocationInput(aisle, shelf, level, number, locType, code string) (
 	default:
 		return locNorm{}, "invalid location_type"
 	}
+	// Bottom shelves 01–04 = pick face; 05+ = storage (when type is storage/pick_face).
+	if locType == "storage" || locType == "pick_face" {
+		if n, err := strconv.Atoi(level); err == nil {
+			if n >= 1 && n <= 4 {
+				locType = "pick_face"
+			} else if n >= 5 {
+				locType = "storage"
+			}
+		}
+	}
 	if code == "" {
 		lvl := levelCode(level)
 		code = fmt.Sprintf("%s-%s-%s-%s", aisle, shelf, lvl, number)
@@ -1062,17 +1293,22 @@ func normalizeLocationInput(aisle, shelf, level, number, locType, code string) (
 	return locNorm{Aisle: aisle, Shelf: shelf, Level: level, Number: number, LocationType: locType, Code: code}, ""
 }
 
+// normalizeLevel returns zero-padded shelf level from bottom (01 = lowest).
+// Legacy lower/middle/upper (and L/M/U) map to 01/02/03 for compatibility.
 func normalizeLevel(level string) string {
+	level = strings.TrimSpace(strings.ToLower(level))
 	switch level {
 	case "", "l", "low", "lower", "bottom":
-		return "lower"
+		return "01"
 	case "m", "mid", "middle", "med":
-		return "middle"
+		return "02"
 	case "u", "up", "upper", "high", "top":
-		return "upper"
-	default:
-		return level
+		return "03"
 	}
+	if n, err := strconv.Atoi(level); err == nil && n >= 1 && n <= 99 {
+		return fmt.Sprintf("%02d", n)
+	}
+	return level
 }
 
 func displayLevel(level string) string {
@@ -1080,14 +1316,7 @@ func displayLevel(level string) string {
 }
 
 func levelCode(level string) string {
-	switch normalizeLevel(level) {
-	case "upper":
-		return "U"
-	case "middle":
-		return "M"
-	default:
-		return "L"
-	}
+	return normalizeLevel(level)
 }
 
 func normalizePackType(v string) (string, error) {

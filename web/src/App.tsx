@@ -3,10 +3,13 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import GRN from "./pages/GRN";
+import GRNExceptions from "./pages/GRNExceptions";
+import GRNFollowUps from "./pages/GRNFollowUps";
 import Pick from "./pages/Pick";
 import Pack from "./pages/Pack";
 import Dispatch from "./pages/Dispatch";
 import CycleCount from "./pages/CycleCount";
+import StockScan from "./pages/StockScan";
 import PurchaseOrders from "./pages/PurchaseOrders";
 import Workflow from "./pages/Workflow";
 import Reports from "./pages/Reports";
@@ -32,6 +35,7 @@ import Employees from "./pages/Employees";
 import Roles from "./pages/Roles";
 import Returns from "./pages/Returns";
 import Backorders from "./pages/Backorders";
+import AuditLogs from "./pages/AuditLogs";
 import { getToken } from "./services/api";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -54,10 +58,13 @@ export default function App() {
         <Route index element={<Dashboard />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="grn" element={<GRN />} />
+        <Route path="grn-exceptions" element={<GRNExceptions />} />
+        <Route path="grn-followups" element={<GRNFollowUps />} />
         <Route path="pick" element={<Pick />} />
         <Route path="pack" element={<Pack />} />
         <Route path="dispatch" element={<Dispatch />} />
         <Route path="cycle-count" element={<CycleCount />} />
+        <Route path="stock-scan" element={<StockScan />} />
         <Route path="inventory-health" element={<InventoryHealth />} />
         <Route path="transfers" element={<Transfers />} />
         <Route path="po" element={<PurchaseOrders />} />
@@ -68,6 +75,7 @@ export default function App() {
         <Route path="roles" element={<Roles />} />
         <Route path="workflow" element={<Workflow />} />
         <Route path="reports" element={<Reports />} />
+        <Route path="audit-logs" element={<AuditLogs />} />
         <Route path="items" element={<Items />} />
         <Route path="locations" element={<Locations />} />
         <Route path="warehouses" element={<Warehouses />} />

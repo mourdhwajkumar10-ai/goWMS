@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import { printLocationLabels } from '../components/LocationQRPrint'
 
 interface Wh {
   id: number
@@ -31,11 +32,15 @@ interface Loc {
   item_count: number
 }
 
-const LEVELS = [
-  { value: 'lower', label: 'Lower' },
-  { value: 'middle', label: 'Middle' },
-  { value: 'upper', label: 'Upper' },
-]
+const MAX_SHELF_LEVELS = 20
+
+function shelfLevelOptions(count: number) {
+  const n = Math.min(MAX_SHELF_LEVELS, Math.max(1, count || 1))
+  return Array.from({ length: n }, (_, i) => {
+    const v = String(i + 1).padStart(2, '0')
+    return { value: v, label: i === 0 ? `${v} (bottom)` : v }
+  })
+}
 
 const LOC_TYPES = [
   { value: 'storage', label: 'Storage' },
@@ -63,7 +68,8 @@ export default function Warehouses() {
 
   const [aisle, setAisle] = useState('A')
   const [bay, setBay] = useState('01')
-  const [level, setLevel] = useState('lower')
+  const [level, setLevel] = useState('01')
+  const [levelCountUI, setLevelCountUI] = useState(5)
   const [bin, setBin] = useState('01')
   const [locType, setLocType] = useState('storage')
   const [capacity, setCapacity] = useState('')
@@ -75,7 +81,7 @@ export default function Warehouses() {
   const [bayFrom, setBayFrom] = useState('1')
   const [bayTo, setBayTo] = useState('3')
   const [binsPerBay, setBinsPerBay] = useState('4')
-  const [bulkLevels, setBulkLevels] = useState<string[]>(['lower', 'middle', 'upper'])
+  const [bulkLevelCount, setBulkLevelCount] = useState('5')
   const [bulkType, setBulkType] = useState('storage')
   const [bulkPriority, setBulkPriority] = useState('5')
   const [showBulk, setShowBulk] = useState(false)
@@ -85,6 +91,10 @@ export default function Warehouses() {
   const [editCapacity, setEditCapacity] = useState('')
   const [editDisabled, setEditDisabled] = useState(false)
   const [editMixed, setEditMixed] = useState(true)
+  const [selectedIds, setSelectedIds] = useState<number[]>([])
+  const [qrBay, setQrBay] = useState('')
+  const [qrAisle, setQrAisle] = useState('')
+  const [showQR, setShowQR] = useState(false)
 
   const loadList = () => api.warehouseList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
@@ -93,15 +103,19 @@ export default function Warehouses() {
     setSelected(w)
     setEditingId(null)
     setFilterAisle('')
+    setSelectedIds([])
+    setShowQR(false)
     const r = await api.warehouseLocations(w.id)
     if (r.ok) setLocations(r.data ?? [])
   }
 
   const previewCode = useMemo(() => {
     if (customCode.trim()) return customCode.trim().toUpperCase()
-    const lvl = level === 'upper' ? 'U' : level === 'middle' ? 'M' : 'L'
+    const lvl = String(level).padStart(2, '0')
     return `${aisle.trim().toUpperCase() || 'A'}-${bay || '01'}-${lvl}-${bin || '01'}`
   }, [aisle, bay, level, bin, customCode])
+
+  const levelOptions = useMemo(() => shelfLevelOptions(levelCountUI), [levelCountUI])
 
   const filtered = useMemo(() => {
     if (!filterAisle.trim()) return locations
@@ -146,14 +160,11 @@ export default function Warehouses() {
     }
   }
 
-  const toggleBulkLevel = (v: string) => {
-    setBulkLevels(prev => prev.includes(v) ? prev.filter(x => x !== v) : [...prev, v])
-  }
-
   const bulkCreate = async () => {
     if (!selected) return
-    if (bulkLevels.length === 0) {
-      notify({ type: 'error', title: 'Levels required', message: 'Pick at least one of Lower / Middle / Upper' })
+    const n = +bulkLevelCount
+    if (!n || n < 1 || n > MAX_SHELF_LEVELS) {
+      notify({ type: 'error', title: 'Levels required', message: `Enter shelf count 1–${MAX_SHELF_LEVELS} (01 = bottom)` })
       return
     }
     const r = await api.locationBulk(selected.id, {
@@ -161,7 +172,7 @@ export default function Warehouses() {
       bay_from: +bayFrom,
       bay_to: +bayTo,
       bins_per_bay: +binsPerBay,
-      levels: bulkLevels,
+      level_count: n,
       location_type: bulkType,
       putaway_priority: +bulkPriority || 5,
     })
@@ -201,13 +212,77 @@ export default function Warehouses() {
     }
   }
 
+  const toggleSelect = (id: number) => {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])
+  }
+
+  const printQR = async (mode: 'selected' | 'bay' | 'aisle' | 'filtered') => {
+    if (!selected) return
+    let labels: { id: number; code: string; aisle?: string; bay?: string; level?: string; bin?: string }[] = []
+
+    if (mode === 'filtered') {
+      labels = filtered.map(l => ({
+        id: l.id, code: l.code, aisle: l.aisle, bay: l.bay || l.shelf, level: l.level, bin: l.bin || l.number,
+      }))
+    } else if (mode === 'selected') {
+      if (selectedIds.length === 0) {
+        notify({ type: 'error', title: 'Nothing selected', message: 'Select locations in the table first' })
+        return
+      }
+      const r = await api.locationQRLabels(selected.id, { location_ids: selectedIds })
+      if (!r.ok) {
+        notify({ type: 'error', title: 'QR failed', message: r.error || '' })
+        return
+      }
+      labels = r.data?.labels ?? []
+    } else if (mode === 'bay') {
+      if (!qrAisle.trim() || !qrBay.trim()) {
+        notify({ type: 'error', title: 'Bay required', message: 'Enter aisle and bay for bay-wise QR' })
+        return
+      }
+      const r = await api.locationQRLabels(selected.id, { aisle: qrAisle.trim(), bay: qrBay.trim() })
+      if (!r.ok) {
+        notify({ type: 'error', title: 'QR failed', message: r.error || '' })
+        return
+      }
+      labels = r.data?.labels ?? []
+    } else if (mode === 'aisle') {
+      if (!qrAisle.trim()) {
+        notify({ type: 'error', title: 'Aisle required', message: 'Enter aisle for aisle-wise QR' })
+        return
+      }
+      const r = await api.locationQRLabels(selected.id, { aisle: qrAisle.trim() })
+      if (!r.ok) {
+        notify({ type: 'error', title: 'QR failed', message: r.error || '' })
+        return
+      }
+      labels = r.data?.labels ?? []
+    }
+
+    if (!labels.length) {
+      notify({ type: 'error', title: 'No labels', message: 'No matching locations to print' })
+      return
+    }
+    printLocationLabels(labels, `${selected.code} location labels`)
+    notify({ type: 'success', title: 'Print ready', message: `${labels.length} QR label(s)` })
+  }
+
+  const printOne = async (id: number) => {
+    const r = await api.locationQRLabel(id)
+    if (!r.ok || !r.data) {
+      notify({ type: 'error', title: 'QR failed', message: r.error || '' })
+      return
+    }
+    printLocationLabels([r.data], r.data.code)
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Warehouses</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-            Configure aisle → bay → level (lower / middle / upper) → bin. Set type and putaway priority (1 = highest).
+            Configure aisle → bay → shelf level (01 = bottom … N) → bin. Set type and putaway priority (1 = highest).
           </p>
         </div>
         <button onClick={() => setShowNew(!showNew)} className="erpnext-btn-primary">
@@ -295,14 +370,19 @@ export default function Warehouses() {
               </h2>
               {selected && (
                 <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
-                  Click a row to edit type, priority, capacity. Code format: Aisle-Bay-Level-Bin (e.g. A-01-L-03).
+                  Click a row to edit type, priority, capacity. Code format: Aisle-Bay-Level-Bin (e.g. A-01-01-03).
                 </p>
               )}
             </div>
             {selected && (
-              <button className="erpnext-btn-secondary text-sm" onClick={() => setShowBulk(!showBulk)}>
-                {showBulk ? 'Hide bulk' : 'Bulk generate'}
-              </button>
+              <div className="flex gap-2">
+                <button className="erpnext-btn-secondary text-sm" onClick={() => setShowQR(!showQR)}>
+                  {showQR ? 'Hide QR' : 'Print QR'}
+                </button>
+                <button className="erpnext-btn-secondary text-sm" onClick={() => setShowBulk(!showBulk)}>
+                  {showBulk ? 'Hide bulk' : 'Bulk generate'}
+                </button>
+              </div>
             )}
           </div>
 
@@ -326,9 +406,24 @@ export default function Warehouses() {
                     <input className="erpnext-input" value={bay} onChange={e => setBay(e.target.value)} placeholder="01" />
                   </div>
                   <div>
-                    <label className="erpnext-label">Level</label>
+                    <label className="erpnext-label">Shelves in rack (for level list)</label>
+                    <input
+                      className="erpnext-input"
+                      type="number"
+                      min={1}
+                      max={MAX_SHELF_LEVELS}
+                      value={levelCountUI}
+                      onChange={e => {
+                        const n = Math.min(MAX_SHELF_LEVELS, Math.max(1, +e.target.value || 1))
+                        setLevelCountUI(n)
+                        if (+level > n) setLevel(String(n).padStart(2, '0'))
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Level (01 = bottom)</label>
                     <select className="erpnext-input" value={level} onChange={e => setLevel(e.target.value)}>
-                      {LEVELS.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
+                      {levelOptions.map(l => <option key={l.value} value={l.value}>{l.label}</option>)}
                     </select>
                   </div>
                   <div>
@@ -366,6 +461,35 @@ export default function Warehouses() {
                 </div>
               </div>
 
+              {showQR && (
+                <div className="rounded-lg p-4 space-y-3" style={{ background: 'var(--panel-2)' }}>
+                  <div className="text-sm font-medium">Print location QR codes</div>
+                  <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                    QR encodes the location code (e.g. A-01-01-03). Paste or scan into putaway / pick flows.
+                  </p>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    <div>
+                      <label className="erpnext-label">Aisle (for aisle / bay print)</label>
+                      <input className="erpnext-input" value={qrAisle} onChange={e => setQrAisle(e.target.value)} placeholder="A" />
+                    </div>
+                    <div>
+                      <label className="erpnext-label">Bay (bay-wise only)</label>
+                      <input className="erpnext-input" value={qrBay} onChange={e => setQrBay(e.target.value)} placeholder="01" />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button className="erpnext-btn-primary text-sm" onClick={() => printQR('selected')}>
+                      Selected ({selectedIds.length})
+                    </button>
+                    <button className="erpnext-btn-secondary text-sm" onClick={() => printQR('bay')}>Bay-wise</button>
+                    <button className="erpnext-btn-secondary text-sm" onClick={() => printQR('aisle')}>Aisle-wise</button>
+                    <button className="erpnext-btn-secondary text-sm" onClick={() => printQR('filtered')}>
+                      Current list ({filtered.length})
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {showBulk && (
                 <div className="rounded-lg p-4 space-y-3" style={{ background: 'var(--panel-2)' }}>
                   <div className="text-sm font-medium">Bulk generate (aisle × bay × level × bin)</div>
@@ -396,15 +520,21 @@ export default function Warehouses() {
                       <label className="erpnext-label">Priority</label>
                       <input className="erpnext-input" type="number" min={1} max={10} value={bulkPriority} onChange={e => setBulkPriority(e.target.value)} />
                     </div>
+                    <div>
+                      <label className="erpnext-label">Shelf levels (01 = bottom)</label>
+                      <input
+                        className="erpnext-input"
+                        type="number"
+                        min={1}
+                        max={MAX_SHELF_LEVELS}
+                        value={bulkLevelCount}
+                        onChange={e => setBulkLevelCount(e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div className="flex flex-wrap gap-4 text-sm">
-                    {LEVELS.map(l => (
-                      <label key={l.value} className="flex items-center gap-2">
-                        <input type="checkbox" checked={bulkLevels.includes(l.value)} onChange={() => toggleBulkLevel(l.value)} />
-                        {l.label}
-                      </label>
-                    ))}
-                  </div>
+                  <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                    Generates levels 01…{String(Math.min(MAX_SHELF_LEVELS, Math.max(1, +bulkLevelCount || 1))).padStart(2, '0')} from the bottom shelf upward.
+                  </p>
                   <button onClick={bulkCreate} className="erpnext-btn-primary text-sm">Generate locations</button>
                 </div>
               )}
@@ -453,6 +583,7 @@ export default function Warehouses() {
                 <table className="erpnext-table">
                   <thead>
                     <tr style={{ background: 'var(--panel-2)' }}>
+                      <th style={{ width: 36 }}></th>
                       <th>Code</th>
                       <th>Aisle</th>
                       <th>Bay</th>
@@ -467,6 +598,13 @@ export default function Warehouses() {
                   <tbody>
                     {filtered.map(l => (
                       <tr key={l.id} style={{ opacity: l.disabled ? 0.5 : 1 }}>
+                        <td>
+                          <input
+                            type="checkbox"
+                            checked={selectedIds.includes(l.id)}
+                            onChange={() => toggleSelect(l.id)}
+                          />
+                        </td>
                         <td className="font-medium" style={{ color: 'var(--accent)' }}>{l.code}</td>
                         <td>{l.aisle}</td>
                         <td>{l.bay || l.shelf}</td>
@@ -475,13 +613,14 @@ export default function Warehouses() {
                         <td><span className="erpnext-badge erpnext-badge-blue">{l.location_type}</span></td>
                         <td>{l.putaway_priority ?? 5}</td>
                         <td className="text-right">{l.on_hand_qty}</td>
-                        <td>
+                        <td className="whitespace-nowrap">
+                          <button className="erpnext-btn-secondary text-xs mr-1" onClick={() => printOne(l.id)}>QR</button>
                           <button className="erpnext-btn-secondary text-xs" onClick={() => startEdit(l)}>Edit</button>
                         </td>
                       </tr>
                     ))}
                     {filtered.length === 0 && (
-                      <tr><td colSpan={9} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No locations yet</td></tr>
+                      <tr><td colSpan={10} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No locations yet</td></tr>
                     )}
                   </tbody>
                 </table>

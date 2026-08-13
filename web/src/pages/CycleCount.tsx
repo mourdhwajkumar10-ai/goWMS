@@ -3,6 +3,7 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import ItemAutocomplete from '../components/ItemAutocomplete'
 
 interface Sheet {
   id: number
@@ -215,7 +216,13 @@ export default function CycleCount() {
           <div className="p-4">
             <h4 className="font-medium text-sm mb-2">Add Item to Count</h4>
             <div className="flex gap-2">
-              <input className="erpnext-input" value={addItemCode} onChange={e => setAddItemCode(e.target.value)} placeholder="Item code" />
+              <ItemAutocomplete
+                value={addItemCode}
+                onSelect={(found) => setAddItemCode(found.code)}
+                onChangeText={setAddItemCode}
+                placeholder="Item code"
+                className="erpnext-input"
+              />
               <input className="erpnext-input" type="number" value={addSystemQty} onChange={e => setAddSystemQty(e.target.value)} placeholder="System qty" />
               <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
               <button onClick={addLine} className="erpnext-btn-primary">Add</button>

@@ -30,6 +30,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/:id/carton", scanCartonParam(db))
 	r.Post("/carton/:id/line", scanLineParam(db))
 	r.Post("/:id/close", closeSessionParam(db))
+
+	registerWorkflowRoutes(r, db)
 }
 
 func createSession(db *pgxpool.Pool) fiber.Handler {
@@ -39,12 +41,20 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			PurchaseReceiptNo string `json:"purchase_receipt_no"`
 			SupplierName      string `json:"supplier_name"`
 			PurchaseOrderID   int    `json:"purchase_order_id"`
+			ReceivingMode     string `json:"receiving_mode"`
+			TruckNo           string `json:"truck_no"`
+			DriverName        string `json:"driver_name"`
+			DriverPhone       string `json:"driver_phone"`
+			ExpectedBoxes     int    `json:"expected_boxes"`
+			Notes             string `json:"notes"`
+			Plant             string `json:"plant"`
+			Dock              string `json:"dock"`
+			InvoiceNos        string `json:"invoice_nos"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
 
-		// If PO id given but name blank, resolve name for purchase_receipt_no (PO link).
 		if body.PurchaseOrderID > 0 && body.PurchaseReceiptNo == "" {
 			_ = db.QueryRow(c.Context(),
 				`SELECT name FROM purchase_orders WHERE id=$1`, body.PurchaseOrderID).
@@ -56,6 +66,14 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 				Scan(&body.SupplierName)
 		}
 
+		mode := strings.ToLower(strings.TrimSpace(body.ReceivingMode))
+		if mode == "" {
+			mode = "packing_list"
+		}
+		if mode != "packing_list" && mode != "invoice_only" {
+			return shared.Err(c, fiber.StatusBadRequest, "receiving_mode must be packing_list or invoice_only")
+		}
+
 		var warehouseID any
 		if body.WarehouseID != 0 {
 			warehouseID = body.WarehouseID
@@ -64,49 +82,100 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 		var id int
 		var sessionNo string
 		err := db.QueryRow(c.Context(),
-			`INSERT INTO grn_sessions (session_no,warehouse_id,purchase_receipt_no,supplier_name,created_by)
-			 VALUES ('GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),$1,$2,$3,$4)
-			 RETURNING id, session_no`,
-			warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c)).Scan(&id, &sessionNo)
+			`INSERT INTO grn_sessions (
+				session_no, warehouse_id, purchase_receipt_no, supplier_name, created_by,
+				status, receiving_mode, truck_no, driver_name, driver_phone,
+				expected_boxes, notes, plant, dock, invoice_nos, arrival_at
+			) VALUES (
+				'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
+				$1,$2,$3,$4,'receiving',$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW()
+			) RETURNING id, session_no`,
+			warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c),
+			mode, nullEmpty(body.TruckNo), nullEmpty(body.DriverName), nullEmpty(body.DriverPhone),
+			body.ExpectedBoxes, nullEmpty(body.Notes), nullEmpty(body.Plant), nullEmpty(body.Dock),
+			nullEmpty(body.InvoiceNos),
+		).Scan(&id, &sessionNo)
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			// Fallback for DBs before migration 018
+			if strings.Contains(err.Error(), "receiving_mode") || strings.Contains(err.Error(), "truck_no") {
+				err = db.QueryRow(c.Context(),
+					`INSERT INTO grn_sessions (session_no,warehouse_id,purchase_receipt_no,supplier_name,created_by)
+					 VALUES ('GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),$1,$2,$3,$4)
+					 RETURNING id, session_no`,
+					warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c)).Scan(&id, &sessionNo)
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
+		writeEvent(db, c.Context(), id, userID(c), "GRN_CREATED", fiber.Map{
+			"payload": fiber.Map{"receiving_mode": mode, "truck_no": body.TruckNo},
+		})
+		shared.WriteAudit(db, c.Context(), userID(c), "grn.create", "grn", id, nil, fiber.Map{
+			"session_no": sessionNo, "receiving_mode": mode,
+		})
 		return shared.OK(c, fiber.Map{
-			"id":                   id,
-			"session_no":           sessionNo,
-			"status":               "open",
-			"purchase_receipt_no":  body.PurchaseReceiptNo,
-			"purchase_order_id":    body.PurchaseOrderID,
-			"supplier_name":        body.SupplierName,
+			"id":                  id,
+			"session_no":          sessionNo,
+			"status":              "receiving",
+			"receiving_mode":      mode,
+			"purchase_receipt_no": body.PurchaseReceiptNo,
+			"purchase_order_id":   body.PurchaseOrderID,
+			"supplier_name":       body.SupplierName,
+			"truck_no":            body.TruckNo,
 		})
 	}
+}
+
+func nullEmpty(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
 }
 
 func listSessions(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT id, session_no, supplier_name, purchase_receipt_no, status, created_at
+			SELECT id, session_no, supplier_name, purchase_receipt_no, status, created_at,
+			       COALESCE(receiving_mode,'packing_list'), COALESCE(truck_no,'')
 			FROM grn_sessions ORDER BY created_at DESC LIMIT 50`)
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			if strings.Contains(err.Error(), "receiving_mode") {
+				rows, err = db.Query(c.Context(), `
+					SELECT id, session_no, supplier_name, purchase_receipt_no, status, created_at
+					FROM grn_sessions ORDER BY created_at DESC LIMIT 50`)
+			}
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
 		defer rows.Close()
 
-		type session struct {
-			ID                int       `json:"id"`
-			SessionNo         string    `json:"session_no"`
-			Supplier          *string   `json:"supplier"`
-			PurchaseReceiptNo *string   `json:"purchase_receipt_no"`
-			Status            string    `json:"status"`
-			CreatedAt         time.Time `json:"created_at"`
-		}
-		var list []session
+		list := []fiber.Map{}
 		for rows.Next() {
-			var s session
-			if err := rows.Scan(&s.ID, &s.SessionNo, &s.Supplier, &s.PurchaseReceiptNo, &s.Status, &s.CreatedAt); err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			var id int
+			var sessionNo, status string
+			var supplier, receipt *string
+			var created time.Time
+			var mode, truck string
+			// Try extended scan first via column count - use two-path by checking FieldDescriptions
+			cols := rows.FieldDescriptions()
+			if len(cols) >= 8 {
+				if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created, &mode, &truck); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+			} else {
+				if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				mode = "packing_list"
 			}
-			list = append(list, s)
+			list = append(list, fiber.Map{
+				"id": id, "session_no": sessionNo, "supplier": supplier,
+				"purchase_receipt_no": receipt, "status": status, "created_at": created,
+				"receiving_mode": mode, "truck_no": truck,
+			})
 		}
 		return shared.OK(c, list)
 	}
@@ -136,6 +205,31 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 				&sess.Status, &sess.ClosedAt, &sess.CreatedAt, &sess.WarehouseID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+
+		extra := fiber.Map{}
+		var mode, truck, driver, phone, notes, plant, dock, invoices string
+		var expectedBoxes int
+		var arrival *time.Time
+		var podID, parentID, activeVerify *int
+		var isFollowup bool
+		if err2 := db.QueryRow(c.Context(), `
+			SELECT COALESCE(receiving_mode,'packing_list'), COALESCE(truck_no,''), COALESCE(driver_name,''),
+			       COALESCE(driver_phone,''), arrival_at, COALESCE(expected_boxes,0), COALESCE(notes,''),
+			       COALESCE(plant,''), COALESCE(dock,''), COALESCE(invoice_nos,''),
+			       pod_attachment_id, parent_grn_id, COALESCE(is_followup,false), active_verify_carton_id
+			FROM grn_sessions WHERE id=$1`, sessionID).
+			Scan(&mode, &truck, &driver, &phone, &arrival, &expectedBoxes, &notes, &plant, &dock, &invoices,
+				&podID, &parentID, &isFollowup, &activeVerify); err2 == nil {
+			extra = fiber.Map{
+				"receiving_mode": mode, "truck_no": truck, "driver_name": driver, "driver_phone": phone,
+				"arrival_at": arrival, "expected_boxes": expectedBoxes, "notes": notes,
+				"plant": plant, "dock": dock, "invoice_nos": invoices,
+				"pod_attachment_id": podID, "parent_grn_id": parentID, "is_followup": isFollowup,
+				"active_verify_carton_id": activeVerify,
+			}
+		} else {
+			extra = fiber.Map{"receiving_mode": "packing_list"}
 		}
 
 		rows, err := db.Query(c.Context(), `
@@ -193,17 +287,21 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 			lrows.Close()
 		}
 
-		return shared.OK(c, fiber.Map{
-			"id":                   sess.ID,
-			"session_no":           sess.SessionNo,
-			"supplier_name":        sess.SupplierName,
-			"purchase_receipt_no":  sess.PurchaseReceiptNo,
-			"status":               sess.Status,
-			"closed_at":            sess.ClosedAt,
-			"created_at":           sess.CreatedAt,
-			"warehouse_id":         sess.WarehouseID,
-			"cartons":              cartons,
-		})
+		out := fiber.Map{
+			"id":                  sess.ID,
+			"session_no":          sess.SessionNo,
+			"supplier_name":       sess.SupplierName,
+			"purchase_receipt_no": sess.PurchaseReceiptNo,
+			"status":              sess.Status,
+			"closed_at":           sess.ClosedAt,
+			"created_at":          sess.CreatedAt,
+			"warehouse_id":        sess.WarehouseID,
+			"cartons":             cartons,
+		}
+		for k, v := range extra {
+			out[k] = v
+		}
+		return shared.OK(c, out)
 	}
 }
 
@@ -250,26 +348,73 @@ func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo string
 	if err != nil {
 		return shared.Err(c, fiber.StatusNotFound, "session not found")
 	}
-	if status != "open" {
-		return shared.Err(c, fiber.StatusBadRequest, "session is not open")
+	if !sessionAcceptsBoxReceive(status) && !sessionWritable(status) {
+		return shared.Err(c, fiber.StatusBadRequest, "session is not open for box receiving")
+	}
+	if !sessionWritable(status) {
+		return shared.Err(c, fiber.StatusBadRequest, "session is closed")
 	}
 
 	var existingID int
+	var existingStatus string
+	var isExpected bool
 	err = db.QueryRow(c.Context(),
-		`SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
-		sessionID, cartonNo).Scan(&existingID)
+		`SELECT id, status, COALESCE(is_expected,false) FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
+		sessionID, cartonNo).Scan(&existingID, &existingStatus, &isExpected)
 	if err == nil {
-		return shared.OK(c, fiber.Map{"id": existingID, "carton_no": cartonNo, "status": "accounted"})
+		st := strings.ToLower(existingStatus)
+		if st == "received" || st == "accounted" || st == "verified" {
+			writeEvent(db, c.Context(), sessionID, userID(c), "BOX_DUPLICATE_SCANNED", fiber.Map{
+				"box_no": cartonNo, "result": "duplicate",
+			})
+			writeException(db, c.Context(), sessionID, userID(c), "duplicate_box", fiber.Map{
+				"box_no": cartonNo,
+			})
+			return shared.OK(c, fiber.Map{
+				"id": existingID, "carton_no": cartonNo, "status": existingStatus,
+				"duplicate": true, "message": "BOX ALREADY SCANNED",
+			})
+		}
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_cartons SET status='received', scanned_at=NOW(), scanned_by=$2 WHERE id=$1`,
+			existingID, userID(c))
+		writeEvent(db, c.Context(), sessionID, userID(c), "BOX_RECEIVED", fiber.Map{
+			"box_no": cartonNo, "result": "received",
+		})
+		return shared.OK(c, fiber.Map{
+			"id": existingID, "carton_no": cartonNo, "status": "received",
+			"expected": true, "message": "Expected box received",
+		})
 	}
 
+	// Unexpected / excess box
 	var id int
 	err = db.QueryRow(c.Context(),
-		`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by) VALUES ($1,$2,'accounted',NOW(),$3) RETURNING id`,
+		`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by,is_expected)
+		 VALUES ($1,$2,'excess',NOW(),$3,false) RETURNING id`,
 		sessionID, cartonNo, userID(c)).Scan(&id)
 	if err != nil {
-		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		// Pre-018 fallback
+		if strings.Contains(err.Error(), "is_expected") || strings.Contains(err.Error(), "excess") {
+			err = db.QueryRow(c.Context(),
+				`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by) VALUES ($1,$2,'accounted',NOW(),$3) RETURNING id`,
+				sessionID, cartonNo, userID(c)).Scan(&id)
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": id, "carton_no": cartonNo, "status": "accounted"})
 	}
-	return shared.OK(c, fiber.Map{"id": id, "carton_no": cartonNo, "status": "accounted"})
+	writeEvent(db, c.Context(), sessionID, userID(c), "BOX_EXCESS_DETECTED", fiber.Map{
+		"box_no": cartonNo, "result": "excess",
+	})
+	writeException(db, c.Context(), sessionID, userID(c), "excess_box", fiber.Map{
+		"box_no": cartonNo,
+	})
+	return shared.OK(c, fiber.Map{
+		"id": id, "carton_no": cartonNo, "status": "excess",
+		"excess": true, "message": "EXCESS BOX",
+	})
 }
 
 func listCartons(db *pgxpool.Pool) fiber.Handler {
@@ -500,7 +645,7 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	if err != nil {
 		return shared.Err(c, fiber.StatusNotFound, "session not found")
 	}
-	if status == "closed" {
+	if status == "closed" || status == "completed" {
 		return shared.Err(c, fiber.StatusBadRequest, "session already closed")
 	}
 
@@ -723,10 +868,20 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 	}
 
+	finalStatus := "closed"
+	if v, ok := c.Locals("grnCloseStatus").(string); ok && v != "" {
+		finalStatus = v
+	}
 	if _, err := db.Exec(c.Context(),
-		`UPDATE grn_sessions SET status='closed', closed_at=NOW(), warehouse_id=COALESCE(warehouse_id,$2) WHERE id=$1`,
-		sessionID, wid); err != nil {
-		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		`UPDATE grn_sessions SET status=$3, closed_at=NOW(), stock_posted_at=COALESCE(stock_posted_at,NOW()),
+		 warehouse_id=COALESCE(warehouse_id,$2), updated_at=now() WHERE id=$1`,
+		sessionID, wid, finalStatus); err != nil {
+		// Pre-020 without stock_posted_at
+		if _, err2 := db.Exec(c.Context(),
+			`UPDATE grn_sessions SET status=$3, closed_at=NOW(), warehouse_id=COALESCE(warehouse_id,$2) WHERE id=$1`,
+			sessionID, wid, finalStatus); err2 != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 	}
 
 	var supplierName string
@@ -744,23 +899,28 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 	}
 
-	return shared.OK(c, fiber.Map{
-		"id":              sessionID,
-		"status":          "closed",
-		"items_posted":    len(lines),
-		"sle_count":       len(lines),
-		"posted_incoming": postedIncoming,
-		"posted_hold":     postedHold,
-		"posted_damaged":  postedDamaged,
-		"qi_created":      qiCreated,
-		"variances":       variances,
+	result := fiber.Map{
+		"id":                sessionID,
+		"status":            finalStatus,
+		"items_posted":      len(lines),
+		"sle_count":         len(lines),
+		"posted_incoming":   postedIncoming,
+		"posted_hold":       postedHold,
+		"posted_damaged":    postedDamaged,
+		"qi_created":        qiCreated,
+		"variances":         variances,
 		"incoming_location": incomingCode,
 		"hold_location":     holdCode,
 		"damaged_location":  dmgCode,
 		"warehouse_id":      wid,
 		"po":                poUpdate,
 		"putaway_ready":     postedIncoming > 0,
-	})
+	}
+	if silent, _ := c.Locals("grnCloseSilent").(bool); silent {
+		c.Locals("grnCloseResult", result)
+		return nil
+	}
+	return shared.OK(c, result)
 }
 
 // putawayAlias lets the GRN page call POST /grn/putaway — delegates to location-aware putaway.
@@ -827,6 +987,9 @@ func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 		if err := shared.AdjustLocationQty(c.Context(), db, body.ItemCode, warehouseID, targetID, body.BatchNo, body.Quantity); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		_, _ = db.Exec(c.Context(), `
+			UPDATE stock_location_balances SET allocation_status='allocatable', updated_at=now()
+			WHERE item_code=$1 AND location_id=$2`, body.ItemCode, targetID)
 
 		var id int
 		var logNo string

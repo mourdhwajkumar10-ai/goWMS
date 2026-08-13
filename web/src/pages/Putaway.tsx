@@ -24,13 +24,19 @@ interface QueueRow {
   location_type: string
 }
 
-interface Suggestion {
+interface Candidate {
   location_id: number
   location_code: string
   warehouse_id: number
   reason: string
   free_capacity: number | null
   on_hand_qty: number
+  aisle?: string
+  bay?: string
+  level?: string
+  location_type?: string
+  zone?: string
+  same_bay?: boolean
 }
 
 export default function Putaway() {
@@ -51,11 +57,24 @@ export default function Putaway() {
   const [putawaySource, setPutawaySource] = useState('')
   const [putawayWarehouseId, setPutawayWarehouseId] = useState<number | null>(null)
   const [putawayBatch, setPutawayBatch] = useState('')
-  const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
+  const [suggestion, setSuggestion] = useState<any>(null)
+  const [candidates, setCandidates] = useState<Candidate[]>([])
+  const [allBins, setAllBins] = useState<any[]>([])
+  const [prefAisle, setPrefAisle] = useState('')
+  const [prefBay, setPrefBay] = useState('')
 
   const loadRules = () => api.putawayRules().then(r => { if (r.ok) setRules(r.data ?? []) })
   const loadQueue = () => api.putawayQueue().then(r => { if (r.ok) setQueue(r.data ?? []) })
   useEffect(() => { loadRules(); loadQueue() }, [])
+
+  const loadBins = async (warehouseId: number) => {
+    const r = await api.warehouseLocations(warehouseId)
+    if (r.ok) {
+      setAllBins((r.data ?? []).filter((l: any) =>
+        l.location_type === 'pick_face' || l.location_type === 'storage'
+      ))
+    }
+  }
 
   const addRule = async () => {
     const r = await api.post('/putaway-rules/', {
@@ -79,15 +98,29 @@ export default function Putaway() {
 
   const suggest = async () => {
     if (!putawayItem) return
-    const r = await api.putawaySuggest(putawayItem, +putawayQty || 1, putawayWarehouseId || undefined)
+    const r = await api.putawaySuggest(
+      putawayItem,
+      +putawayQty || 1,
+      putawayWarehouseId || undefined,
+      { aisle: prefAisle || undefined, bay: prefBay || undefined },
+    )
     if (r.ok && r.data) {
       setSuggestion(r.data)
+      setCandidates(r.data.candidates || [])
       setPutawayTarget(r.data.location_code)
       setPutawayTargetId(r.data.location_id)
       setPutawayWarehouseId(r.data.warehouse_id)
-      notify({ type: 'success', title: 'Suggested', message: `${r.data.location_code} (${r.data.reason})` })
+      if (r.data.preferred_aisle) setPrefAisle(r.data.preferred_aisle)
+      if (r.data.preferred_bay) setPrefBay(r.data.preferred_bay)
+      if (r.data.warehouse_id) loadBins(r.data.warehouse_id)
+      notify({
+        type: 'success',
+        title: 'Suggested',
+        message: `${r.data.location_code} (${r.data.reason}) — pick-face first, then storage`,
+      })
     } else {
       setSuggestion(null)
+      setCandidates([])
       notify({ type: 'error', title: 'No suggestion', message: r.error || '' })
     }
   }
@@ -101,6 +134,14 @@ export default function Putaway() {
     setPutawayTarget('')
     setPutawayTargetId(null)
     setSuggestion(null)
+    setCandidates([])
+    loadBins(row.warehouse_id)
+  }
+
+  const selectCandidate = (c: Candidate) => {
+    setPutawayTarget(c.location_code)
+    setPutawayTargetId(c.location_id)
+    setPutawayWarehouseId(c.warehouse_id)
   }
 
   const doPutaway = async () => {
@@ -122,7 +163,7 @@ export default function Putaway() {
     if (r.ok) {
       setMsg(`Putaway complete: ${putawayQty} x ${putawayItem} → ${r.data.target_location || putawayTarget}`)
       setPutawayItem(''); setPutawayQty(''); setPutawayTarget(''); setPutawayTargetId(null)
-      setPutawayBatch(''); setSuggestion(null)
+      setPutawayBatch(''); setSuggestion(null); setCandidates([])
       loadQueue()
       notify({ type: 'success', title: 'Putaway Complete', message: `${putawayItem} → ${r.data.target_location}` })
     } else {
@@ -137,7 +178,9 @@ export default function Putaway() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold">Putaway</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Suggest a bin, walk there, confirm</p>
+          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
+            Fill empty pick-face (shelves 01–04) on the dedicated bay first, then storage (05+). Or pick a bin manually.
+          </p>
         </div>
         <button onClick={() => setShowScanner(true)} className="erpnext-btn-secondary">📷 Scan Item</button>
       </div>
@@ -146,6 +189,7 @@ export default function Putaway() {
         <div className="erpnext-card lg:col-span-1">
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Pending queue ({queue.length})</h3>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>Incoming / hold / damaged — unallocatable</p>
           </div>
           <div className="p-3 overflow-auto" style={{ maxHeight: 360 }}>
             {queue.length === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No incoming stock waiting.</p>}
@@ -192,19 +236,82 @@ export default function Putaway() {
                 <input className="erpnext-input" value={putawayBatch} onChange={e => setPutawayBatch(e.target.value)} />
               </div>
               <div>
+                <label className="erpnext-label">Preferred aisle (dedicated bay)</label>
+                <input className="erpnext-input" value={prefAisle} onChange={e => setPrefAisle(e.target.value.toUpperCase())} placeholder="A" />
+              </div>
+              <div>
+                <label className="erpnext-label">Preferred bay</label>
+                <input className="erpnext-input" value={prefBay} onChange={e => setPrefBay(e.target.value)} placeholder="01" />
+              </div>
+              <div>
                 <label className="erpnext-label">Target Location *</label>
-                <input className="erpnext-input" value={putawayTarget} onChange={e => { setPutawayTarget(e.target.value); setPutawayTargetId(null) }} placeholder="A-01-L-01" />
+                <input
+                  className="erpnext-input"
+                  value={putawayTarget}
+                  onChange={e => { setPutawayTarget(e.target.value); setPutawayTargetId(null) }}
+                  placeholder="A-01-01-01"
+                />
               </div>
               <div className="flex items-end">
-                <button onClick={suggest} className="erpnext-btn-secondary w-full">Suggest location</button>
+                <button onClick={suggest} className="erpnext-btn-secondary w-full">Suggest (pick-face → storage)</button>
               </div>
             </div>
 
             {suggestion && (
               <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(36,144,239,0.08)', border: '1px solid rgba(36,144,239,0.25)' }}>
                 Suggested <strong>{suggestion.location_code}</strong> — {suggestion.reason}
+                {suggestion.zone && <> · zone {suggestion.zone}</>}
+                {suggestion.same_bay && <> · same dedicated bay</>}
                 {suggestion.free_capacity != null && <> · free {suggestion.free_capacity}</>}
-                · on hand {suggestion.on_hand_qty}
+              </div>
+            )}
+
+            {(candidates.length > 0 || allBins.length > 0) && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {candidates.length > 0 && (
+                  <div>
+                    <label className="erpnext-label">Suggested candidates</label>
+                    <select
+                      className="erpnext-input"
+                      value={putawayTargetId ?? ''}
+                      onChange={e => {
+                        const id = +e.target.value
+                        const c = candidates.find(x => x.location_id === id)
+                        if (c) selectCandidate(c)
+                      }}
+                    >
+                      {candidates.map(c => (
+                        <option key={c.location_id} value={c.location_id}>
+                          {c.location_code} · {c.zone || c.location_type}{c.same_bay ? ' · bay' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {allBins.length > 0 && (
+                  <div>
+                    <label className="erpnext-label">Or select any bin</label>
+                    <select
+                      className="erpnext-input"
+                      value={putawayTargetId ?? ''}
+                      onChange={e => {
+                        const id = +e.target.value
+                        const loc = allBins.find((x: any) => x.id === id)
+                        if (loc) {
+                          setPutawayTarget(loc.code)
+                          setPutawayTargetId(loc.id)
+                        }
+                      }}
+                    >
+                      <option value="">— choose location —</option>
+                      {allBins.map((l: any) => (
+                        <option key={l.id} value={l.id}>
+                          {l.code} ({l.location_type} · L{l.level})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
             )}
 
@@ -249,24 +356,16 @@ export default function Putaway() {
 
         <div className="erpnext-card">
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <h3 className="font-semibold">Rules ({rules.length})</h3>
+            <h3 className="font-semibold">Active Rules</h3>
           </div>
-          <table className="erpnext-table">
-            <thead>
-              <tr><th>Item</th><th>Warehouse</th><th>Priority</th><th>Capacity</th></tr>
-            </thead>
-            <tbody>
-              {rules.map(r => (
-                <tr key={r.id}>
-                  <td>{r.item_code}</td>
-                  <td>{r.warehouse}</td>
-                  <td>{r.priority}</td>
-                  <td>{r.stock_capacity}</td>
-                </tr>
-              ))}
-              {rules.length === 0 && <tr><td colSpan={4} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No rules</td></tr>}
-            </tbody>
-          </table>
+          <div className="p-3 overflow-auto" style={{ maxHeight: 220 }}>
+            {rules.length === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No rules</p>}
+            {rules.map(r => (
+              <div key={r.id} className="text-sm p-2 mb-1 rounded" style={{ background: 'var(--panel-2)' }}>
+                {r.item_code} · {r.warehouse || 'any'} · P{r.priority} · cap {r.stock_capacity}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>

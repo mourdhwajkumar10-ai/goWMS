@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import CSVImport from '../components/CSVTools'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 
 interface SORow {
   id: number
@@ -50,6 +51,13 @@ export default function SalesOrders() {
     { item_code: '', item_name: '', qty: 1, rate: 0 },
   ])
 
+  const emptySOLine = () => ({ item_code: '', item_name: '', qty: 1, rate: 0 })
+  const soFilled = (r: { item_code: string }) => !!r.item_code.trim()
+
+  const setSOLines = (next: typeof items) => {
+    setItems(withTrailingEmptyRow(next, soFilled, emptySOLine))
+  }
+
   const [prioOverride, setPrioOverride] = useState('')
   const [prioReason, setPrioReason] = useState('')
 
@@ -71,7 +79,7 @@ export default function SalesOrders() {
   }
 
   const createSO = async () => {
-    const valid = items.filter(i => i.item_code && i.qty > 0)
+    const valid = stripTrailingEmptyRows(items, soFilled).filter(i => i.item_code && i.qty > 0)
     if (!customer || !valid.length) {
       notify({ type: 'error', title: 'Missing fields', message: 'Customer and at least one item required' })
       return
@@ -91,7 +99,7 @@ export default function SalesOrders() {
       setShowNew(false)
       setCustomer(''); setDeliveryDate(''); setPriority('4'); setPriorityReason('')
       setWarehouseId(''); setPoNo(''); setNotes('')
-      setItems([{ item_code: '', item_name: '', qty: 1, rate: 0 }])
+      setItems([emptySOLine()])
       loadList()
       openSO(r.data.id)
     } else {
@@ -232,18 +240,41 @@ export default function SalesOrders() {
             <div>
               <div className="flex justify-between mb-2">
                 <h4 className="font-medium text-sm">Lines</h4>
-                <button type="button" className="erpnext-btn-secondary text-sm" onClick={() => setItems([...items, { item_code: '', item_name: '', qty: 1, rate: 0 }])}>+ Add</button>
+                <button type="button" className="erpnext-btn-secondary text-sm" onClick={() => setSOLines([...items, emptySOLine()])}>+ Add</button>
               </div>
+              <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>New row appears automatically after you pick an item.</p>
               <table className="erpnext-table text-sm">
                 <thead><tr><th>Item</th><th>Name</th><th>Qty</th><th>Rate</th><th></th></tr></thead>
                 <tbody>
                   {items.map((it, idx) => (
                     <tr key={idx}>
-                      <td><input className="erpnext-input text-sm" value={it.item_code} onChange={e => { const u=[...items]; u[idx].item_code=e.target.value; setItems(u) }} /></td>
+                      <td>
+                        <ItemAutocomplete
+                          value={it.item_code}
+                          onSelect={(found) => {
+                            const u = [...items]
+                            u[idx] = {
+                              ...u[idx],
+                              item_code: found.code,
+                              item_name: found.name || u[idx].item_name,
+                              rate: found.standard_rate || found.valuation_rate || u[idx].rate,
+                            }
+                            setSOLines(u)
+                          }}
+                          onChangeText={(t) => {
+                            const u = [...items]
+                            u[idx].item_code = t
+                            setItems(u)
+                          }}
+                        />
+                      </td>
                       <td><input className="erpnext-input text-sm" value={it.item_name} onChange={e => { const u=[...items]; u[idx].item_name=e.target.value; setItems(u) }} /></td>
-                      <td><input className="erpnext-input text-sm" type="number" value={it.qty} onChange={e => { const u=[...items]; u[idx].qty=+e.target.value; setItems(u) }} /></td>
+                      <td><input className="erpnext-input text-sm" type="number" value={it.qty} onChange={e => { const u=[...items]; u[idx].qty=+e.target.value; setSOLines(u) }} /></td>
                       <td><input className="erpnext-input text-sm" type="number" value={it.rate} onChange={e => { const u=[...items]; u[idx].rate=+e.target.value; setItems(u) }} /></td>
-                      <td><button type="button" onClick={() => setItems(items.filter((_,i)=>i!==idx))} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
+                      <td><button type="button" onClick={() => {
+                        const next = items.filter((_, i) => i !== idx)
+                        setSOLines(next.length ? next : [emptySOLine()])
+                      }} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
                     </tr>
                   ))}
                 </tbody>

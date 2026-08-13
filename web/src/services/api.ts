@@ -55,6 +55,7 @@ export const api = {
   get,
   post,
   put,
+  patch,
   del,
 
   // Auth
@@ -117,13 +118,35 @@ export const api = {
   // Items
   itemList: (q?: string) => get<any[]>(`/masterdata/items${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
+  itemUpdate: (id: number, data: any) => patch<any>(`/masterdata/items/${id}`, data),
   itemImport: (data: any) => post<any>("/masterdata/items/import", data),
   itemGroups: () => get<any[]>("/masterdata/item-groups"),
   itemGroupCreate: (data: any) => post<any>("/masterdata/item-groups", data),
   itemComplete: (data: any) => post<any>("/masterdata/items/complete", data),
   itemCheck: (code: string) => get<any>(`/masterdata/items/check/${encodeURIComponent(code)}`),
   itemInventory: (code: string) => get<any[]>(`/masterdata/items/${encodeURIComponent(code)}/inventory`),
+  scanLookup: (code: string, mode: 'auto' | 'item' | 'location' = 'auto') =>
+    get<any>(`/masterdata/scan-lookup?code=${encodeURIComponent(code)}&mode=${mode}`),
   stockAdjust: (data: any) => post<any>("/masterdata/stock/adjust", data),
+
+  attachmentList: (entityType: string, entityId: number) =>
+    get<any[]>(`/attachments?entity_type=${encodeURIComponent(entityType)}&entity_id=${entityId}`),
+  attachmentUpload: async (entityType: string, entityId: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('entity_type', entityType)
+    fd.append('entity_id', String(entityId))
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`${BASE}/attachments/`, { method: 'POST', headers, body: fd })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok || payload.ok === false) {
+      return { ok: false as const, data: payload.data, error: payload.error || `Upload failed (${res.status})` }
+    }
+    return { ok: true as const, data: payload.data }
+  },
+  attachmentUrl: (id: number) => `${BASE}/attachments/${id}`,
 
   // Carriers / suppliers
   carriersList: () => get<any[]>("/masterdata/carriers"),
@@ -143,6 +166,44 @@ export const api = {
   grnSessions: () => get<any[]>("/grn/sessions"),
   grnCreate: (data: any) => post<any>("/grn/", data),
   grnSession: (id: number) => get<any>(`/grn/session/${id}`),
+  grnUpdate: (id: number, data: any) => patch<any>(`/grn/session/${id}`, data),
+  grnAdvance: (id: number, status: string) => post<any>(`/grn/session/${id}/advance`, { status }),
+  grnBoxSummary: (id: number) => get<any>(`/grn/session/${id}/box-summary`),
+  grnCompleteBoxReceiving: (id: number) => post<any>(`/grn/session/${id}/complete-box-receiving`, {}),
+  grnEvents: (id: number) => get<any[]>(`/grn/session/${id}/events`),
+  grnExceptions: (id: number) => get<any[]>(`/grn/session/${id}/exceptions`),
+  grnAddInvoice: (id: number, data: any) => post<any>(`/grn/session/${id}/invoices`, data),
+  grnInvoices: (id: number) => get<any[]>(`/grn/session/${id}/invoices`),
+  grnAttachPOD: (id: number, attachmentId: number) =>
+    post<any>(`/grn/session/${id}/pod`, { attachment_id: attachmentId }),
+  grnOpenBox: (id: number, data: { carton_no?: string; carton_id?: number }) =>
+    post<any>(`/grn/session/${id}/open-box`, data),
+  grnActiveBox: (id: number) => get<any>(`/grn/session/${id}/active-box`),
+  grnVerifyItem: (id: number, data: { item_code: string; qty?: number; carton_id?: number }) =>
+    post<any>(`/grn/session/${id}/verify-item`, data),
+  grnCloseBox: (id: number, data: { carton_id: number; reason?: string }) =>
+    post<any>(`/grn/session/${id}/close-box`, data),
+  grnResolveException: (exceptionId: number, data: { resolution: string; status?: string }) =>
+    post<any>(`/grn/exceptions/${exceptionId}/resolve`, data),
+  grnStartAudit: (id: number, sampleSize?: number) =>
+    post<any>(`/grn/session/${id}/audit/start`, { sample_size: sampleSize ?? 5 }),
+  grnAudits: (id: number) => get<any[]>(`/grn/session/${id}/audits`),
+  grnCheckAuditItem: (itemId: number, data: { physical_qty: number; notes?: string }) =>
+    post<any>(`/grn/audit-items/${itemId}/check`, data),
+  grnCompleteAudit: (sessionId: number, auditId: number) =>
+    post<any>(`/grn/session/${sessionId}/audit/${auditId}/complete`, {}),
+  grnCreateFollowUp: (id: number) => post<any>(`/grn/session/${id}/follow-up`, {}),
+  grnFollowUps: (id: number) => get<any[]>(`/grn/session/${id}/follow-ups`),
+  grnSeedInvoiceExpected: (id: number, lines: any[]) =>
+    post<any>(`/grn/session/${id}/invoice-expected`, { lines }),
+  grnInvoiceExpected: (id: number) => get<any[]>(`/grn/session/${id}/invoice-expected`),
+  grnItemSummary: (id: number) => get<any>(`/grn/session/${id}/item-summary`),
+  grnCompleteVerification: (id: number) => post<any>(`/grn/session/${id}/complete-verification`, {}),
+  grnFinalize: (id: number, force?: boolean) =>
+    post<any>(`/grn/session/${id}/finalize`, { force: !!force }),
+  grnAllExceptions: (status = 'open') =>
+    get<any[]>(`/grn/exceptions?status=${encodeURIComponent(status)}`),
+  grnAllFollowUps: () => get<any[]>('/grn/follow-ups'),
   grnScanCarton: (data: any) => post<any>("/grn/carton", data),
   grnScanLine: (data: any) => post<any>("/grn/line", data),
   grnClose: (data: any) => post<any>("/grn/close", data),
@@ -208,8 +269,13 @@ export const api = {
   // Putaway
   putawayRules: () => get<any[]>("/putaway/rules"),
   putawayCreate: (data: any) => post<any>("/putaway/", data),
-  putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number) =>
-    get<any>(`/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}${warehouseId ? `&warehouse_id=${warehouseId}` : ''}`),
+  putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number, preferred?: { aisle?: string; bay?: string }) => {
+    let q = `/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}`
+    if (warehouseId) q += `&warehouse_id=${warehouseId}`
+    if (preferred?.aisle) q += `&preferred_aisle=${encodeURIComponent(preferred.aisle)}`
+    if (preferred?.bay) q += `&preferred_bay=${encodeURIComponent(preferred.bay)}`
+    return get<any>(q)
+  },
   putawayQueue: () => get<any[]>("/putaway/queue"),
 
   // Cycle Count
@@ -249,6 +315,9 @@ export const api = {
   locationBulk: (warehouseId: number, data: any) => post<any>(`/masterdata/warehouses/${warehouseId}/locations/bulk`, data),
   locationInventory: (id: number) => get<any[]>(`/masterdata/locations/${id}/inventory`),
   locationUpdate: (id: number, data: any) => patch<any>(`/masterdata/locations/${id}`, data),
+  locationQRLabel: (id: number) => get<any>(`/masterdata/locations/${id}/qr-label`),
+  locationQRLabels: (warehouseId: number, data: { location_ids?: number[]; aisle?: string; bay?: string }) =>
+    post<{ labels: any[]; count: number }>(`/masterdata/warehouses/${warehouseId}/locations/qr-labels`, data),
 
   // Batches
   batchList: () => get<any[]>("/masterdata/batches"),

@@ -53,6 +53,11 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		itemCode := strings.TrimSpace(c.Query("item_code"))
 		qty, _ := strconv.ParseFloat(c.Query("qty", "1"), 64)
 		warehouseID, _ := strconv.Atoi(c.Query("warehouse_id"))
+		prefAisle := strings.TrimSpace(strings.ToUpper(c.Query("preferred_aisle")))
+		prefBay := strings.TrimSpace(c.Query("preferred_bay"))
+		if prefBay == "" {
+			prefBay = strings.TrimSpace(c.Query("preferred_shelf"))
+		}
 		if itemCode == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 		}
@@ -77,173 +82,169 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusConflict, "item master incomplete — complete required fields before putaway")
 		}
 
-		type suggestion struct {
+		// Dedicated bay = home location aisle+shelf, else bay already holding this item.
+		if prefAisle == "" || prefBay == "" {
+			if homeID != nil {
+				var a, s string
+				if db.QueryRow(c.Context(), `
+					SELECT COALESCE(aisle,''), COALESCE(shelf, COALESCE(rack,''))
+					FROM warehouse_locations WHERE id=$1`, *homeID).Scan(&a, &s) == nil {
+					if prefAisle == "" {
+						prefAisle = strings.ToUpper(a)
+					}
+					if prefBay == "" {
+						prefBay = s
+					}
+				}
+			}
+		}
+		if prefAisle == "" || prefBay == "" {
+			var a, s string
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,''))
+				FROM stock_location_balances slb
+				JOIN warehouse_locations wl ON wl.id = slb.location_id
+				WHERE slb.item_code=$1 AND slb.actual_qty > 0
+				  AND wl.location_type IN ('pick_face','storage')
+				  AND ($2=0 OR wl.warehouse_id=$2)
+				ORDER BY CASE WHEN wl.location_type='pick_face' THEN 0 ELSE 1 END, slb.updated_at DESC
+				LIMIT 1`, itemCode, warehouseID).Scan(&a, &s)
+			if prefAisle == "" {
+				prefAisle = strings.ToUpper(a)
+			}
+			if prefBay == "" {
+				prefBay = s
+			}
+		}
+
+		type cand struct {
 			LocationID   int      `json:"location_id"`
 			LocationCode string   `json:"location_code"`
 			WarehouseID  int      `json:"warehouse_id"`
 			Reason       string   `json:"reason"`
 			FreeCapacity *float64 `json:"free_capacity"`
 			OnHandQty    float64  `json:"on_hand_qty"`
-			RulePriority *int     `json:"rule_priority,omitempty"`
+			Aisle        string   `json:"aisle"`
+			Bay          string   `json:"bay"`
+			Level        string   `json:"level"`
+			LocationType string   `json:"location_type"`
+			SameBay      bool     `json:"same_bay"`
+			Zone         string   `json:"zone"` // pick_face | storage
 		}
 
-		// Optional putaway_rules: capacity cap + preferred priority for this item
-		var rulePriority *int
-		var ruleCapacity *float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT priority, stock_capacity FROM putaway_rules
-			WHERE active=true AND item_code=$1
-			  AND ($2=0 OR warehouse IS NULL OR warehouse='' OR warehouse IN (
-			        SELECT COALESCE(code,'') FROM warehouses WHERE id=$2
-			      ))
-			ORDER BY priority ASC NULLS LAST LIMIT 1`, itemCode, warehouseID).
-			Scan(&rulePriority, &ruleCapacity)
-
-		passesRule := func(onHand float64) bool {
-			if ruleCapacity == nil || *ruleCapacity <= 0 {
-				return true
-			}
-			return onHand < *ruleCapacity
-		}
-
-		// 1) bin_controlled home location with capacity
-		if controlMode == "bin_controlled" && homeID != nil {
-			var s suggestion
-			var maxCap *float64
-			err := db.QueryRow(c.Context(), `
-				SELECT wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty,
-				       COALESCE((SELECT SUM(actual_qty) FROM stock_location_balances WHERE location_id=wl.id),0)
-				FROM warehouse_locations wl
-				WHERE wl.id=$1 AND COALESCE(wl.disabled,false)=false
-				  AND wl.location_type IN ('storage','pick_face')`, *homeID).
-				Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap, &s.OnHandQty)
-			if err == nil {
-				ok := true
-				if maxCap != nil {
-					free := *maxCap - s.OnHandQty
-					s.FreeCapacity = &free
-					if free < qty {
-						ok = false
-					}
-				}
-				if warehouseID > 0 && s.WarehouseID != warehouseID {
-					ok = false
-				}
-				if !passesRule(s.OnHandQty) {
-					ok = false
-				}
-				if ok {
-					s.Reason = "home_location"
-					s.RulePriority = rulePriority
-					return shared.OK(c, s)
-				}
-			}
-		}
-
-		// 1b) rule-preferred bins already holding item under rule capacity
-		if rulePriority != nil || ruleCapacity != nil {
-			args := []any{itemCode, qty}
+		loadEmpty := func(zone string, sameBayOnly bool, limit int) []cand {
+			args := []any{qty}
 			sql := `
 				SELECT wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty,
-				       COALESCE(SUM(slb.actual_qty),0) AS on_hand
+				       COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,''),
+				       COALESCE(wl.location_type,'storage')
 				FROM warehouse_locations wl
-				JOIN stock_location_balances slb ON slb.location_id = wl.id
-				WHERE slb.item_code=$1
-				  AND COALESCE(wl.disabled,false)=false
-				  AND wl.location_type IN ('storage','pick_face')
-				  AND (wl.max_capacity_qty IS NULL OR wl.max_capacity_qty - COALESCE((
-				        SELECT SUM(actual_qty) FROM stock_location_balances WHERE location_id=wl.id
-				      ),0) >= $2)`
+				WHERE COALESCE(wl.disabled,false)=false
+				  AND NOT EXISTS (
+				    SELECT 1 FROM stock_location_balances slb
+				    WHERE slb.location_id = wl.id AND slb.actual_qty <> 0
+				  )
+				  AND (wl.max_capacity_qty IS NULL OR wl.max_capacity_qty >= $1)`
+			n := 1
 			if warehouseID > 0 {
-				sql += ` AND wl.warehouse_id=$3`
+				n++
+				sql += fmt.Sprintf(` AND wl.warehouse_id=$%d`, n)
 				args = append(args, warehouseID)
 			}
-			sql += ` GROUP BY wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty`
-			if ruleCapacity != nil && *ruleCapacity > 0 {
-				sql += fmt.Sprintf(` HAVING COALESCE(SUM(slb.actual_qty),0) < %g`, *ruleCapacity)
+			if zone == "pick_face" {
+				sql += ` AND (
+					wl.location_type = 'pick_face'
+					OR (wl.location_type = 'storage' AND (
+						(wl.level ~ '^[0-9]+$' AND wl.level::int BETWEEN 1 AND 4)
+						OR lower(wl.level) IN ('01','02','03','04','lower','low','l','bottom','middle','mid','m')
+					))
+				)`
+			} else {
+				sql += ` AND (
+					wl.location_type = 'storage'
+					OR (wl.location_type = 'pick_face' AND wl.level ~ '^[0-9]+$' AND wl.level::int >= 5)
+				)
+				AND NOT (
+					wl.level ~ '^[0-9]+$' AND wl.level::int BETWEEN 1 AND 4
+				)`
 			}
-			sql += ` ORDER BY on_hand DESC LIMIT 1`
+			if sameBayOnly && prefAisle != "" && prefBay != "" {
+				n++
+				sql += fmt.Sprintf(` AND upper(wl.aisle)=upper($%d)`, n)
+				args = append(args, prefAisle)
+				n++
+				sql += fmt.Sprintf(` AND wl.shelf=$%d`, n)
+				args = append(args, prefBay)
+			}
+			sql += ` ORDER BY
+				CASE WHEN wl.level ~ '^[0-9]+$' THEN wl.level::int ELSE 99 END ASC,
+				COALESCE(wl.putaway_priority,5) ASC,
+				wl.code
+				LIMIT ` + strconv.Itoa(limit)
 
-			var s suggestion
-			var maxCap *float64
-			err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap, &s.OnHandQty)
-			if err == nil {
-				if maxCap != nil {
-					free := *maxCap - s.OnHandQty
-					s.FreeCapacity = &free
+			rows, err := db.Query(c.Context(), sql, args...)
+			if err != nil {
+				return nil
+			}
+			defer rows.Close()
+			out := []cand{}
+			for rows.Next() {
+				var s cand
+				var maxCap *float64
+				if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap,
+					&s.Aisle, &s.Bay, &s.Level, &s.LocationType) != nil {
+					continue
 				}
-				s.Reason = "putaway_rule"
-				s.RulePriority = rulePriority
-				return shared.OK(c, s)
+				s.OnHandQty = 0
+				if maxCap != nil {
+					s.FreeCapacity = maxCap
+				}
+				s.Zone = zone
+				s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
+				if sameBayOnly {
+					s.Reason = "empty_" + zone + "_dedicated_bay"
+				} else {
+					s.Reason = "empty_" + zone
+				}
+				out = append(out, s)
 			}
+			return out
 		}
 
-		// 2) existing bins holding same item
-		args := []any{itemCode, qty}
-		sql := `
-			SELECT wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty,
-			       COALESCE(SUM(slb.actual_qty),0) AS on_hand
-			FROM warehouse_locations wl
-			JOIN stock_location_balances slb ON slb.location_id = wl.id
-			WHERE slb.item_code=$1
-			  AND COALESCE(wl.disabled,false)=false
-			  AND wl.location_type IN ('storage','pick_face')
-			  AND (wl.max_capacity_qty IS NULL OR wl.max_capacity_qty - COALESCE((
-			        SELECT SUM(actual_qty) FROM stock_location_balances WHERE location_id=wl.id
-			      ),0) >= $2)`
-		if warehouseID > 0 {
-			sql += ` AND wl.warehouse_id=$3`
-			args = append(args, warehouseID)
-		}
-		sql += `
-			GROUP BY wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty
-			ORDER BY on_hand DESC
-			LIMIT 1`
+		candidates := []cand{}
+		candidates = append(candidates, loadEmpty("pick_face", true, 20)...)
+		candidates = append(candidates, loadEmpty("pick_face", false, 20)...)
+		candidates = append(candidates, loadEmpty("storage", true, 20)...)
+		candidates = append(candidates, loadEmpty("storage", false, 20)...)
 
-		var s suggestion
-		var maxCap *float64
-		err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap, &s.OnHandQty)
-		if err == nil {
-			if maxCap != nil {
-				free := *maxCap - s.OnHandQty
-				s.FreeCapacity = &free
+		// Deduplicate by location id preserving order
+		seen := map[int]bool{}
+		uniq := []cand{}
+		for _, cnd := range candidates {
+			if seen[cnd.LocationID] {
+				continue
 			}
-			s.Reason = "consolidate_same_item"
-			return shared.OK(c, s)
+			seen[cnd.LocationID] = true
+			uniq = append(uniq, cnd)
+		}
+		candidates = uniq
+
+		if len(candidates) == 0 {
+			return shared.Err(c, fiber.StatusNotFound,
+				"no empty pick-face (levels 01–04) or storage (05+) — create bins or free a location")
 		}
 
-		// 3) empty storage location
-		args = []any{}
-		sql = `
-			SELECT wl.id, wl.code, wl.warehouse_id, wl.max_capacity_qty
-			FROM warehouse_locations wl
-			WHERE COALESCE(wl.disabled,false)=false
-			  AND wl.location_type IN ('storage','pick_face')
-			  AND NOT EXISTS (
-			    SELECT 1 FROM stock_location_balances slb
-			    WHERE slb.location_id = wl.id AND slb.actual_qty <> 0
-			  )`
-		if warehouseID > 0 {
-			sql += ` AND wl.warehouse_id=$1`
-			args = append(args, warehouseID)
-		}
-		sql += ` ORDER BY COALESCE(wl.putaway_priority,5) ASC, wl.code LIMIT 1`
-
-		err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap)
-		if err != nil && strings.Contains(err.Error(), "putaway_priority") {
-			sql = strings.Replace(sql, "ORDER BY COALESCE(wl.putaway_priority,5) ASC, wl.code LIMIT 1", "ORDER BY wl.code LIMIT 1", 1)
-			err = db.QueryRow(c.Context(), sql, args...).Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &maxCap)
-		}
-		if err == nil {
-			s.OnHandQty = 0
-			if maxCap != nil {
-				s.FreeCapacity = maxCap
-			}
-			s.Reason = "empty_location"
-			return shared.OK(c, s)
-		}
-
-		return shared.Err(c, fiber.StatusNotFound, "no suitable location — check capacity or create bins")
+		best := candidates[0]
+		_ = controlMode
+		return shared.OK(c, fiber.Map{
+			"location_id": best.LocationID, "location_code": best.LocationCode,
+			"warehouse_id": best.WarehouseID, "reason": best.Reason,
+			"free_capacity": best.FreeCapacity, "on_hand_qty": best.OnHandQty,
+			"aisle": best.Aisle, "bay": best.Bay, "level": best.Level,
+			"location_type": best.LocationType, "zone": best.Zone, "same_bay": best.SameBay,
+			"preferred_aisle": prefAisle, "preferred_bay": prefBay,
+			"candidates": candidates,
+		})
 	}
 }
 
@@ -413,13 +414,25 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 			body.ItemCode, targetID, nullBatch(batch)).Scan(&existingID)
 		if qerr == pgx.ErrNoRows {
 			_, err = tx.Exec(c.Context(), `
-				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty)
-				VALUES ($1,$2,$3,$4,$5,0)`,
+				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty, allocation_status)
+				VALUES ($1,$2,$3,$4,$5,0,'allocatable')`,
 				body.ItemCode, warehouseID, targetID, nullBatch(batch), body.Quantity)
+			if err != nil {
+				_, err = tx.Exec(c.Context(), `
+					INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty)
+					VALUES ($1,$2,$3,$4,$5,0)`,
+					body.ItemCode, warehouseID, targetID, nullBatch(batch), body.Quantity)
+			}
 		} else if qerr == nil {
 			_, err = tx.Exec(c.Context(), `
-				UPDATE stock_location_balances SET actual_qty = actual_qty + $1, updated_at=now() WHERE id=$2`,
+				UPDATE stock_location_balances
+				SET actual_qty = actual_qty + $1, allocation_status='allocatable', updated_at=now() WHERE id=$2`,
 				body.Quantity, existingID)
+			if err != nil {
+				_, err = tx.Exec(c.Context(), `
+					UPDATE stock_location_balances SET actual_qty = actual_qty + $1, updated_at=now() WHERE id=$2`,
+					body.Quantity, existingID)
+			}
 		} else {
 			err = qerr
 		}

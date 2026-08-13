@@ -130,8 +130,8 @@ func runImportRows(c *fiber.Ctx, db *pgxpool.Pool, sessionID, templateID int, ro
 	if err != nil {
 		return shared.Err(c, fiber.StatusNotFound, "grn session not found")
 	}
-	if status != "open" {
-		return shared.Err(c, fiber.StatusBadRequest, "grn session is not open")
+	if status != "open" && status != "receiving" && status != "draft" && status != "box_reconciliation" && status != "item_verification" {
+		return shared.Err(c, fiber.StatusBadRequest, "grn session is not open for import")
 	}
 
 	colMap := map[string]string{
@@ -190,24 +190,38 @@ func runImportRows(c *fiber.Ctx, db *pgxpool.Pool, sessionID, templateID int, ro
 				SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`, sessionID, boxNo).Scan(&cartonID)
 			if err2 != nil {
 				err = tx.QueryRow(c.Context(), `
-					INSERT INTO grn_cartons (grn_session_id, carton_no, status, scanned_at, scanned_by)
-					VALUES ($1,$2,'accounted',NOW(),$3) RETURNING id`, sessionID, boxNo, uid).Scan(&cartonID)
+					INSERT INTO grn_cartons (grn_session_id, carton_no, status, is_expected)
+					VALUES ($1,$2,'expected',true) RETURNING id`, sessionID, boxNo).Scan(&cartonID)
 				if err != nil {
-					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					err = tx.QueryRow(c.Context(), `
+						INSERT INTO grn_cartons (grn_session_id, carton_no, status, scanned_at, scanned_by)
+						VALUES ($1,$2,'accounted',NOW(),$3) RETURNING id`, sessionID, boxNo, uid).Scan(&cartonID)
+					if err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
 				}
 				createdCartons++
 			}
 			cartonCache[boxNo] = cartonID
 		}
 
+		invNo := get(row, "invoice_no")
 		_, err = tx.Exec(c.Context(), `
 			INSERT INTO grn_lines (
 				grn_carton_id, item_code, expected_qty, scanned_qty, status,
-				verification_method, batch_no, supplier_sku, grn_session_id, notes
-			) VALUES ($1,$2,$3,$3,'full_match','import-xlsx',$4,$5,$6,$7)`,
-			cartonID, partNo, qty, nullEmptyX(batch), nullEmptyX(supplierSKU), sessionID, nullEmptyX(partName))
+				verification_method, batch_no, supplier_sku, grn_session_id, notes, invoice_no
+			) VALUES ($1,$2,$3,0,'pending','import-xlsx',$4,$5,$6,$7,$8)`,
+			cartonID, partNo, qty, nullEmptyX(batch), nullEmptyX(supplierSKU), sessionID, nullEmptyX(partName), nullEmptyX(invNo))
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error()+" row "+strconv.Itoa(i+2))
+			_, err = tx.Exec(c.Context(), `
+				INSERT INTO grn_lines (
+					grn_carton_id, item_code, expected_qty, scanned_qty, status,
+					verification_method, batch_no, supplier_sku, grn_session_id, notes
+				) VALUES ($1,$2,$3,0,'pending','import-xlsx',$4,$5,$6,$7)`,
+				cartonID, partNo, qty, nullEmptyX(batch), nullEmptyX(supplierSKU), sessionID, nullEmptyX(partName))
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error()+" row "+strconv.Itoa(i+2))
+			}
 		}
 		createdLines++
 	}
@@ -227,6 +241,12 @@ func runImportRows(c *fiber.Ctx, db *pgxpool.Pool, sessionID, templateID int, ro
 	if err := tx.Commit(c.Context()); err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
+	payload := mustJSON(map[string]any{
+		"cartons_created": createdCartons, "lines_created": createdLines, "skipped": skipped, "format": "xlsx",
+	})
+	_, _ = db.Exec(c.Context(), `
+		INSERT INTO grn_events (grn_session_id, event_type, actor_id, payload)
+		VALUES ($1,'PACKING_LIST_IMPORTED',$2,$3::jsonb)`, sessionID, userID(c), payload)
 	return shared.OK(c, fiber.Map{
 		"grn_session_id": sessionID, "cartons_created": createdCartons,
 		"lines_created": createdLines, "skipped": skipped, "warnings": warnings, "format": "xlsx",

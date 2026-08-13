@@ -13,6 +13,7 @@ import (
 	"goWMS/api/modules/analytics"
 	"goWMS/api/modules/approval"
 	"goWMS/api/modules/attachments"
+	"goWMS/api/modules/audit"
 	"goWMS/api/modules/auth"
 	"goWMS/api/modules/backorder"
 	"goWMS/api/modules/billing"
@@ -107,6 +108,7 @@ func main() {
 	analytics.Register(api.Group("/analytics"), pool)
 	approval.Register(api.Group("/approval"), pool)
 	attachments.Register(api.Group("/attachments"), pool)
+	audit.Register(api.Group("/audit"), pool)
 	backorder.Register(api.Group("/backorder"), pool)
 	backorder.RegisterV2(api.Group("/backorder/v2"), pool)
 	billing.Register(api.Group("/billing"), pool)

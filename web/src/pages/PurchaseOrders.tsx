@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
+import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 
 interface POItem {
   item_code: string
@@ -25,79 +26,15 @@ interface POItem {
   batch_no: string
 }
 
-function ItemAutocomplete({ value, onSelect, placeholder }: { value: string; onSelect: (item: any) => void; placeholder?: string }) {
-  const [query, setQuery] = useState(value)
-  const [results, setResults] = useState<any[]>([])
-  const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const timer = useRef<any>(null)
+const emptyPOItem = (): POItem => ({
+  item_code: '', item_name: '', description: '', brand: '', item_group: '',
+  qty: 1, rate: 0, amount: 0, discount_percentage: 0, discount_amount: 0,
+  uom: 'Nos', warehouse: '', cost_center: '', project: '', schedule_date: '',
+  serial_no: '', batch_no: '',
+})
 
-  useEffect(() => { setQuery(value) }, [value])
+const poItemFilled = (i: POItem) => !!i.item_code.trim()
 
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
-
-  const search = useCallback((q: string) => {
-    if (timer.current) clearTimeout(timer.current)
-    if (!q.trim()) { setResults([]); setOpen(false); return }
-    setLoading(true)
-    timer.current = setTimeout(async () => {
-      const r = await api.itemList(q)
-      if (r.ok && r.data) {
-        setResults(r.data)
-        setOpen(true)
-      }
-      setLoading(false)
-    }, 200)
-  }, [])
-
-  const handleChange = (val: string) => {
-    setQuery(val)
-    search(val)
-  }
-
-  const handleSelect = (item: any) => {
-    setQuery(item.code)
-    setOpen(false)
-    onSelect(item)
-  }
-
-  return (
-    <div ref={ref} className="relative">
-      <input
-        className="erpnext-input text-sm w-full"
-        value={query}
-        onChange={e => handleChange(e.target.value)}
-        onFocus={() => query.trim() && results.length > 0 && setOpen(true)}
-        placeholder={placeholder || 'Scan barcode or type...'}
-      />
-      {loading && <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--text-dim)' }}>...</div>}
-      {open && results.length > 0 && (
-        <div className="absolute z-50 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-          {results.slice(0, 10).map((item: any) => (
-            <button
-              key={item.id}
-              className="w-full text-left px-3 py-2 hover:bg-blue-50 flex justify-between items-center text-sm border-b border-gray-50 last:border-0"
-              onMouseDown={() => handleSelect(item)}
-            >
-              <div>
-                <span className="font-medium">{item.code}</span>
-                <span className="text-gray-500 ml-2">{item.name}</span>
-              </div>
-              <span className="text-xs text-gray-400">{item.brand || ''}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  )
-}
 
 export default function PurchaseOrders() {
   const [pos, setPOs] = useState<any[]>([])
@@ -128,18 +65,17 @@ export default function PurchaseOrders() {
   const [billingAddr, setBillingAddr] = useState('')
   const [discountPct, setDiscountPct] = useState(0)
 
-  const [items, setItems] = useState<POItem[]>([])
+  const [items, setItems] = useState<POItem[]>([emptyPOItem()])
 
   const loadPOs = () => api.poList().then(r => { if (r.ok) setPOs(r.data ?? []) })
   useEffect(() => { loadPOs() }, [])
 
   const addItem = () => {
-    setItems([...items, {
-      item_code: '', item_name: '', description: '', brand: '', item_group: '',
-      qty: 1, rate: 0, amount: 0, discount_percentage: 0, discount_amount: 0,
-      uom: 'Nos', warehouse: setWarehouse || '', cost_center: costCenter, project: project,
-      schedule_date: schDate, serial_no: '', batch_no: ''
-    }])
+    setItems(withTrailingEmptyRow(
+      [...items, emptyPOItem()],
+      poItemFilled,
+      () => ({ ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate }),
+    ))
   }
 
   const populateItem = (idx: number, item: any) => {
@@ -155,7 +91,9 @@ export default function PurchaseOrders() {
       uom: 'Nos',
     }
     updated[idx].amount = updated[idx].qty * updated[idx].rate
-    setItems(updated)
+    setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
+      ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+    })))
   }
 
   const updateItem = (idx: number, field: keyof POItem, value: any) => {
@@ -168,11 +106,14 @@ export default function PurchaseOrders() {
       updated[idx].amount = qty * rate
       updated[idx].discount_amount = (qty * rate * disc) / 100
     }
-    setItems(updated)
+    setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
+      ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+    })))
   }
 
   const removeItem = (idx: number) => {
-    setItems(items.filter((_, i) => i !== idx))
+    const next = items.filter((_, i) => i !== idx)
+    setItems(next.length ? next : [emptyPOItem()])
   }
 
   const handleBarcodeScan = (code: string) => {
@@ -201,7 +142,7 @@ export default function PurchaseOrders() {
 
   const createPO = async () => {
     if (!supplier) { setMsg('Supplier required'); return }
-    const validItems = items.filter(i => i.item_code).map(i => ({
+    const validItems = stripTrailingEmptyRows(items, poItemFilled).filter(i => i.item_code).map(i => ({
       ...i, amount: i.qty * i.rate,
       net_rate: i.rate * (1 - i.discount_percentage / 100),
       net_amount: i.qty * i.rate * (1 - i.discount_percentage / 100),
@@ -231,7 +172,7 @@ export default function PurchaseOrders() {
     setSchDate(''); setSetWarehouse(''); setCostCenter(''); setProject(''); setPaymentTerms('')
     setTaxesCharges(''); setTerms(''); setBuyingPriceList(''); setTaxCategory('')
     setSupplierAddr(''); setContactPerson(''); setShippingAddr(''); setBillingAddr('')
-    setDiscountPct(0); setItems([]); setShowDetails(false)
+    setDiscountPct(0); setItems([emptyPOItem()]); setShowDetails(false)
   }
 
   const openPO = async (id: number) => {
@@ -437,12 +378,10 @@ export default function PurchaseOrders() {
                 </div>
               </div>
 
-              {items.length === 0 ? (
-                <div className="empty-state">
-                  No items added yet. Click “+ Add Item” or import from CSV.
-                </div>
-              ) : (
-                <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
+              <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>
+                Type to search items — a new row appears automatically when you fill the last one.
+              </p>
+              <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
                   <table className="erpnext-table text-sm w-full">
                     <thead>
                       <tr style={{ background: 'var(--gray-50)' }}>
@@ -505,10 +444,9 @@ export default function PurchaseOrders() {
                     </tbody>
                   </table>
                 </div>
-              )}
             </div>
 
-            {items.length > 0 && (
+            {items.some(poItemFilled) && (
               <div className="flex justify-end">
                 <div className="text-right space-y-1 p-4 rounded-lg" style={{ background: 'var(--gray-50)', minWidth: 200 }}>
                   <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Subtotal: ₹{total.toFixed(2)}</div>

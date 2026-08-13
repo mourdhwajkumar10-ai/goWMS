@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"goWMS/api/modules/shared"
@@ -18,8 +19,40 @@ const uploadDir = "uploads"
 // Register wires the attachments routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/", upload(db))
+	r.Get("/", listByEntity(db))
 	r.Get("/:id", download(db))
 	r.Get("/:id/meta", meta(db))
+}
+
+func listByEntity(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		entityType := strings.TrimSpace(c.Query("entity_type"))
+		entityID, _ := strconv.Atoi(c.Query("entity_id"))
+		if entityType == "" || entityID < 1 {
+			return shared.Err(c, fiber.StatusBadRequest, "entity_type and entity_id required")
+		}
+		rows, err := db.Query(c.Context(), `
+			SELECT id, filename, mime_type, size_bytes, created_at::text
+			FROM attachments WHERE entity_type=$1 AND entity_id=$2
+			ORDER BY id DESC`, entityType, entityID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		out := []fiber.Map{}
+		for rows.Next() {
+			var id int
+			var filename, mime, created string
+			var size int64
+			if err := rows.Scan(&id, &filename, &mime, &size, &created); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			out = append(out, fiber.Map{
+				"id": id, "filename": filename, "mime_type": mime, "size_bytes": size, "created_at": created,
+			})
+		}
+		return shared.OK(c, out)
+	}
 }
 
 func upload(db *pgxpool.Pool) fiber.Handler {

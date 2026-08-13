@@ -58,6 +58,7 @@ func ResolveWarehouseID(ctx context.Context, db *pgxpool.Pool, warehouseID *int)
 }
 
 // AdjustLocationQty upserts a location balance by delta.
+// Staging locations (incoming/hold/damaged/staging) are marked unallocatable.
 func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batch string, delta float64) error {
 	itemCode = strings.TrimSpace(itemCode)
 	var batchArg any
@@ -67,6 +68,14 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 		batchArg = strings.TrimSpace(batch)
 	}
 
+	var locType string
+	_ = db.QueryRow(ctx, `SELECT COALESCE(location_type,'storage') FROM warehouse_locations WHERE id=$1`, locationID).Scan(&locType)
+	alloc := "allocatable"
+	switch strings.ToLower(locType) {
+	case "incoming", "hold", "damaged", "staging":
+		alloc = "unallocatable"
+	}
+
 	var existingID int
 	err := db.QueryRow(ctx, `
 		SELECT id FROM stock_location_balances
@@ -74,21 +83,36 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 		itemCode, locationID, batchArg).Scan(&existingID)
 	if err == pgx.ErrNoRows {
 		_, err = db.Exec(ctx, `
-			INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty)
-			VALUES ($1,$2,$3,$4,$5,0)`,
-			itemCode, warehouseID, locationID, batchArg, delta)
+			INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty, allocation_status)
+			VALUES ($1,$2,$3,$4,$5,0,$6)`,
+			itemCode, warehouseID, locationID, batchArg, delta, alloc)
 		if err != nil {
-			return err
+			// Pre-021 without allocation_status
+			_, err = db.Exec(ctx, `
+				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty)
+				VALUES ($1,$2,$3,$4,$5,0)`,
+				itemCode, warehouseID, locationID, batchArg, delta)
+			if err != nil {
+				return err
+			}
 		}
 	} else if err != nil {
 		return err
 	} else {
 		_, err = db.Exec(ctx, `
 			UPDATE stock_location_balances
-			SET actual_qty = actual_qty + $1, updated_at=now()
-			WHERE id=$2`, delta, existingID)
+			SET actual_qty = actual_qty + $1,
+			    allocation_status = COALESCE($3, allocation_status),
+			    updated_at=now()
+			WHERE id=$2`, delta, existingID, alloc)
 		if err != nil {
-			return err
+			_, err = db.Exec(ctx, `
+				UPDATE stock_location_balances
+				SET actual_qty = actual_qty + $1, updated_at=now()
+				WHERE id=$2`, delta, existingID)
+			if err != nil {
+				return err
+			}
 		}
 	}
 

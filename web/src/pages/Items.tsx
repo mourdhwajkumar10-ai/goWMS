@@ -21,6 +21,22 @@ interface Item {
   barcode?: string
   carton_qty?: number
   shelf_life_in_days?: number | null
+  mrp?: number
+  hsn_no?: string
+  gst_percentage?: number
+  vech?: string
+  make?: string
+  uom?: string
+  category?: string
+  parts_movement?: string
+  parts_pbo?: string
+  threshold_value?: number
+  max_rate_discount?: number
+  remark?: string
+  description?: string
+  min_order_qty?: number
+  weight_per_unit?: number
+  standard_rate?: number
 }
 
 interface InvRow {
@@ -66,6 +82,10 @@ export default function Items() {
   const [barcode, setBarcode] = useState('')
   const [cartonQty, setCartonQty] = useState('')
   const [shelfLife, setShelfLife] = useState('')
+  const [showEdit, setShowEdit] = useState(false)
+  const [editForm, setEditForm] = useState<Record<string, any>>({})
+  const [attachments, setAttachments] = useState<any[]>([])
+  const [uploading, setUploading] = useState(false)
 
   const loadList = () => api.itemList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => {
@@ -87,6 +107,83 @@ export default function Items() {
     setSelected(item)
     const r = await api.itemInventory(item.code)
     if (r.ok) setInventory(r.data ?? [])
+  }
+
+  const openEdit = async (item: Item) => {
+    setEditForm({
+      name: item.name || '',
+      brand: item.brand || '',
+      description: item.description || '',
+      mrp: item.mrp ?? 0,
+      hsn_no: item.hsn_no || '',
+      gst_percentage: item.gst_percentage ?? 18,
+      vech: item.vech || '',
+      make: item.make || '',
+      uom: item.uom || 'PCS',
+      category: item.category || '',
+      parts_movement: item.parts_movement || '',
+      parts_pbo: item.parts_pbo || '',
+      threshold_value: item.threshold_value ?? 0,
+      max_rate_discount: item.max_rate_discount ?? 0,
+      remark: item.remark || '',
+      min_order_qty: item.min_order_qty ?? 1,
+      weight_per_unit: item.weight_per_unit ?? 0,
+      pack_type: item.pack_type || 'loose',
+      control_mode: item.control_mode || 'item_controlled',
+      home_location_id: item.home_location_id || '',
+      barcode: item.barcode || '',
+      carton_qty: item.carton_qty ?? 0,
+      has_serial: !!item.has_serial,
+      has_batch: !!item.has_batch,
+      has_expiry_date: !!item.has_expiry_date,
+      shelf_life_in_days: item.shelf_life_in_days ?? '',
+    })
+    setShowEdit(true)
+    const ar = await api.attachmentList('item', item.id)
+    if (ar.ok) setAttachments(ar.data ?? [])
+    else setAttachments([])
+  }
+
+  const saveEdit = async () => {
+    if (!selected) return
+    const r = await api.itemUpdate(selected.id, {
+      ...editForm,
+      home_location_id: editForm.home_location_id ? +editForm.home_location_id : null,
+      shelf_life_in_days: editForm.shelf_life_in_days === '' ? null : +editForm.shelf_life_in_days,
+      mrp: +editForm.mrp || 0,
+      gst_percentage: +editForm.gst_percentage || 0,
+      min_order_qty: +editForm.min_order_qty || 0,
+      weight_per_unit: +editForm.weight_per_unit || 0,
+      threshold_value: +editForm.threshold_value || 0,
+      max_rate_discount: +editForm.max_rate_discount || 0,
+      carton_qty: +editForm.carton_qty || 0,
+    })
+    if (r.ok) {
+      notify({ type: 'success', title: 'Product updated', message: selected.code })
+      setShowEdit(false)
+      loadList()
+      const refreshed = await api.itemList(selected.code)
+      if (refreshed.ok) {
+        const found = (refreshed.data ?? []).find((x: Item) => x.id === selected.id)
+        if (found) openItem(found)
+      }
+    } else {
+      notify({ type: 'error', title: 'Update failed', message: r.error || '' })
+    }
+  }
+
+  const uploadFile = async (file: File | null) => {
+    if (!file || !selected) return
+    setUploading(true)
+    const r = await api.attachmentUpload('item', selected.id, file)
+    setUploading(false)
+    if (r.ok) {
+      notify({ type: 'success', title: 'File uploaded', message: file.name })
+      const ar = await api.attachmentList('item', selected.id)
+      if (ar.ok) setAttachments(ar.data ?? [])
+    } else {
+      notify({ type: 'error', title: 'Upload failed', message: r.error || '' })
+    }
   }
 
   const resetForm = () => {
@@ -296,10 +393,13 @@ export default function Items() {
         </div>
 
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">
               {selected ? `Stock locations — ${selected.code}` : 'Select an item'}
             </h2>
+            {selected && (
+              <button className="erpnext-btn-primary text-sm" onClick={() => openEdit(selected)}>Edit Product Master</button>
+            )}
           </div>
           <div className="p-4 space-y-4">
             {selected && (
@@ -341,9 +441,10 @@ export default function Items() {
                       <td className="text-right">{row.actual_qty}</td>
                       <td>
                         <span className={`erpnext-badge ${
-                          row.allocation_status === 'available' ? 'erpnext-badge-green'
-                            : row.allocation_status === 'partial' ? 'erpnext-badge-yellow'
-                              : 'erpnext-badge-red'
+                          row.allocation_status === 'available' || row.allocation_status === 'allocatable' ? 'erpnext-badge-green'
+                            : row.allocation_status === 'unallocatable' ? 'erpnext-badge-yellow'
+                              : row.allocation_status === 'partial' ? 'erpnext-badge-yellow'
+                                : 'erpnext-badge-red'
                         }`}>{row.allocation_status}</span>
                       </td>
                     </tr>
@@ -360,6 +461,124 @@ export default function Items() {
           </div>
         </div>
       </div>
+
+      {showEdit && selected && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="erpnext-card w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+            <div className="px-6 py-4 border-b flex justify-between items-center" style={{ borderColor: 'var(--border)' }}>
+              <h2 className="text-lg font-semibold">Edit Product Master</h2>
+              <button className="erpnext-btn-secondary text-sm" onClick={() => setShowEdit(false)}>✕</button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="erpnext-label">Id</label>
+                  <input className="erpnext-input" value={selected.id} disabled />
+                </div>
+                <div>
+                  <label className="erpnext-label">Product No *</label>
+                  <input className="erpnext-input" value={selected.code} disabled />
+                </div>
+                <div>
+                  <label className="erpnext-label">Description *</label>
+                  <input className="erpnext-input" value={editForm.name || ''} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Brand *</label>
+                  <input className="erpnext-input" value={editForm.brand || ''} onChange={e => setEditForm({ ...editForm, brand: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Mrp *</label>
+                  <input className="erpnext-input" type="number" value={editForm.mrp ?? 0} onChange={e => setEditForm({ ...editForm, mrp: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Product GROUP / Category *</label>
+                  <input className="erpnext-input" value={editForm.category || ''} onChange={e => setEditForm({ ...editForm, category: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">VECH</label>
+                  <input className="erpnext-input" value={editForm.vech || ''} onChange={e => setEditForm({ ...editForm, vech: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">MAKE</label>
+                  <input className="erpnext-input" value={editForm.make || ''} onChange={e => setEditForm({ ...editForm, make: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Uom *</label>
+                  <input className="erpnext-input" value={editForm.uom || 'PCS'} onChange={e => setEditForm({ ...editForm, uom: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">MOQ</label>
+                  <input className="erpnext-input" type="number" value={editForm.min_order_qty ?? 1} onChange={e => setEditForm({ ...editForm, min_order_qty: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">HSN_No *</label>
+                  <input className="erpnext-input" value={editForm.hsn_no || ''} onChange={e => setEditForm({ ...editForm, hsn_no: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">GST_Percentage *</label>
+                  <select className="erpnext-input" value={editForm.gst_percentage ?? 18} onChange={e => setEditForm({ ...editForm, gst_percentage: e.target.value })}>
+                    {[0, 5, 12, 18, 28].map(g => <option key={g} value={g}>{g}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="erpnext-label">Parts Movement</label>
+                  <input className="erpnext-input" value={editForm.parts_movement || ''} onChange={e => setEditForm({ ...editForm, parts_movement: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Parts pbo</label>
+                  <input className="erpnext-input" value={editForm.parts_pbo || ''} onChange={e => setEditForm({ ...editForm, parts_pbo: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Threshold Value</label>
+                  <input className="erpnext-input" type="number" value={editForm.threshold_value ?? 0} onChange={e => setEditForm({ ...editForm, threshold_value: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Max Rate Discount</label>
+                  <input className="erpnext-input" type="number" value={editForm.max_rate_discount ?? 0} onChange={e => setEditForm({ ...editForm, max_rate_discount: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Weight</label>
+                  <input className="erpnext-input" type="number" value={editForm.weight_per_unit ?? 0} onChange={e => setEditForm({ ...editForm, weight_per_unit: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Remark</label>
+                  <input className="erpnext-input" value={editForm.remark || ''} onChange={e => setEditForm({ ...editForm, remark: e.target.value })} placeholder="Enter remark..." />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="erpnext-label">Long description</label>
+                  <textarea className="erpnext-input" rows={2} value={editForm.description || ''} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
+                </div>
+              </div>
+
+              <div className="border-t pt-4" style={{ borderColor: 'var(--border)' }}>
+                <h3 className="text-sm font-semibold mb-2">Files / attachments</h3>
+                <input
+                  type="file"
+                  disabled={uploading}
+                  onChange={e => uploadFile(e.target.files?.[0] || null)}
+                />
+                <ul className="mt-2 space-y-1 text-sm">
+                  {attachments.map(a => (
+                    <li key={a.id}>
+                      <a href={api.attachmentUrl(a.id)} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)' }}>
+                        {a.filename}
+                      </a>
+                      <span style={{ color: 'var(--text-dim)' }}> · {(a.size_bytes / 1024).toFixed(1)} KB</span>
+                    </li>
+                  ))}
+                  {attachments.length === 0 && <li style={{ color: 'var(--text-dim)' }}>No files yet</li>}
+                </ul>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button className="erpnext-btn-secondary" onClick={() => setShowEdit(false)}>Cancel</button>
+                <button className="erpnext-btn-primary" onClick={saveEdit}>SUBMIT</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

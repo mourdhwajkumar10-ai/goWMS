@@ -4,6 +4,7 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 
 interface PickList {
   id: number
@@ -47,7 +48,12 @@ export default function Pick() {
   const [salesOrder, setSalesOrder] = useState('')
   const [customer, setCustomer] = useState('')
   const [warehouseId, setWarehouseId] = useState('')
-  const [items, setItems] = useState<{ item_code: string; qty: number }[]>([])
+  const [items, setItems] = useState<{ item_code: string; qty: number }[]>([{ item_code: '', qty: 1 }])
+  const emptyPickLine = () => ({ item_code: '', qty: 1 })
+  const pickFilled = (r: { item_code: string }) => !!r.item_code.trim()
+  const setPickLines = (next: { item_code: string; qty: number }[]) =>
+    setItems(withTrailingEmptyRow(next, pickFilled, emptyPickLine))
+
   const [showWave, setShowWave] = useState(false)
   const [waveSOIds, setWaveSOIds] = useState('')
   const [confirmedSOs, setConfirmedSOs] = useState<any[]>([])
@@ -82,26 +88,28 @@ export default function Pick() {
   }
 
   const addItem = () => {
-    setItems([...items, { item_code: '', qty: 1 }])
+    setPickLines([...items, emptyPickLine()])
   }
 
   const updateItem = (idx: number, field: string, value: any) => {
     const updated = [...items]
     ;(updated[idx] as any)[field] = value
-    setItems(updated)
+    setPickLines(updated)
   }
 
   const removeItem = (idx: number) => {
-    setItems(items.filter((_, i) => i !== idx))
+    const next = items.filter((_, i) => i !== idx)
+    setPickLines(next.length ? next : [emptyPickLine()])
   }
 
   const createList = async () => {
-    if (!items.length) return
+    const valid = stripTrailingEmptyRows(items, pickFilled)
+    if (!valid.length) return
     const r = await api.post<any>('/picking/', {
       sales_order_no: salesOrder,
       customer,
       warehouse_id: warehouseId ? +warehouseId : undefined,
-      items: items.filter(i => i.item_code).map(i => ({
+      items: valid.map(i => ({
         item_code: i.item_code,
         ordered_qty: i.qty,
         qty: i.qty,
@@ -120,7 +128,7 @@ export default function Pick() {
   }
 
   const resetForm = () => {
-    setSalesOrder(''); setCustomer(''); setWarehouseId(''); setItems([])
+    setSalesOrder(''); setCustomer(''); setWarehouseId(''); setItems([emptyPickLine()])
   }
 
   const openList = async (id: number) => {
@@ -283,26 +291,32 @@ export default function Pick() {
                 <h4 className="font-medium text-sm">Items to Pick</h4>
                 <button onClick={addItem} className="erpnext-btn-secondary text-sm">+ Add Item</button>
               </div>
-
-              {items.length === 0 ? (
-                <p className="text-sm text-center py-4" style={{ color: 'var(--text-dim)' }}>No items added</p>
-              ) : (
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>#</th><th>Item Code</th><th>Qty</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item, idx) => (
-                      <tr key={idx}>
-                        <td style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
-                        <td><input className="erpnext-input text-sm w-full" value={item.item_code} onChange={e => updateItem(idx, 'item_code', e.target.value)} /></td>
-                        <td><input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} /></td>
-                        <td><button onClick={() => removeItem(idx)} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
+              <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>Type to search — new row auto-adds when last row has an item.</p>
+              <table className="erpnext-table text-sm">
+                <thead>
+                  <tr><th>#</th><th>Item Code</th><th>Qty</th><th></th></tr>
+                </thead>
+                <tbody>
+                  {items.map((item, idx) => (
+                    <tr key={idx}>
+                      <td style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
+                      <td>
+                        <ItemAutocomplete
+                          value={item.item_code}
+                          onSelect={(found) => {
+                            const u = [...items]
+                            u[idx] = { ...u[idx], item_code: found.code }
+                            setPickLines(u)
+                          }}
+                          onChangeText={(t) => updateItem(idx, 'item_code', t)}
+                        />
+                      </td>
+                      <td><input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} /></td>
+                      <td><button onClick={() => removeItem(idx)} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
 
             <div className="flex justify-end gap-2">
