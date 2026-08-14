@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import CSVImport from '../components/CSVTools'
+import ProductMasterFields, { emptyProductForm, productPayload, type LocOpt } from '../components/ProductMasterFields'
 
 interface Item {
   id: number
@@ -28,6 +29,7 @@ interface Item {
   vech?: string
   make?: string
   uom?: string
+  product_group?: string
   category?: string
   parts_movement?: string
   parts_pbo?: string
@@ -55,12 +57,6 @@ interface InvRow {
   location_type: string
 }
 
-interface LocOpt {
-  id: number
-  code: string
-  warehouse_code: string
-}
-
 export default function Items() {
   const [list, setList] = useState<Item[]>([])
   const [search, setSearch] = useState('')
@@ -70,20 +66,7 @@ export default function Items() {
   const [locations, setLocations] = useState<LocOpt[]>([])
   const [msg, setMsg] = useState('')
 
-  const [code, setCode] = useState('')
-  const [name, setName] = useState('')
-  const [brand, setBrand] = useState('')
-  const [itemGroup, setItemGroup] = useState('')
-  const [hasSerial, setHasSerial] = useState(false)
-  const [hasBatch, setHasBatch] = useState(false)
-  const [hasExpiry, setHasExpiry] = useState(false)
-  const [packType, setPackType] = useState('loose')
-  const [controlMode, setControlMode] = useState('item_controlled')
-  const [homeLocationId, setHomeLocationId] = useState('')
-  const [barcode, setBarcode] = useState('')
-  const [cartonQty, setCartonQty] = useState('')
-  const [maxQtyPerBin, setMaxQtyPerBin] = useState('')
-  const [shelfLife, setShelfLife] = useState('')
+  const [newForm, setNewForm] = useState(emptyProductForm())
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState<Record<string, any>>({})
   const [attachments, setAttachments] = useState<any[]>([])
@@ -113,6 +96,7 @@ export default function Items() {
 
   const openEdit = async (item: Item) => {
     setEditForm({
+      ...emptyProductForm(),
       name: item.name || '',
       brand: item.brand || '',
       description: item.description || '',
@@ -122,6 +106,7 @@ export default function Items() {
       vech: item.vech || '',
       make: item.make || '',
       uom: item.uom || 'PCS',
+      product_group: item.product_group || '',
       category: item.category || '',
       parts_movement: item.parts_movement || '',
       parts_pbo: item.parts_pbo || '',
@@ -149,21 +134,10 @@ export default function Items() {
 
   const saveEdit = async () => {
     if (!selected) return
-    const r = await api.itemUpdate(selected.id, {
-      ...editForm,
+    const r = await api.itemUpdate(selected.id, productPayload(editForm, {
       home_location_id: editForm.home_location_id ? +editForm.home_location_id : null,
       shelf_life_in_days: editForm.shelf_life_in_days === '' ? null : +editForm.shelf_life_in_days,
-      mrp: +editForm.mrp || 0,
-      gst_percentage: +editForm.gst_percentage || 0,
-      min_order_qty: +editForm.min_order_qty || 0,
-      weight_per_unit: +editForm.weight_per_unit || 0,
-      threshold_value: +editForm.threshold_value || 0,
-      max_rate_discount: +editForm.max_rate_discount || 0,
-      carton_qty: +editForm.carton_qty || 0,
-      max_qty_per_bin: editForm.max_qty_per_bin === '' || editForm.max_qty_per_bin == null || +editForm.max_qty_per_bin <= 0
-        ? null
-        : +editForm.max_qty_per_bin,
-    })
+    }))
     if (r.ok) {
       notify({ type: 'success', title: 'Product updated', message: selected.code })
       setShowEdit(false)
@@ -192,32 +166,23 @@ export default function Items() {
     }
   }
 
-  const resetForm = () => {
-    setCode(''); setName(''); setBrand(''); setItemGroup('')
-    setHasSerial(false); setHasBatch(false); setHasExpiry(false)
-    setPackType('loose'); setControlMode('item_controlled'); setHomeLocationId('')
-    setBarcode(''); setCartonQty(''); setMaxQtyPerBin(''); setShelfLife('')
-  }
+  const resetForm = () => setNewForm(emptyProductForm())
 
   const createItem = async () => {
-    const r = await api.itemCreate({
-      code, name, brand, item_group: itemGroup,
-      has_serial: hasSerial, has_batch: hasBatch, has_expiry_date: hasExpiry,
-      pack_type: packType, control_mode: controlMode,
-      home_location_id: homeLocationId ? +homeLocationId : undefined,
-      barcode, carton_qty: cartonQty ? +cartonQty : 0,
-      max_qty_per_bin: maxQtyPerBin && +maxQtyPerBin > 0 ? +maxQtyPerBin : null,
-      shelf_life_in_days: shelfLife ? +shelfLife : undefined,
-    })
+    if (!newForm.code.trim() || !newForm.name.trim()) {
+      notify({ type: 'error', title: 'Create failed', message: 'Product No and Description are required' })
+      return
+    }
+    const r = await api.itemCreate(productPayload(newForm, { code: newForm.code.trim() }))
     if (r.ok) {
-      setMsg(`Item ${code} created`)
+      setMsg(`Item ${newForm.code} created`)
       resetForm()
       setShowNew(false)
       loadList()
       notify({
         type: 'success',
         title: 'Item Created',
-        message: r.data.master_complete ? `${code} (master complete)` : `${code} (master incomplete)`,
+        message: r.data.master_complete ? `${newForm.code} (master complete)` : `${newForm.code} (master incomplete)`,
       })
     } else {
       notify({ type: 'error', title: 'Create failed', message: r.error || '' })
@@ -230,7 +195,7 @@ export default function Items() {
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Items</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-            Item master with pack/control modes and stock by location
+            Item master with dealer product fields and stock by location
           </p>
         </div>
         <div className="flex gap-2">
@@ -275,89 +240,13 @@ export default function Items() {
       {showNew && (
         <div className="erpnext-card">
           <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-lg font-semibold">Create Item (complete master)</h2>
+            <h2 className="text-lg font-semibold">Create Product Master</h2>
           </div>
           <div className="p-6 space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="erpnext-label">Item Code *</label>
-                <input className="erpnext-input" value={code} onChange={e => setCode(e.target.value)} placeholder="BJ-BRK-001" />
-              </div>
-              <div>
-                <label className="erpnext-label">Item Name *</label>
-                <input className="erpnext-input" value={name} onChange={e => setName(e.target.value)} placeholder="Brake Pad Set" />
-              </div>
-              <div>
-                <label className="erpnext-label">Brand</label>
-                <input className="erpnext-input" value={brand} onChange={e => setBrand(e.target.value)} placeholder="Bajaj" />
-              </div>
-              <div>
-                <label className="erpnext-label">Item Group</label>
-                <input className="erpnext-input" value={itemGroup} onChange={e => setItemGroup(e.target.value)} />
-              </div>
-              <div>
-                <label className="erpnext-label">Barcode</label>
-                <input className="erpnext-input" value={barcode} onChange={e => setBarcode(e.target.value)} />
-              </div>
-              <div>
-                <label className="erpnext-label">Pack type *</label>
-                <select className="erpnext-input" value={packType} onChange={e => setPackType(e.target.value)}>
-                  <option value="loose">Loose</option>
-                  <option value="packed">Packed</option>
-                </select>
-              </div>
-              <div>
-                <label className="erpnext-label">Control mode *</label>
-                <select className="erpnext-input" value={controlMode} onChange={e => setControlMode(e.target.value)}>
-                  <option value="item_controlled">Item controlled</option>
-                  <option value="bin_controlled">Bin controlled</option>
-                </select>
-              </div>
-              {controlMode === 'bin_controlled' && (
-                <div>
-                  <label className="erpnext-label">Home location *</label>
-                  <select className="erpnext-input" value={homeLocationId} onChange={e => setHomeLocationId(e.target.value)}>
-                    <option value="">Select bin</option>
-                    {locations.filter(l => true).map(l => (
-                      <option key={l.id} value={l.id}>{l.warehouse_code} / {l.code}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-              {packType === 'packed' && (
-                <div>
-                  <label className="erpnext-label">Carton qty</label>
-                  <input className="erpnext-input" type="number" value={cartonQty} onChange={e => setCartonQty(e.target.value)} />
-                </div>
-              )}
-              <div>
-                <label className="erpnext-label">Max qty per bin</label>
-                <input className="erpnext-input" type="number" value={maxQtyPerBin} onChange={e => setMaxQtyPerBin(e.target.value)} placeholder="e.g. 5 — leave blank if unknown" />
-              </div>
-              <div className="flex items-end gap-4 flex-wrap">
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={hasSerial} onChange={e => setHasSerial(e.target.checked)} className="w-4 h-4" />
-                  <span className="text-sm">Serial</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={hasBatch} onChange={e => setHasBatch(e.target.checked)} className="w-4 h-4" />
-                  <span className="text-sm">Batch</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" checked={hasExpiry} onChange={e => setHasExpiry(e.target.checked)} className="w-4 h-4" />
-                  <span className="text-sm">Expiry</span>
-                </label>
-              </div>
-              {hasExpiry && (
-                <div>
-                  <label className="erpnext-label">Shelf life (days) *</label>
-                  <input className="erpnext-input" type="number" value={shelfLife} onChange={e => setShelfLife(e.target.value)} />
-                </div>
-              )}
-            </div>
+            <ProductMasterFields form={newForm} setForm={setNewForm} locations={locations} showCode />
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowNew(false)} className="erpnext-btn-secondary">Cancel</button>
-              <button onClick={createItem} className="erpnext-btn-primary">Create Item</button>
+              <button onClick={createItem} className="erpnext-btn-primary">SUBMIT</button>
             </div>
           </div>
         </div>
@@ -416,12 +305,23 @@ export default function Items() {
             {selected && (
               <div className="text-sm grid grid-cols-2 gap-2" style={{ color: 'var(--text-dim)' }}>
                 <div><strong style={{ color: 'var(--text)' }}>{selected.name}</strong></div>
-                <div>{selected.brand || '—'}</div>
+                <div>Brand: {selected.brand || '—'}</div>
+                <div>Product GROUP: {selected.product_group || '—'}</div>
+                <div>Category: {selected.category || '—'}</div>
+                <div>VECH: {selected.vech || '—'}</div>
+                <div>MAKE: {selected.make || '—'}</div>
+                <div>MRP: {selected.mrp ?? 0}</div>
+                <div>UOM: {selected.uom || 'PCS'}</div>
+                <div>MOQ: {selected.min_order_qty ?? 0}</div>
+                <div>HSN: {selected.hsn_no || '—'}</div>
+                <div>GST: {selected.gst_percentage ?? 0}%</div>
+                <div>Weight: {selected.weight_per_unit ?? 0}</div>
+                <div>Threshold: {selected.threshold_value ?? 0}</div>
+                <div>Parts movement: {selected.parts_movement || '—'}</div>
                 <div>Pack: {selected.pack_type || 'loose'}</div>
                 <div>Control: {selected.control_mode || 'item_controlled'}</div>
                 <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
                 <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>
-                <div>Expiry: {selected.has_expiry_date ? 'yes' : 'no'}</div>
               </div>
             )}
             {selected && (
@@ -491,91 +391,8 @@ export default function Items() {
                   <label className="erpnext-label">Product No *</label>
                   <input className="erpnext-input" value={selected.code} disabled />
                 </div>
-                <div>
-                  <label className="erpnext-label">Description *</label>
-                  <input className="erpnext-input" value={editForm.name || ''} onChange={e => setEditForm({ ...editForm, name: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Brand *</label>
-                  <input className="erpnext-input" value={editForm.brand || ''} onChange={e => setEditForm({ ...editForm, brand: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Mrp *</label>
-                  <input className="erpnext-input" type="number" value={editForm.mrp ?? 0} onChange={e => setEditForm({ ...editForm, mrp: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Product GROUP / Category *</label>
-                  <input className="erpnext-input" value={editForm.category || ''} onChange={e => setEditForm({ ...editForm, category: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">VECH</label>
-                  <input className="erpnext-input" value={editForm.vech || ''} onChange={e => setEditForm({ ...editForm, vech: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">MAKE</label>
-                  <input className="erpnext-input" value={editForm.make || ''} onChange={e => setEditForm({ ...editForm, make: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Uom *</label>
-                  <input className="erpnext-input" value={editForm.uom || 'PCS'} onChange={e => setEditForm({ ...editForm, uom: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Max qty per bin</label>
-                  <input
-                    className="erpnext-input"
-                    type="number"
-                    min={0}
-                    value={editForm.max_qty_per_bin ?? ''}
-                    onChange={e => setEditForm({ ...editForm, max_qty_per_bin: e.target.value })}
-                    placeholder="e.g. 5 — blank = no default"
-                  />
-                  <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
-                    How many of this SKU fit in one pick/storage bin. Putaway uses this when suggesting and confirming.
-                  </p>
-                </div>
-                <div>
-                  <label className="erpnext-label">MOQ</label>
-                  <input className="erpnext-input" type="number" value={editForm.min_order_qty ?? 1} onChange={e => setEditForm({ ...editForm, min_order_qty: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">HSN_No *</label>
-                  <input className="erpnext-input" value={editForm.hsn_no || ''} onChange={e => setEditForm({ ...editForm, hsn_no: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">GST_Percentage *</label>
-                  <select className="erpnext-input" value={editForm.gst_percentage ?? 18} onChange={e => setEditForm({ ...editForm, gst_percentage: e.target.value })}>
-                    {[0, 5, 12, 18, 28].map(g => <option key={g} value={g}>{g}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="erpnext-label">Parts Movement</label>
-                  <input className="erpnext-input" value={editForm.parts_movement || ''} onChange={e => setEditForm({ ...editForm, parts_movement: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Parts pbo</label>
-                  <input className="erpnext-input" value={editForm.parts_pbo || ''} onChange={e => setEditForm({ ...editForm, parts_pbo: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Threshold Value</label>
-                  <input className="erpnext-input" type="number" value={editForm.threshold_value ?? 0} onChange={e => setEditForm({ ...editForm, threshold_value: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Max Rate Discount</label>
-                  <input className="erpnext-input" type="number" value={editForm.max_rate_discount ?? 0} onChange={e => setEditForm({ ...editForm, max_rate_discount: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Weight</label>
-                  <input className="erpnext-input" type="number" value={editForm.weight_per_unit ?? 0} onChange={e => setEditForm({ ...editForm, weight_per_unit: e.target.value })} />
-                </div>
-                <div>
-                  <label className="erpnext-label">Remark</label>
-                  <input className="erpnext-input" value={editForm.remark || ''} onChange={e => setEditForm({ ...editForm, remark: e.target.value })} placeholder="Enter remark..." />
-                </div>
-                <div className="md:col-span-2">
-                  <label className="erpnext-label">Long description</label>
-                  <textarea className="erpnext-input" rows={2} value={editForm.description || ''} onChange={e => setEditForm({ ...editForm, description: e.target.value })} />
-                </div>
               </div>
+              <ProductMasterFields form={editForm} setForm={setEditForm} locations={locations} />
 
               <div className="border-t pt-4" style={{ borderColor: 'var(--border)' }}>
                 <h3 className="text-sm font-semibold mb-2">Files / attachments</h3>
@@ -608,3 +425,4 @@ export default function Items() {
     </div>
   )
 }
+

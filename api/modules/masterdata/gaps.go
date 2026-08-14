@@ -51,8 +51,8 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 
 		created, skipped, errors := 0, 0, []string{}
 		for i, row := range body.Rows {
-			code := firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code")
-			name := firstKey(row, "name", "item_name", "Item Name", "Part Name")
+			code := firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*")
+			name := firstKey(row, "name", "item_name", "Item Name", "Part Name", "Description")
 			if code == "" || name == "" {
 				skipped++
 				errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
@@ -91,6 +91,25 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 					shelf = &v
 				}
 			}
+			mrp := parseFloatKey(row, "mrp", "MRP", "Mrp")
+			hsn := firstKey(row, "hsn_no", "hsn", "HSN_No", "HSN")
+			gst := parseFloatKey(row, "gst_percentage", "gst", "GST_Percentage", "GST")
+			vech := firstKey(row, "vech", "VECH")
+			make := firstKey(row, "make", "MAKE")
+			uom := firstKey(row, "uom", "Uom", "UOM")
+			if uom == "" {
+				uom = "PCS"
+			}
+			productGroup := firstKey(row, "product_group", "Product GROUP", "Product Group")
+			category := firstKey(row, "category", "Category")
+			partsMovement := firstKey(row, "parts_movement", "Parts Movement")
+			partsPBO := firstKey(row, "parts_pbo", "Parts pbo", "Parts PBO")
+			threshold := parseFloatKey(row, "threshold_value", "Threshold Value")
+			maxDisc := parseFloatKey(row, "max_rate_discount", "Max Rate Discount")
+			remark := firstKey(row, "remark", "Remark")
+			desc := firstKey(row, "description", "Description")
+			moq := parseFloatKey(row, "min_order_qty", "moq", "MOQ")
+			weight := parseFloatKey(row, "weight_per_unit", "weight", "Weight")
 
 			var exists bool
 			_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM items WHERE upper(code)=upper($1))`, code).Scan(&exists)
@@ -104,10 +123,17 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 				INSERT INTO items (
 					code, name, brand, has_serial, has_batch, has_expiry_date,
 					pack_type, control_mode, barcode, carton_qty, shelf_life_in_days,
-					safety_stock, master_complete
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+					safety_stock, master_complete,
+					mrp, hsn_no, gst_percentage, vech, make, uom, product_group, category,
+					parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
+					description, min_order_qty, weight_per_unit
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+				          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
 				code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
-				packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete)
+				packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete,
+				mrp, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
+				nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
+				threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
 			if err != nil {
 				errors = append(errors, code+": "+err.Error())
 				continue
@@ -375,6 +401,15 @@ func createCarrier(db *pgxpool.Pool) fiber.Handler {
 		}
 		return shared.OK(c, fiber.Map{"id": id, "name": body.Name, "is_transporter": true})
 	}
+}
+
+func parseFloatKey(row map[string]string, keys ...string) float64 {
+	s := strings.ReplaceAll(firstKey(row, keys...), ",", "")
+	if s == "" {
+		return 0
+	}
+	v, _ := strconv.ParseFloat(s, 64)
+	return v
 }
 
 func firstKey(row map[string]string, keys ...string) string {

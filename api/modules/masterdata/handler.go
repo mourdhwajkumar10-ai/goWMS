@@ -74,7 +74,8 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       home_location_id, COALESCE(master_complete,false), COALESCE(barcode,''),
 			       COALESCE(carton_qty,0), shelf_life_in_days,
 			       COALESCE(mrp,0), COALESCE(hsn_no,''), COALESCE(gst_percentage,0),
-			       COALESCE(vech,''), COALESCE(make,''), COALESCE(uom,'PCS'), COALESCE(category,''),
+			       COALESCE(vech,''), COALESCE(make,''), COALESCE(uom,'PCS'),
+			       COALESCE(product_group,''), COALESCE(category,''),
 			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
 			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
@@ -84,7 +85,9 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 		args := []any{}
 		if q != "" {
 			sql += ` AND (code ILIKE $1 OR name ILIKE $1 OR COALESCE(brand,'') ILIKE $1
-				OR COALESCE(hsn_no,'') ILIKE $1 OR COALESCE(category,'') ILIKE $1)`
+				OR COALESCE(hsn_no,'') ILIKE $1 OR COALESCE(category,'') ILIKE $1
+				OR COALESCE(product_group,'') ILIKE $1 OR COALESCE(vech,'') ILIKE $1
+				OR COALESCE(make,'') ILIKE $1)`
 			args = append(args, "%"+q+"%")
 		}
 		sql += ` ORDER BY code`
@@ -119,6 +122,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			Vech            string   `json:"vech"`
 			Make            string   `json:"make"`
 			UOM             string   `json:"uom"`
+			ProductGroup    string   `json:"product_group"`
 			Category        string   `json:"category"`
 			PartsMovement   string   `json:"parts_movement"`
 			PartsPBO        string   `json:"parts_pbo"`
@@ -139,7 +143,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 				&i.HasSerial, &i.HasBatch, &i.HasExpiryDate, &i.SafetyStock, &i.ValuationRate,
 				&i.PackType, &i.ControlMode, &i.HomeLocationID, &i.MasterComplete, &i.Barcode,
 				&i.CartonQty, &i.ShelfLifeDays,
-				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.Category,
+				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.ProductGroup, &i.Category,
 				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
 				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -174,6 +178,7 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			Vech            string   `json:"vech"`
 			Make            string   `json:"make"`
 			UOM             string   `json:"uom"`
+			ProductGroup    string   `json:"product_group"`
 			Category        string   `json:"category"`
 			PartsMovement   string   `json:"parts_movement"`
 			PartsPBO        string   `json:"parts_pbo"`
@@ -224,17 +229,17 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 				code, name, brand, has_serial, has_batch, has_expiry_date,
 				pack_type, control_mode, home_location_id, barcode, carton_qty,
 				shelf_life_in_days, safety_stock, master_complete,
-				mrp, hsn_no, gst_percentage, vech, make, uom, category,
+				mrp, hsn_no, gst_percentage, vech, make, uom, product_group, category,
 				parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
 				description, min_order_qty, weight_per_unit, max_qty_per_bin
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-			          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
+			          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
 			RETURNING id`,
 			body.Code, body.Name, nullIfEmpty(body.Brand), body.HasSerial, body.HasBatch, body.HasExpiryDate,
 			body.PackType, body.ControlMode, body.HomeLocationID, nullIfEmpty(body.Barcode), body.CartonQty,
 			body.ShelfLifeDays, body.SafetyStock, complete,
 			body.MRP, nullIfEmpty(body.HSNNo), body.GSTPercentage, nullIfEmpty(body.Vech), nullIfEmpty(body.Make),
-			body.UOM, nullIfEmpty(body.Category), nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
+			body.UOM, nullIfEmpty(body.ProductGroup), nullIfEmpty(body.Category), nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
 			body.ThresholdValue, body.MaxRateDiscount, nullIfEmpty(body.Remark),
 			nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 		).Scan(&id)
@@ -275,6 +280,7 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			Vech            *string  `json:"vech"`
 			Make            *string  `json:"make"`
 			UOM             *string  `json:"uom"`
+			ProductGroup    *string  `json:"product_group"`
 			Category        *string  `json:"category"`
 			PartsMovement   *string  `json:"parts_movement"`
 			PartsPBO        *string  `json:"parts_pbo"`
@@ -363,22 +369,23 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 				vech = COALESCE($18, vech),
 				make = COALESCE($19, make),
 				uom = COALESCE($20, uom),
-				category = COALESCE($21, category),
-				parts_movement = COALESCE($22, parts_movement),
-				parts_pbo = COALESCE($23, parts_pbo),
-				threshold_value = COALESCE($24, threshold_value),
-				max_rate_discount = COALESCE($25, max_rate_discount),
-				remark = COALESCE($26, remark),
-				description = COALESCE($27, description),
-				min_order_qty = COALESCE($28, min_order_qty),
-				weight_per_unit = COALESCE($29, weight_per_unit),
-				max_qty_per_bin = $30
+				product_group = COALESCE($21, product_group),
+				category = COALESCE($22, category),
+				parts_movement = COALESCE($23, parts_movement),
+				parts_pbo = COALESCE($24, parts_pbo),
+				threshold_value = COALESCE($25, threshold_value),
+				max_rate_discount = COALESCE($26, max_rate_discount),
+				remark = COALESCE($27, remark),
+				description = COALESCE($28, description),
+				min_order_qty = COALESCE($29, min_order_qty),
+				weight_per_unit = COALESCE($30, weight_per_unit),
+				max_qty_per_bin = $31
 			WHERE id=$1`,
 			id,
 			body.Name, body.Brand, body.HasSerial, body.HasBatch, body.HasExpiryDate,
 			packType, controlMode, homeID, body.Barcode, body.CartonQty, body.ShelfLifeDays,
 			body.SafetyStock, complete,
-			body.MRP, body.HSNNo, body.GSTPercentage, body.Vech, body.Make, body.UOM, body.Category,
+			body.MRP, body.HSNNo, body.GSTPercentage, body.Vech, body.Make, body.UOM, body.ProductGroup, body.Category,
 			body.PartsMovement, body.PartsPBO, body.ThresholdValue, body.MaxRateDiscount, body.Remark,
 			body.Description, body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 		)
@@ -395,19 +402,36 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			Code           string  `json:"code"`
-			Name           string  `json:"name"`
-			Brand          string  `json:"brand"`
-			HasSerial      bool    `json:"has_serial"`
-			HasBatch       bool    `json:"has_batch"`
-			HasExpiryDate  bool    `json:"has_expiry_date"`
-			PackType       string  `json:"pack_type"`
-			ControlMode    string  `json:"control_mode"`
-			HomeLocationID *int    `json:"home_location_id"`
-			Barcode        string  `json:"barcode"`
-			CartonQty      int     `json:"carton_qty"`
-			ShelfLifeDays  *int    `json:"shelf_life_in_days"`
-			SafetyStock    float64 `json:"safety_stock"`
+			Code            string   `json:"code"`
+			Name            string   `json:"name"`
+			Brand           string   `json:"brand"`
+			HasSerial       bool     `json:"has_serial"`
+			HasBatch        bool     `json:"has_batch"`
+			HasExpiryDate   bool     `json:"has_expiry_date"`
+			PackType        string   `json:"pack_type"`
+			ControlMode     string   `json:"control_mode"`
+			HomeLocationID  *int     `json:"home_location_id"`
+			Barcode         string   `json:"barcode"`
+			CartonQty       int      `json:"carton_qty"`
+			ShelfLifeDays   *int     `json:"shelf_life_in_days"`
+			SafetyStock     float64  `json:"safety_stock"`
+			MRP             float64  `json:"mrp"`
+			HSNNo           string   `json:"hsn_no"`
+			GSTPercentage   float64  `json:"gst_percentage"`
+			Vech            string   `json:"vech"`
+			Make            string   `json:"make"`
+			UOM             string   `json:"uom"`
+			ProductGroup    string   `json:"product_group"`
+			Category        string   `json:"category"`
+			PartsMovement   string   `json:"parts_movement"`
+			PartsPBO        string   `json:"parts_pbo"`
+			ThresholdValue  float64  `json:"threshold_value"`
+			MaxRateDiscount float64  `json:"max_rate_discount"`
+			Remark          string   `json:"remark"`
+			Description     string   `json:"description"`
+			MinOrderQty     float64  `json:"min_order_qty"`
+			WeightPerUnit   float64  `json:"weight_per_unit"`
+			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -429,6 +453,12 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 		if body.ControlMode == "bin_controlled" && body.HomeLocationID == nil {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
+		if body.UOM == "" {
+			body.UOM = "PCS"
+		}
+		if body.MaxQtyPerBin != nil && *body.MaxQtyPerBin <= 0 {
+			body.MaxQtyPerBin = nil
+		}
 		complete := itemMasterComplete(body.Code, body.Name, body.PackType, body.ControlMode, body.HomeLocationID, body.HasExpiryDate, body.ShelfLifeDays)
 		if !complete {
 			return shared.Err(c, fiber.StatusBadRequest, "item master incomplete — fill required fields")
@@ -441,23 +471,41 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 				INSERT INTO items (
 					code, name, brand, has_serial, has_batch, has_expiry_date,
 					pack_type, control_mode, home_location_id, barcode, carton_qty,
-					shelf_life_in_days, safety_stock, master_complete
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true)
+					shelf_life_in_days, safety_stock, master_complete,
+					mrp, hsn_no, gst_percentage, vech, make, uom, product_group, category,
+					parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
+					description, min_order_qty, weight_per_unit, max_qty_per_bin
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,true,
+				          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 				RETURNING id`,
 				body.Code, body.Name, nullIfEmpty(body.Brand), body.HasSerial, body.HasBatch, body.HasExpiryDate,
 				body.PackType, body.ControlMode, body.HomeLocationID, nullIfEmpty(body.Barcode), body.CartonQty,
 				body.ShelfLifeDays, body.SafetyStock,
+				body.MRP, nullIfEmpty(body.HSNNo), body.GSTPercentage, nullIfEmpty(body.Vech), nullIfEmpty(body.Make),
+				body.UOM, nullIfEmpty(body.ProductGroup), nullIfEmpty(body.Category),
+				nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
+				body.ThresholdValue, body.MaxRateDiscount, nullIfEmpty(body.Remark),
+				nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 			).Scan(&id)
 		} else if err == nil {
 			_, err = db.Exec(c.Context(), `
 				UPDATE items SET
 					name=$2, brand=$3, has_serial=$4, has_batch=$5, has_expiry_date=$6,
 					pack_type=$7, control_mode=$8, home_location_id=$9, barcode=$10,
-					carton_qty=$11, shelf_life_in_days=$12, safety_stock=$13, master_complete=true
+					carton_qty=$11, shelf_life_in_days=$12, safety_stock=$13, master_complete=true,
+					mrp=$14, hsn_no=$15, gst_percentage=$16, vech=$17, make=$18, uom=$19,
+					product_group=$20, category=$21, parts_movement=$22, parts_pbo=$23,
+					threshold_value=$24, max_rate_discount=$25, remark=$26, description=$27,
+					min_order_qty=$28, weight_per_unit=$29, max_qty_per_bin=$30
 				WHERE id=$1`,
 				id, body.Name, nullIfEmpty(body.Brand), body.HasSerial, body.HasBatch, body.HasExpiryDate,
 				body.PackType, body.ControlMode, body.HomeLocationID, nullIfEmpty(body.Barcode), body.CartonQty,
 				body.ShelfLifeDays, body.SafetyStock,
+				body.MRP, nullIfEmpty(body.HSNNo), body.GSTPercentage, nullIfEmpty(body.Vech), nullIfEmpty(body.Make),
+				body.UOM, nullIfEmpty(body.ProductGroup), nullIfEmpty(body.Category),
+				nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
+				body.ThresholdValue, body.MaxRateDiscount, nullIfEmpty(body.Remark),
+				nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 			)
 		}
 		if err != nil {
@@ -1743,23 +1791,32 @@ func exportItemsCSV(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT code, name, COALESCE(brand,''), COALESCE(weight_per_unit,0), COALESCE(weight_uom,''),
-			       COALESCE(reorder_level,0), COALESCE(safety_stock,0), disabled
+			       COALESCE(reorder_level,0), COALESCE(safety_stock,0), disabled,
+			       COALESCE(mrp,0), COALESCE(hsn_no,''), COALESCE(gst_percentage,0),
+			       COALESCE(vech,''), COALESCE(make,''), COALESCE(uom,'PCS'),
+			       COALESCE(product_group,''), COALESCE(category,''),
+			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''),
+			       COALESCE(threshold_value,0), COALESCE(max_rate_discount,0),
+			       COALESCE(remark,''), COALESCE(description,''), COALESCE(min_order_qty,0)
 			FROM items ORDER BY code LIMIT 5000`)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
 		var b strings.Builder
-		b.WriteString("code,name,brand,weight_per_unit,weight_uom,reorder_level,safety_stock,disabled\n")
+		b.WriteString("code,name,brand,weight_per_unit,weight_uom,reorder_level,safety_stock,disabled,mrp,hsn_no,gst_percentage,vech,make,uom,product_group,category,parts_movement,parts_pbo,threshold_value,max_rate_discount,remark,description,min_order_qty\n")
 		for rows.Next() {
-			var code, name, brand, wuom string
-			var w, reorder, safety float64
+			var code, name, brand, wuom, hsn, vech, make, uom, pgroup, category, pmove, pbo, remark, desc string
+			var w, reorder, safety, mrp, gst, thresh, maxDisc, moq float64
 			var disabled bool
-			if err := rows.Scan(&code, &name, &brand, &w, &wuom, &reorder, &safety, &disabled); err != nil {
+			if err := rows.Scan(&code, &name, &brand, &w, &wuom, &reorder, &safety, &disabled,
+				&mrp, &hsn, &gst, &vech, &make, &uom, &pgroup, &category, &pmove, &pbo, &thresh, &maxDisc, &remark, &desc, &moq); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			b.WriteString(fmt.Sprintf("%s,%s,%s,%g,%s,%g,%g,%t\n",
-				csvEsc(code), csvEsc(name), csvEsc(brand), w, csvEsc(wuom), reorder, safety, disabled))
+			b.WriteString(fmt.Sprintf("%s,%s,%s,%g,%s,%g,%g,%t,%g,%s,%g,%s,%s,%s,%s,%s,%s,%s,%g,%g,%s,%s,%g\n",
+				csvEsc(code), csvEsc(name), csvEsc(brand), w, csvEsc(wuom), reorder, safety, disabled,
+				mrp, csvEsc(hsn), gst, csvEsc(vech), csvEsc(make), csvEsc(uom), csvEsc(pgroup), csvEsc(category),
+				csvEsc(pmove), csvEsc(pbo), thresh, maxDisc, csvEsc(remark), csvEsc(desc), moq))
 		}
 		c.Set("Content-Type", "text/csv")
 		c.Set("Content-Disposition", "attachment; filename=items.csv")

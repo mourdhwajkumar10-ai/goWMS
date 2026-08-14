@@ -6,6 +6,7 @@ import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import { lookupItemName, rememberItemName, rememberItems } from '../utils/itemNameCache'
+import ProductMasterFields, { emptyProductForm, productPayload, type LocOpt } from '../components/ProductMasterFields'
 
 export default function GRN() {
   const role = (getRole() || '').toLowerCase()
@@ -29,9 +30,8 @@ export default function GRN() {
   const [warehouses, setWarehouses] = useState<any[]>([])
   const [warehouseId, setWarehouseId] = useState('')
   const [completeMaster, setCompleteMaster] = useState<any>(null)
-  const [cmName, setCmName] = useState('')
-  const [cmPack, setCmPack] = useState('loose')
-  const [cmControl, setCmControl] = useState('item_controlled')
+  const [cmForm, setCmForm] = useState(emptyProductForm())
+  const [cmLocations, setCmLocations] = useState<LocOpt[]>([])
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(false)
   const [showScanner, setShowScanner] = useState(false)
@@ -130,6 +130,11 @@ export default function GRN() {
         setWarehouses(r.data ?? [])
         if (r.data?.[0] && !warehouseId) setWarehouseId(String(r.data[0].id))
       }
+    })
+    api.get<LocOpt[]>('/masterdata/locations').then(r => {
+      if (r.ok) setCmLocations((r.data ?? []).map((l: any) => ({
+        id: l.id, code: l.code, warehouse_code: l.warehouse_code,
+      })))
     })
     const openId = sessionStorage.getItem('gowms_open_grn')
     if (openId) {
@@ -644,7 +649,7 @@ export default function GRN() {
     const check = await api.itemCheck(item)
     if (check.ok && (!check.data.exists || !check.data.master_complete)) {
       setCompleteMaster({ code: item })
-      setCmName('')
+      setCmForm({ ...emptyProductForm(), code: item })
       notify({
         type: 'warning',
         title: 'Complete item master first',
@@ -694,15 +699,10 @@ export default function GRN() {
   }
 
   const saveCompleteMaster = async () => {
-    if (!completeMaster?.code || !cmName) return
-    const r = await api.itemComplete({
-      code: completeMaster.code,
-      name: cmName,
-      pack_type: cmPack,
-      control_mode: cmControl,
-    })
+    if (!completeMaster?.code || !cmForm.name) return
+    const r = await api.itemComplete(productPayload(cmForm, { code: completeMaster.code }))
     if (r.ok) {
-      rememberItemName(completeMaster.code, cmName)
+      rememberItemName(completeMaster.code, cmForm.name)
       notify({ type: 'success', title: 'Item master saved', message: completeMaster.code })
       setCompleteMaster(null)
     } else {
@@ -924,32 +924,13 @@ export default function GRN() {
       )}
 
       {completeMaster && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }}>
-          <div className="erpnext-card max-w-md w-full mx-4 p-6 space-y-4" style={{ background: 'var(--panel)' }}>
-            <h2 className="text-xl font-semibold">Complete item master</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="erpnext-card w-full max-w-3xl max-h-[90vh] overflow-y-auto mx-4 p-6 space-y-4" style={{ background: 'var(--panel)' }}>
+            <h2 className="text-xl font-semibold">Complete Product Master</h2>
             <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
               New part <strong>{completeMaster.code}</strong> — fill details before receiving.
             </p>
-            <div>
-              <label className="erpnext-label">Name *</label>
-              <input className="erpnext-input" value={cmName} onChange={e => setCmName(e.target.value)} placeholder="Brake pad set" />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="erpnext-label">Pack type</label>
-                <select className="erpnext-input" value={cmPack} onChange={e => setCmPack(e.target.value)}>
-                  <option value="loose">Loose</option>
-                  <option value="packed">Packed</option>
-                </select>
-              </div>
-              <div>
-                <label className="erpnext-label">Control</label>
-                <select className="erpnext-input" value={cmControl} onChange={e => setCmControl(e.target.value)}>
-                  <option value="item_controlled">Item controlled</option>
-                  <option value="bin_controlled">Bin controlled</option>
-                </select>
-              </div>
-            </div>
+            <ProductMasterFields form={cmForm} setForm={setCmForm} locations={cmLocations} />
             <div className="flex gap-2">
               <button className="erpnext-btn-primary flex-1" onClick={saveCompleteMaster}>Save & continue</button>
               <button className="erpnext-btn-secondary" onClick={() => setCompleteMaster(null)}>Cancel</button>
