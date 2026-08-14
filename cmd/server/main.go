@@ -60,7 +60,8 @@ func main() {
 	defer pool.Close()
 
 	app := fiber.New(fiber.Config{
-		AppName: "goWMS",
+		AppName:   "goWMS",
+		BodyLimit: 32 * 1024 * 1024, // spare-parts CSV import can be tens of thousands of JSON rows
 	})
 	app.Use(logger.New())
 

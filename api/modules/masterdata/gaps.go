@@ -48,14 +48,45 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 		if len(body.Rows) == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "rows required")
 		}
+		if len(body.Rows) > 1000 {
+			return shared.Err(c, fiber.StatusBadRequest, "send at most 1000 rows per request")
+		}
 
 		created, skipped, errors := 0, 0, []string{}
+		codes := make([]string, 0, len(body.Rows))
+		for _, row := range body.Rows {
+			code := strings.ToUpper(firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*"))
+			if code != "" {
+				codes = append(codes, code)
+			}
+		}
+		existing := map[string]bool{}
+		if len(codes) > 0 {
+			qrows, err := db.Query(c.Context(), `SELECT upper(code) FROM items WHERE upper(code) = ANY($1)`, codes)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			for qrows.Next() {
+				var c string
+				if qrows.Scan(&c) == nil {
+					existing[c] = true
+				}
+			}
+			qrows.Close()
+		}
+
 		for i, row := range body.Rows {
 			code := firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*")
 			name := firstKey(row, "name", "item_name", "Item Name", "Part Name", "Description")
 			if code == "" || name == "" {
 				skipped++
-				errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
+				if len(errors) < 50 {
+					errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
+				}
+				continue
+			}
+			if existing[strings.ToUpper(code)] {
+				skipped++
 				continue
 			}
 			brand := firstKey(row, "brand", "Brand")
@@ -65,7 +96,9 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 				pt, err := normalizePackType(raw)
 				if err != nil {
 					skipped++
-					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					if len(errors) < 50 {
+						errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					}
 					continue
 				}
 				packType = pt
@@ -75,7 +108,9 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 				cm, err := normalizeControlMode(raw)
 				if err != nil {
 					skipped++
-					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					if len(errors) < 50 {
+						errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
+					}
 					continue
 				}
 				controlMode = cm
@@ -111,13 +146,6 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 			moq := parseFloatKey(row, "min_order_qty", "moq", "MOQ")
 			weight := parseFloatKey(row, "weight_per_unit", "weight", "Weight")
 
-			var exists bool
-			_ = db.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM items WHERE upper(code)=upper($1))`, code).Scan(&exists)
-			if exists {
-				skipped++
-				continue
-			}
-
 			complete := itemMasterComplete(code, name, packType, controlMode, nil, hasExpiry, shelf)
 			_, err := db.Exec(c.Context(), `
 				INSERT INTO items (
@@ -135,9 +163,12 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 				nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
 				threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
 			if err != nil {
-				errors = append(errors, code+": "+err.Error())
+				if len(errors) < 50 {
+					errors = append(errors, code+": "+err.Error())
+				}
 				continue
 			}
+			existing[strings.ToUpper(code)] = true
 			created++
 		}
 		return shared.OK(c, fiber.Map{

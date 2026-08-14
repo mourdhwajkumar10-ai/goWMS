@@ -71,6 +71,7 @@ export default function Items() {
   const [editForm, setEditForm] = useState<Record<string, any>>({})
   const [attachments, setAttachments] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
+  const [importing, setImporting] = useState(false)
 
   const loadList = () => api.itemList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => {
@@ -199,12 +200,42 @@ export default function Items() {
           </p>
         </div>
         <div className="flex gap-2">
-          <CSVImport onImport={async (rows) => {
-            const r = await api.itemImport({ rows })
-            if (r.ok) {
-              notify({ type: 'success', title: 'Items imported', message: `created ${r.data?.created ?? 0}, skipped ${r.data?.skipped ?? 0}` })
-              loadList()
-            } else notify({ type: 'error', title: 'Import failed', message: r.error || '' })
+          <CSVImport disabled={importing} onImport={async (rows) => {
+            const BATCH = 400
+            const total = rows.length
+            const batches = Math.max(1, Math.ceil(total / BATCH))
+            setImporting(true)
+            let created = 0
+            let skipped = 0
+            let failedAt = ''
+            try {
+              for (let i = 0; i < batches; i++) {
+                const chunk = rows.slice(i * BATCH, (i + 1) * BATCH)
+                const r = await api.itemImport({ rows: chunk })
+                if (!r.ok) {
+                  failedAt = `batch ${i + 1}/${batches}: ${r.error || 'import failed'}`
+                  break
+                }
+                created += r.data?.created ?? 0
+                skipped += r.data?.skipped ?? 0
+                if (i === 0 || i === batches - 1 || (i + 1) % 5 === 0) {
+                  notify({
+                    type: 'info',
+                    title: 'Importing items',
+                    message: `${Math.min((i + 1) * BATCH, total)} / ${total} rows`,
+                    duration: 2500,
+                  })
+                }
+              }
+              if (failedAt) {
+                notify({ type: 'error', title: 'Import failed', message: `${failedAt}. Created ${created}, skipped ${skipped} before the error.` })
+              } else {
+                notify({ type: 'success', title: 'Items imported', message: `created ${created}, skipped ${skipped} of ${total}` })
+                loadList()
+              }
+            } finally {
+              setImporting(false)
+            }
           }} />
           <a
             className="erpnext-btn-secondary text-sm"

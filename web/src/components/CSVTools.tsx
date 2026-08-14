@@ -2,10 +2,11 @@ import { useRef } from 'react'
 import { notify } from './Notifications'
 
 interface Props {
-  onImport: (rows: any[]) => void
+  onImport: (rows: any[]) => void | Promise<void>
+  disabled?: boolean
 }
 
-export default function CSVImport({ onImport }: Props) {
+export default function CSVImport({ onImport, disabled }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -13,7 +14,7 @@ export default function CSVImport({ onImport }: Props) {
     if (!file) return
 
     const reader = new FileReader()
-    reader.onload = (ev) => {
+    reader.onload = async (ev) => {
       const text = ev.target?.result as string
       const lines = text.split('\n').filter(l => l.trim())
       if (lines.length < 2) {
@@ -29,8 +30,8 @@ export default function CSVImport({ onImport }: Props) {
         return row
       })
 
-      onImport(rows)
-      notify({ type: 'success', title: 'CSV Parsed', message: `${rows.length} rows loaded` })
+      notify({ type: 'info', title: 'CSV parsed', message: `${rows.length} rows — importing in batches` })
+      await onImport(rows)
     }
     reader.readAsText(file)
 
@@ -51,8 +52,9 @@ export default function CSVImport({ onImport }: Props) {
         onClick={() => fileRef.current?.click()}
         className="erpnext-btn-secondary text-sm"
         style={{ fontSize: 12 }}
+        disabled={disabled}
       >
-        📄 Import CSV
+        {disabled ? 'Importing…' : '📄 Import CSV'}
       </button>
     </>
   )
