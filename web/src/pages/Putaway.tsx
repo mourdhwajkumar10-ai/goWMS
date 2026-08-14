@@ -551,7 +551,7 @@ export default function Putaway() {
                 />
               </div>
               <div className="flex items-end">
-                <button onClick={suggest} className="erpnext-btn-secondary w-full">Suggest location</button>
+                <button onClick={() => { void suggest() }} className="erpnext-btn-secondary w-full">Suggest location</button>
               </div>
             </div>
 
