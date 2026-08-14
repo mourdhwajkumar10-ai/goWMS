@@ -208,23 +208,28 @@ export default function Items() {
     }
   }
 
+  const closeItem = () => {
+    setSelected(null)
+    setInventory([])
+    setShowEdit(false)
+  }
+
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const from = total === 0 ? 0 : (page - 1) * PAGE_SIZE + 1
   const to = Math.min(page * PAGE_SIZE, total)
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
+    <div className="items-page">
+      <div className="items-toolbar">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Items</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
             Item master with dealer product fields and stock by location
           </p>
         </div>
-        <div className="flex gap-2 items-center flex-wrap">
+        <div className="items-toolbar-actions">
           <input
-            className="erpnext-input text-sm"
-            style={{ width: 260 }}
+            className="erpnext-input text-sm items-search"
             placeholder="Search code or name…"
             value={search}
             onChange={e => setSearch(e.target.value)}
@@ -302,137 +307,140 @@ export default function Items() {
         </div>
       )}
 
-      <div className="erpnext-card overflow-hidden">
+      <div className="erpnext-card items-list-card">
         <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-          <h2 className="text-lg font-semibold">Items ({total})</h2>
+          <h2 className="text-lg font-semibold" style={{ marginBottom: 0 }}>Items ({total})</h2>
         </div>
-        <div className="overflow-auto" style={{ maxHeight: '60vh' }}>
-            <table className="erpnext-table">
-              <thead>
-                <tr style={{ background: 'var(--panel-2)' }}>
-                  <th>Code</th>
-                  <th>Name</th>
-                  <th>Pack</th>
-                  <th>Control</th>
-                  <th>Master</th>
+        <div className="items-table-scroll">
+          <table className="erpnext-table">
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Name</th>
+                <th>Pack</th>
+                <th>Control</th>
+                <th>Master</th>
+              </tr>
+            </thead>
+            <tbody>
+              {list.map(i => (
+                <tr key={i.id} onClick={() => openItem(i)} style={{ cursor: 'pointer', background: selected?.id === i.id ? 'var(--panel-2)' : undefined }}>
+                  <td className="font-medium" style={{ color: 'var(--accent)' }}>{i.code}</td>
+                  <td>{i.name}</td>
+                  <td>{i.pack_type || 'loose'}</td>
+                  <td>{i.control_mode === 'bin_controlled' ? 'bin' : 'item'}</td>
+                  <td>
+                    <span className={`erpnext-badge ${i.master_complete ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
+                      {i.master_complete ? 'ok' : 'incomplete'}
+                    </span>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {list.map(i => (
-                  <tr key={i.id} onClick={() => openItem(i)} style={{ cursor: 'pointer', background: selected?.id === i.id ? 'var(--panel-2)' : undefined }}>
-                    <td className="font-medium" style={{ color: 'var(--accent)' }}>{i.code}</td>
-                    <td>{i.name}</td>
-                    <td>{i.pack_type || 'loose'}</td>
-                    <td>{i.control_mode === 'bin_controlled' ? 'bin' : 'item'}</td>
-                    <td>
-                      <span className={`erpnext-badge ${i.master_complete ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
-                        {i.master_complete ? 'ok' : 'incomplete'}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-                {list.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td></tr>}
-              </tbody>
-            </table>
+              ))}
+              {list.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-        <div className="px-6 py-3 flex items-center justify-between gap-3 text-sm border-t" style={{ borderColor: 'var(--border)', color: 'var(--text-dim)' }}>
+        <div className="items-pager">
           <span>{total === 0 ? '0 items' : `${from}–${to} of ${total}`}</span>
           <div className="flex gap-2 items-center">
-            <button
-              className="erpnext-btn-secondary text-sm"
-              disabled={page <= 1}
-              onClick={() => goToPage(page - 1)}
-            >Prev</button>
-            <span className="px-2 py-1">Page {page} / {pageCount}</span>
-            <button
-              className="erpnext-btn-secondary text-sm"
-              disabled={page >= pageCount || total === 0}
-              onClick={() => goToPage(page + 1)}
-            >Next</button>
+            <button className="erpnext-btn-secondary text-sm" disabled={page <= 1} onClick={() => goToPage(page - 1)}>Prev</button>
+            <span>Page {page} / {pageCount}</span>
+            <button className="erpnext-btn-secondary text-sm" disabled={page >= pageCount || total === 0} onClick={() => goToPage(page + 1)}>Next</button>
           </div>
         </div>
       </div>
 
-      {selected && (
-        <div className="erpnext-card">
-          <div className="px-6 py-4 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-lg font-semibold">Stock locations — {selected.code}</h2>
-            <button className="erpnext-btn-primary text-sm" onClick={() => openEdit(selected)}>Edit Product Master</button>
-          </div>
-          <div className="p-4 space-y-4">
-            <div className="text-sm grid grid-cols-2 gap-2" style={{ color: 'var(--text-dim)' }}>
-              <div><strong style={{ color: 'var(--text)' }}>{selected.name}</strong></div>
-              <div>Brand: {selected.brand || '—'}</div>
-              <div>Product GROUP: {selected.product_group || '—'}</div>
-              <div>Category: {selected.category || '—'}</div>
-              <div>VECH: {selected.vech || '—'}</div>
-              <div>MAKE: {selected.make || '—'}</div>
-              <div>MRP: {selected.mrp ?? 0}</div>
-              <div>UOM: {selected.uom || 'PCS'}</div>
-              <div>MOQ: {selected.min_order_qty ?? 0}</div>
-              <div>HSN: {selected.hsn_no || '—'}</div>
-              <div>GST: {selected.gst_percentage ?? 0}%</div>
-              <div>Weight: {selected.weight_per_unit ?? 0}</div>
-              <div>Threshold: {selected.threshold_value ?? 0}</div>
-              <div>Parts movement: {selected.parts_movement || '—'}</div>
-              <div>Pack: {selected.pack_type || 'loose'}</div>
-              <div>Control: {selected.control_mode || 'item_controlled'}</div>
-              <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
-              <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>
+      {selected && !showEdit && (
+        <div className="modal-overlay" onClick={closeItem}>
+          <div className="modal items-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--border)' }}>
+              <h2 className="text-lg font-semibold" style={{ marginBottom: 0 }}>Stock locations — {selected.code}</h2>
+              <div className="flex gap-2">
+                <button className="erpnext-btn-primary text-sm" onClick={() => openEdit(selected)}>Edit Product Master</button>
+                <button className="erpnext-btn-secondary text-sm" onClick={closeItem}>✕</button>
+              </div>
             </div>
-            <table className="erpnext-table">
-              <thead>
-                <tr style={{ background: 'var(--panel-2)' }}>
-                  <th>Location</th>
-                  <th>WH</th>
-                  <th>Batch</th>
-                  <th>Expiry</th>
-                  <th className="text-right">Qty</th>
-                  <th>Alloc</th>
-                </tr>
-              </thead>
-              <tbody>
-                {inventory.map(row => (
-                  <tr key={row.id}>
-                    <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
-                    <td>{row.warehouse_code}</td>
-                    <td>{row.batch_no || '—'}</td>
-                    <td>
-                      {row.expiry_date ? new Date(row.expiry_date).toLocaleDateString() : '—'}
-                      {row.fefo_warn && (
-                        <span className="erpnext-badge erpnext-badge-yellow ml-1">
-                          {row.days_until_expiry != null ? `${row.days_until_expiry}d` : 'FEFO'}
-                        </span>
-                      )}
-                    </td>
-                    <td className="text-right">{row.actual_qty}</td>
-                    <td>
-                      <span className={`erpnext-badge ${
-                        row.allocation_status === 'available' || row.allocation_status === 'allocatable' ? 'erpnext-badge-green'
-                          : row.allocation_status === 'unallocatable' ? 'erpnext-badge-yellow'
-                            : row.allocation_status === 'partial' ? 'erpnext-badge-yellow'
-                              : 'erpnext-badge-red'
-                      }`}>{row.allocation_status}</span>
-                    </td>
+            <div className="p-6" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="items-meta">
+                <div><strong style={{ color: 'var(--text)' }}>{selected.name}</strong></div>
+                <div>Brand: {selected.brand || '—'}</div>
+                <div>Product GROUP: {selected.product_group || '—'}</div>
+                <div>Category: {selected.category || '—'}</div>
+                <div>VECH: {selected.vech || '—'}</div>
+                <div>MAKE: {selected.make || '—'}</div>
+                <div>MRP: {selected.mrp ?? 0}</div>
+                <div>UOM: {selected.uom || 'PCS'}</div>
+                <div>MOQ: {selected.min_order_qty ?? 0}</div>
+                <div>HSN: {selected.hsn_no || '—'}</div>
+                <div>GST: {selected.gst_percentage ?? 0}%</div>
+                <div>Weight: {selected.weight_per_unit ?? 0}</div>
+                <div>Threshold: {selected.threshold_value ?? 0}</div>
+                <div>Parts movement: {selected.parts_movement || '—'}</div>
+                <div>Pack: {selected.pack_type || 'loose'}</div>
+                <div>Control: {selected.control_mode || 'item_controlled'}</div>
+                <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
+                <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>
+              </div>
+              <table className="erpnext-table">
+                <thead>
+                  <tr>
+                    <th>Location</th>
+                    <th>WH</th>
+                    <th>Batch</th>
+                    <th>Expiry</th>
+                    <th className="text-right">Qty</th>
+                    <th>Alloc</th>
                   </tr>
-                ))}
-                {inventory.length === 0 && (
-                  <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No stock at locations</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {inventory.map(row => (
+                    <tr key={row.id}>
+                      <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
+                      <td>{row.warehouse_code}</td>
+                      <td>{row.batch_no || '—'}</td>
+                      <td>
+                        {row.expiry_date ? new Date(row.expiry_date).toLocaleDateString() : '—'}
+                        {row.fefo_warn && (
+                          <span className="erpnext-badge erpnext-badge-yellow ml-1">
+                            {row.days_until_expiry != null ? `${row.days_until_expiry}d` : 'FEFO'}
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-right">{row.actual_qty}</td>
+                      <td>
+                        <span className={`erpnext-badge ${
+                          row.allocation_status === 'available' || row.allocation_status === 'allocatable' ? 'erpnext-badge-green'
+                            : row.allocation_status === 'unallocatable' ? 'erpnext-badge-yellow'
+                              : row.allocation_status === 'partial' ? 'erpnext-badge-yellow'
+                                : 'erpnext-badge-red'
+                        }`}>{row.allocation_status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                  {inventory.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No stock at locations</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}
 
       {showEdit && selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
-          <div className="erpnext-card w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+        <div className="modal-overlay" onClick={() => setShowEdit(false)}>
+          <div className="modal items-detail-modal" onClick={e => e.stopPropagation()}>
             <div className="px-6 py-4 border-b flex justify-between items-center" style={{ borderColor: 'var(--border)' }}>
-              <h2 className="text-lg font-semibold">Edit Product Master</h2>
+              <h2 className="text-lg font-semibold" style={{ marginBottom: 0 }}>Edit Product Master</h2>
               <button className="erpnext-btn-secondary text-sm" onClick={() => setShowEdit(false)}>✕</button>
             </div>
-            <div className="p-6 space-y-4">
+            <div className="p-6" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="erpnext-label">Id</label>
