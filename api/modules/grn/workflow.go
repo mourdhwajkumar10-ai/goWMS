@@ -3,6 +3,7 @@ package grn
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -30,15 +31,40 @@ func sessionAcceptsBoxReceive(status string) bool {
 	}
 }
 
-func writeEvent(db *pgxpool.Pool, ctx context.Context, sessionID, actorID int, eventType string, fields fiber.Map) {
+func requestDevice(c *fiber.Ctx) string {
+	if c == nil {
+		return ""
+	}
+	d := strings.TrimSpace(c.Get("X-Device"))
+	if d == "" {
+		d = strings.TrimSpace(c.Get("User-Agent"))
+	}
+	if len(d) > 100 {
+		return d[:100]
+	}
+	return d
+}
+
+func writeEvent(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, eventType string, fields fiber.Map) {
 	if db == nil || sessionID < 1 || eventType == "" {
 		return
 	}
-	var invoice, box, part, result, reason, device, payload any
+	ctx := context.Background()
+	actorID := 0
+	device := ""
+	if c != nil {
+		ctx = c.Context()
+		actorID = userID(c)
+		device = requestDevice(c)
+	}
+	var invoice, box, part, result, reason, payload any
 	var qty any
 	if fields != nil {
 		invoice, box, part = fields["invoice_no"], fields["box_no"], fields["part_no"]
-		qty, result, reason, device = fields["quantity"], fields["result"], fields["reason"], fields["device"]
+		qty, result, reason = fields["quantity"], fields["result"], fields["reason"]
+		if v, ok := fields["device"]; ok && v != nil && strings.TrimSpace(fmt.Sprint(v)) != "" {
+			device = fmt.Sprint(v)
+		}
 		if v, ok := fields["payload"]; ok {
 			b, _ := json.Marshal(v)
 			payload = string(b)
@@ -48,17 +74,28 @@ func writeEvent(db *pgxpool.Pool, ctx context.Context, sessionID, actorID int, e
 	if actorID > 0 {
 		actor = actorID
 	}
+	var deviceVal any
+	if strings.TrimSpace(device) != "" {
+		deviceVal = device
+	}
 	_, _ = db.Exec(ctx, `
 		INSERT INTO grn_events (
 			grn_session_id, event_type, invoice_no, box_no, part_no, quantity,
 			result, reason, actor_id, device, payload
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
-		sessionID, eventType, invoice, box, part, qty, result, reason, actor, device, payload)
+		sessionID, eventType, invoice, box, part, qty, result, reason, actor, deviceVal, payload)
 }
 
-func writeException(db *pgxpool.Pool, ctx context.Context, sessionID, actorID int, excType string, fields fiber.Map) {
+func writeException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, excType string, fields fiber.Map) {
 	if db == nil || sessionID < 1 || excType == "" {
 		return
+	}
+	ctx := context.Background()
+	actorID := 0
+	device := requestDevice(c)
+	if c != nil {
+		ctx = c.Context()
+		actorID = userID(c)
 	}
 	get := func(k string) any {
 		if fields == nil {
@@ -70,13 +107,36 @@ func writeException(db *pgxpool.Pool, ctx context.Context, sessionID, actorID in
 	if actorID > 0 {
 		actor = actorID
 	}
-	_, _ = db.Exec(ctx, `
+	var deviceVal any
+	if strings.TrimSpace(device) != "" {
+		deviceVal = device
+	}
+	_, err := db.Exec(ctx, `
 		INSERT INTO grn_exceptions (
 			grn_session_id, exception_type, invoice_no, box_no, part_no,
-			expected_qty, scanned_qty, variance, status, actor_id
-		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9)`,
+			expected_qty, scanned_qty, variance, status, actor_id, device
+		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10)`,
 		sessionID, excType, get("invoice_no"), get("box_no"), get("part_no"),
-		get("expected_qty"), get("scanned_qty"), get("variance"), actor)
+		get("expected_qty"), get("scanned_qty"), get("variance"), actor, deviceVal)
+	if err != nil && strings.Contains(err.Error(), "device") {
+		_, _ = db.Exec(ctx, `
+			INSERT INTO grn_exceptions (
+				grn_session_id, exception_type, invoice_no, box_no, part_no,
+				expected_qty, scanned_qty, variance, status, actor_id
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9)`,
+			sessionID, excType, get("invoice_no"), get("box_no"), get("part_no"),
+			get("expected_qty"), get("scanned_qty"), get("variance"), actor)
+	}
+	writeEvent(db, c, sessionID, "EXCEPTION_CREATED", fiber.Map{
+		"invoice_no": get("invoice_no"), "box_no": get("box_no"), "part_no": get("part_no"),
+		"quantity": get("scanned_qty"), "result": excType, "reason": excType,
+		"payload": fiber.Map{
+			"exception_type": excType,
+			"expected_qty":   get("expected_qty"),
+			"scanned_qty":    get("scanned_qty"),
+			"variance":       get("variance"),
+		},
+	})
 }
 
 func registerWorkflowRoutes(r fiber.Router, db *pgxpool.Pool) {
@@ -88,6 +148,9 @@ func registerWorkflowRoutes(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/session/:id/exceptions", listExceptions(db))
 	r.Post("/session/:id/invoices", addInvoice(db))
 	r.Get("/session/:id/invoices", listInvoices(db))
+	r.Post("/session/:id/exceptions", createOtherException(db))
+	r.Post("/session/:id/supporting-doc", attachSupportingDoc(db))
+	r.Post("/session/:id/complete-putaway", completePutaway(db))
 	registerVerifyRoutes(r, db)
 	registerCompletionRoutes(r, db)
 }
@@ -99,18 +162,20 @@ func updateSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
 		var body struct {
-			SupplierName  *string `json:"supplier_name"`
-			ReceivingMode *string `json:"receiving_mode"`
-			TruckNo       *string `json:"truck_no"`
-			DriverName    *string `json:"driver_name"`
-			DriverPhone   *string `json:"driver_phone"`
-			ArrivalAt     *string `json:"arrival_at"`
-			ExpectedBoxes *int    `json:"expected_boxes"`
-			Notes         *string `json:"notes"`
-			Plant         *string `json:"plant"`
-			Dock          *string `json:"dock"`
-			InvoiceNos    *string `json:"invoice_nos"`
-			WarehouseID   *int    `json:"warehouse_id"`
+			SupplierName         *string `json:"supplier_name"`
+			ReceivingMode        *string `json:"receiving_mode"`
+			PackingListAvailable *bool   `json:"packing_list_available"`
+			TruckNo              *string `json:"truck_no"`
+			DriverName           *string `json:"driver_name"`
+			DriverPhone          *string `json:"driver_phone"`
+			ArrivalAt            *string `json:"arrival_at"`
+			ExpectedBoxes        *int    `json:"expected_boxes"`
+			Notes                *string `json:"notes"`
+			Plant                *string `json:"plant"`
+			Dock                 *string `json:"dock"`
+			InvoiceNos           *string `json:"invoice_nos"`
+			WarehouseID          *int    `json:"warehouse_id"`
+			ArrivalAttachmentID  *int    `json:"arrival_attachment_id"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -128,6 +193,13 @@ func updateSession(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusBadRequest, "receiving_mode must be packing_list or invoice_only")
 			}
 			*body.ReceivingMode = m
+		}
+		if body.PackingListAvailable != nil && body.ReceivingMode == nil {
+			m := "invoice_only"
+			if *body.PackingListAvailable {
+				m = "packing_list"
+			}
+			body.ReceivingMode = &m
 		}
 		arrival := ""
 		if body.ArrivalAt != nil {
@@ -147,14 +219,21 @@ func updateSession(db *pgxpool.Pool) fiber.Handler {
 				dock = COALESCE($11, dock),
 				invoice_nos = COALESCE($12, invoice_nos),
 				warehouse_id = COALESCE($13, warehouse_id),
+				packing_list_available = COALESCE($14, packing_list_available),
+				arrival_attachment_id = COALESCE($15, arrival_attachment_id),
 				updated_at = now()
 			WHERE id=$1`,
 			id, body.SupplierName, body.ReceivingMode, body.TruckNo, body.DriverName, body.DriverPhone,
-			arrival, body.ExpectedBoxes, body.Notes, body.Plant, body.Dock, body.InvoiceNos, body.WarehouseID)
+			arrival, body.ExpectedBoxes, body.Notes, body.Plant, body.Dock, body.InvoiceNos, body.WarehouseID,
+			body.PackingListAvailable, body.ArrivalAttachmentID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		writeEvent(db, c.Context(), id, userID(c), "GRN_UPDATED", nil)
+		if strings.EqualFold(status, "draft") && (body.TruckNo != nil || body.SupplierName != nil) {
+			_, _ = db.Exec(c.Context(), `UPDATE grn_sessions SET status='receiving', arrival_at=COALESCE(arrival_at,now()), updated_at=now() WHERE id=$1 AND status='draft'`, id)
+			writeEvent(db, c, id, "STATUS_CHANGED", fiber.Map{"result": "receiving", "reason": "draft_activated"})
+		}
+		writeEvent(db, c, id, "GRN_UPDATED", nil)
 		shared.WriteAudit(db, c.Context(), userID(c), "grn.update", "grn", id, nil, body)
 		return shared.OK(c, fiber.Map{"id": id, "updated": true})
 	}
@@ -191,7 +270,7 @@ func advanceSession(db *pgxpool.Pool) fiber.Handler {
 		if _, err = db.Exec(c.Context(), `UPDATE grn_sessions SET status=$2, updated_at=now() WHERE id=$1`, id, next); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		writeEvent(db, c.Context(), id, userID(c), "STATUS_CHANGED", fiber.Map{
+		writeEvent(db, c, id, "STATUS_CHANGED", fiber.Map{
 			"result": next, "payload": fiber.Map{"from": cur, "to": next},
 		})
 		return shared.OK(c, fiber.Map{"id": id, "status": next})
@@ -273,10 +352,10 @@ func completeBoxReceiving(db *pgxpool.Pool) fiber.Handler {
 				var cno string
 				_ = rows.Scan(&cid, &cno)
 				missing = append(missing, cno)
-				writeException(db, c.Context(), id, userID(c), "missing_box", fiber.Map{
+				writeException(db, c, id, "missing_box", fiber.Map{
 					"box_no": cno, "expected_qty": 1, "scanned_qty": 0, "variance": -1,
 				})
-				writeEvent(db, c.Context(), id, userID(c), "BOX_MISSING", fiber.Map{
+				writeEvent(db, c, id, "BOX_MISSING", fiber.Map{
 					"box_no": cno, "result": "missing",
 				})
 			}
@@ -290,7 +369,7 @@ func completeBoxReceiving(db *pgxpool.Pool) fiber.Handler {
 			  AND status NOT IN ('closed','completed')`, id); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		writeEvent(db, c.Context(), id, userID(c), "BOX_RECONCILIATION_STARTED", fiber.Map{
+		writeEvent(db, c, id, "BOX_RECONCILIATION_STARTED", fiber.Map{
 			"payload": fiber.Map{"missing_boxes": missing},
 		})
 		return shared.OK(c, fiber.Map{"id": id, "status": "box_reconciliation", "missing_boxes": missing})
@@ -306,7 +385,7 @@ func listEvents(db *pgxpool.Pool) fiber.Handler {
 		rows, err := db.Query(c.Context(), `
 			SELECT e.id, e.event_type, COALESCE(e.invoice_no,''), COALESCE(e.box_no,''), COALESCE(e.part_no,''),
 			       e.quantity, COALESCE(e.result,''), COALESCE(e.reason,''), COALESCE(e.actor_id,0),
-			       COALESCE(u.username,''), e.created_at::text
+			       COALESCE(u.username,''), e.created_at::text, COALESCE(e.device,'')
 			FROM grn_events e
 			LEFT JOIN users u ON u.id = e.actor_id
 			WHERE e.grn_session_id=$1
@@ -319,15 +398,15 @@ func listEvents(db *pgxpool.Pool) fiber.Handler {
 		out := []fiber.Map{}
 		for rows.Next() {
 			var eid, actor int
-			var et, inv, box, part, result, reason, user, created string
+			var et, inv, box, part, result, reason, user, created, device string
 			var qty *float64
-			if err := rows.Scan(&eid, &et, &inv, &box, &part, &qty, &result, &reason, &actor, &user, &created); err != nil {
+			if err := rows.Scan(&eid, &et, &inv, &box, &part, &qty, &result, &reason, &actor, &user, &created, &device); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": eid, "event_type": et, "invoice_no": inv, "box_no": box, "part_no": part,
 				"quantity": qty, "result": result, "reason": reason, "actor_id": actor,
-				"actor_name": user, "created_at": created,
+				"actor_name": user, "created_at": created, "device": device,
 			})
 		}
 		return shared.OK(c, out)
@@ -342,8 +421,15 @@ func listExceptions(db *pgxpool.Pool) fiber.Handler {
 		}
 		rows, err := db.Query(c.Context(), `
 			SELECT id, exception_type, COALESCE(invoice_no,''), COALESCE(box_no,''), COALESCE(part_no,''),
-			       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text
+			       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text,
+			       COALESCE(device,'')
 			FROM grn_exceptions WHERE grn_session_id=$1 ORDER BY id DESC`, id)
+		if err != nil && strings.Contains(err.Error(), "device") {
+			rows, err = db.Query(c.Context(), `
+				SELECT id, exception_type, COALESCE(invoice_no,''), COALESCE(box_no,''), COALESCE(part_no,''),
+				       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text, ''
+				FROM grn_exceptions WHERE grn_session_id=$1 ORDER BY id DESC`, id)
+		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -351,15 +437,15 @@ func listExceptions(db *pgxpool.Pool) fiber.Handler {
 		out := []fiber.Map{}
 		for rows.Next() {
 			var eid int
-			var et, inv, box, part, st, res, created string
+			var et, inv, box, part, st, res, created, device string
 			var exp, scan, vari *float64
-			if err := rows.Scan(&eid, &et, &inv, &box, &part, &exp, &scan, &vari, &st, &res, &created); err != nil {
+			if err := rows.Scan(&eid, &et, &inv, &box, &part, &exp, &scan, &vari, &st, &res, &created, &device); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": eid, "exception_type": et, "invoice_no": inv, "box_no": box, "part_no": part,
 				"expected_qty": exp, "scanned_qty": scan, "variance": vari, "status": st,
-				"resolution": res, "created_at": created,
+				"resolution": res, "created_at": created, "device": device,
 			})
 		}
 		return shared.OK(c, out)
@@ -408,7 +494,7 @@ func addInvoice(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		writeEvent(db, c.Context(), id, userID(c), "INVOICE_ASSIGNED", fiber.Map{"invoice_no": body.InvoiceNo})
+		writeEvent(db, c, id, "INVOICE_ASSIGNED", fiber.Map{"invoice_no": body.InvoiceNo})
 		return shared.OK(c, fiber.Map{"id": invID, "invoice_no": body.InvoiceNo})
 	}
 }

@@ -91,15 +91,33 @@ func resolve(db *pgxpool.Pool) fiber.Handler {
 			current float64
 		)
 		err := db.QueryRow(c.Context(), `
-			SELECT pr.id, pr.warehouse, pr.stock_capacity,
-			       COALESCE((SELECT SUM(actual_qty) FROM bins b WHERE b.item_code=$1 AND b.warehouse=pr.warehouse),0)
+			SELECT pr.id, pr.warehouse, pr.stock_capacity
 			FROM putaway_rules pr
 			WHERE pr.item_code=$1 AND pr.active=true
-			ORDER BY pr.priority ASC LIMIT 1`, itemCode).Scan(&ruleID, &wh, &cap, &current)
+			ORDER BY pr.priority ASC LIMIT 1`, itemCode).Scan(&ruleID, &wh, &cap)
 		if err != nil {
 			return shared.OK(c, fiber.Map{
 				"found": false, "item_code": itemCode, "message": "no putaway rule for item",
 			})
+		}
+		var warehouseID int
+		_ = db.QueryRow(c.Context(), `SELECT id FROM warehouses WHERE UPPER(code)=UPPER($1)`, wh).Scan(&warehouseID)
+		rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
+		if rule != nil {
+			ruleID = rule.ID
+			wh = rule.Warehouse
+			cap = rule.StockCapacity
+			current = rule.CurrentQty
+		} else {
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(slb.actual_qty),0)
+				FROM stock_location_balances slb
+				JOIN warehouse_locations wl ON wl.id = slb.location_id
+				JOIN warehouses w ON w.id = slb.warehouse_id
+				WHERE UPPER(slb.item_code)=UPPER($1)
+				  AND wl.location_type IN ('pick_face','storage')
+				  AND (LOWER($2) IN ('','any','*','all') OR UPPER(w.code)=UPPER($2))`,
+				itemCode, wh).Scan(&current)
 		}
 
 		available := cap - current

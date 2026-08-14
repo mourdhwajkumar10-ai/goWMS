@@ -21,6 +21,11 @@ func scanLookup(db *pgxpool.Pool) fiber.Handler {
 		if code == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "code required")
 		}
+		packQty := 0.0
+		if item, qty, ok := shared.ParsePackedItemQR(code); ok {
+			code = item
+			packQty = qty
+		}
 		mode := strings.ToLower(strings.TrimSpace(c.Query("mode", "auto"))) // auto | item | location
 
 		if mode == "location" || mode == "auto" {
@@ -47,7 +52,7 @@ func scanLookup(db *pgxpool.Pool) fiber.Handler {
 						alloc += r.ActualQty
 					}
 				}
-				return shared.OK(c, fiber.Map{
+				out := fiber.Map{
 					"kind": "item", "code": code, "item": item, "rows": rows,
 					"summary": fiber.Map{
 						"allocatable_qty":   alloc,
@@ -57,7 +62,11 @@ func scanLookup(db *pgxpool.Pool) fiber.Handler {
 						"has_unallocatable": unalloc > 0,
 						"has_allocatable":   alloc > 0,
 					},
-				})
+				}
+				if packQty > 0 {
+					out["pack_qty"] = packQty
+				}
+				return shared.OK(c, out)
 			}
 			if mode == "item" {
 				return shared.Err(c, fiber.StatusNotFound, "item not found: "+code)

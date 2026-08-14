@@ -115,7 +115,7 @@ func seedInvoiceExpected(db *pgxpool.Pool) fiber.Handler {
 				VALUES ($1,$2) ON CONFLICT (grn_session_id, invoice_no) DO NOTHING`, sessionID, inv)
 		}
 
-		writeEvent(db, c.Context(), sessionID, userID(c), "INVOICE_EXPECTED_SEEDED", fiber.Map{
+		writeEvent(db, c, sessionID, "INVOICE_EXPECTED_SEEDED", fiber.Map{
 			"payload": fiber.Map{"created": created, "updated": updated, "mode": mode},
 		})
 		return shared.OK(c, fiber.Map{
@@ -224,7 +224,7 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 						qty_short = GREATEST(COALESCE(expected_qty,0)-COALESCE(scanned_qty,0),0)
 					WHERE id=$1`, lid)
 				ensureShortageException(db, c, sessionID, inv, box, part, exp, scan)
-				writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SHORT_RECORDED", fiber.Map{
+				writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
 					"invoice_no": inv, "box_no": box, "part_no": part, "quantity": exp - scan, "result": "shortage",
 				})
 				shortCount++
@@ -235,13 +235,13 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		_ = db.QueryRow(c.Context(), `
 			SELECT COUNT(*) FROM grn_exceptions WHERE grn_session_id=$1 AND status='open'`, sessionID).Scan(&openExc)
 
-		next := "item_verification_complete"
+		next := "putaway_pending"
 		if openExc > 0 {
 			next = "exception_pending"
 		}
 		_, _ = db.Exec(c.Context(), `
 			UPDATE grn_sessions SET status=$2, active_verify_carton_id=NULL, updated_at=now() WHERE id=$1`, sessionID, next)
-		writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_VERIFICATION_COMPLETE", fiber.Map{
+		writeEvent(db, c, sessionID, "ITEM_VERIFICATION_COMPLETE", fiber.Map{
 			"result": next, "payload": fiber.Map{"shortages": shortCount, "open_exceptions": openExc},
 		})
 		return shared.OK(c, fiber.Map{
@@ -259,7 +259,7 @@ func ensureShortageException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, inv,
 	if exists > 0 {
 		return
 	}
-	writeException(db, c.Context(), sessionID, userID(c), "shortage", fiber.Map{
+	writeException(db, c, sessionID, "shortage", fiber.Map{
 		"invoice_no": inv, "box_no": box, "part_no": part,
 		"expected_qty": exp, "scanned_qty": scan, "variance": scan - exp,
 	})
@@ -314,7 +314,7 @@ func finalizeGRN(db *pgxpool.Pool) fiber.Handler {
 		if err := doCloseSession(c, db, sessionID); err != nil {
 			return err
 		}
-		writeEvent(db, c.Context(), sessionID, userID(c), "GRN_COMPLETED", fiber.Map{
+		writeEvent(db, c, sessionID, "GRN_COMPLETED", fiber.Map{
 			"result": "completed", "payload": fiber.Map{"putaway": "deferred"},
 		})
 
@@ -437,5 +437,245 @@ func listAllFollowUps(db *pgxpool.Pool) fiber.Handler {
 			})
 		}
 		return shared.OK(c, out)
+	}
+}
+
+func autoSeedInvoiceExpected(c *fiber.Ctx, db *pgxpool.Pool, sessionID, poID int, invoiceNos string) {
+	if db == nil || sessionID < 1 {
+		return
+	}
+	type line struct {
+		InvoiceNo string
+		PartNo    string
+		Qty       float64
+	}
+	lines := []line{}
+	invList := []string{}
+	for _, p := range strings.Split(invoiceNos, ",") {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			invList = append(invList, p)
+		}
+	}
+	if len(invList) > 0 {
+		rows, err := db.Query(c.Context(), `
+			SELECT COALESCE(NULLIF(pi.name,''),'INV'), pii.item_code, COALESCE(pii.qty,0)
+			FROM purchase_invoice_items pii
+			JOIN purchase_invoices pi ON pi.id = pii.purchase_invoice_id
+			WHERE pi.name = ANY($1) OR COALESCE(pi.bill_no,'') = ANY($1)`, invList)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var ln line
+				if rows.Scan(&ln.InvoiceNo, &ln.PartNo, &ln.Qty) == nil && ln.PartNo != "" && ln.Qty > 0 {
+					lines = append(lines, ln)
+				}
+			}
+		}
+	}
+	if len(lines) == 0 && poID > 0 {
+		inv := "INV"
+		if len(invList) > 0 {
+			inv = invList[0]
+		}
+		rows, err := db.Query(c.Context(), `
+			SELECT item_code, GREATEST(COALESCE(qty,0)-COALESCE(received_qty,0),0)
+			FROM purchase_order_items WHERE purchase_order_id=$1`, poID)
+		if err == nil {
+			defer rows.Close()
+			for rows.Next() {
+				var ln line
+				ln.InvoiceNo = inv
+				if rows.Scan(&ln.PartNo, &ln.Qty) == nil && ln.PartNo != "" && ln.Qty > 0 {
+					lines = append(lines, ln)
+				}
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	payload := []struct {
+		InvoiceNo string  `json:"invoice_no"`
+		PartNo    string  `json:"part_no"`
+		Qty       float64 `json:"qty"`
+	}{}
+	for _, ln := range lines {
+		payload = append(payload, struct {
+			InvoiceNo string  `json:"invoice_no"`
+			PartNo    string  `json:"part_no"`
+			Qty       float64 `json:"qty"`
+		}{ln.InvoiceNo, ln.PartNo, ln.Qty})
+	}
+	seedInvoiceExpectedLines(c, db, sessionID, payload)
+}
+
+func seedInvoiceExpectedLines(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, lines []struct {
+	InvoiceNo string  `json:"invoice_no"`
+	PartNo    string  `json:"part_no"`
+	Qty       float64 `json:"qty"`
+}) {
+	var cartonID int
+	_ = db.QueryRow(c.Context(), `
+		SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no='CONSOLIDATED'`, sessionID).Scan(&cartonID)
+	if cartonID == 0 {
+		_ = db.QueryRow(c.Context(), `
+			INSERT INTO grn_cartons (grn_session_id, carton_no, status, is_expected)
+			VALUES ($1,'CONSOLIDATED','received',false) RETURNING id`, sessionID).Scan(&cartonID)
+	}
+	created := 0
+	for _, ln := range lines {
+		part := strings.TrimSpace(ln.PartNo)
+		inv := strings.TrimSpace(ln.InvoiceNo)
+		if inv == "" {
+			inv = "INV"
+		}
+		if part == "" || ln.Qty <= 0 || cartonID == 0 {
+			continue
+		}
+		_, _ = db.Exec(c.Context(), `
+			INSERT INTO grn_invoice_lines (grn_session_id, invoice_no, part_no, expected_qty)
+			VALUES ($1,$2,$3,$4)
+			ON CONFLICT (grn_session_id, invoice_no, part_no)
+			DO UPDATE SET expected_qty = grn_invoice_lines.expected_qty + EXCLUDED.expected_qty`,
+			sessionID, inv, part, ln.Qty)
+		var lineID int
+		err := db.QueryRow(c.Context(), `
+			SELECT id FROM grn_lines WHERE grn_session_id=$1 AND item_code=$2 AND COALESCE(invoice_no,'')=$3
+			ORDER BY id LIMIT 1`, sessionID, part, inv).Scan(&lineID)
+		if err != nil {
+			err = db.QueryRow(c.Context(), `
+				INSERT INTO grn_lines (grn_carton_id, grn_session_id, item_code, expected_qty, scanned_qty, status, invoice_no, verification_method)
+				VALUES ($1,$2,$3,$4,0,'pending',$5,'invoice_only') RETURNING id`,
+				cartonID, sessionID, part, ln.Qty, inv).Scan(&lineID)
+			if err == nil {
+				created++
+			}
+		}
+		_, _ = db.Exec(c.Context(), `
+			INSERT INTO grn_invoices (grn_session_id, invoice_no)
+			VALUES ($1,$2) ON CONFLICT (grn_session_id, invoice_no) DO NOTHING`, sessionID, inv)
+	}
+	if created > 0 {
+		writeEvent(db, c, sessionID, "INVOICE_EXPECTED_SEEDED", fiber.Map{
+			"payload": fiber.Map{"created": created, "source": "auto"},
+		})
+	}
+}
+
+func recordPutawayProgress(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode string, qty float64, target string, complete bool) {
+	var status, paStatus string
+	_ = db.QueryRow(c.Context(), `
+		SELECT status, COALESCE(putaway_status,'pending') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&status, &paStatus)
+	if status == "" {
+		return
+	}
+	if complete {
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_sessions SET putaway_status='completed', updated_at=now() WHERE id=$1`, sessionID)
+		writeEvent(db, c, sessionID, "PUTAWAY_COMPLETED", fiber.Map{
+			"part_no": itemCode, "quantity": qty, "result": "completed",
+			"payload": fiber.Map{"target_location": target},
+		})
+		return
+	}
+	if paStatus == "pending" || paStatus == "deferred" || status == "putaway_pending" || status == "item_verification_complete" {
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_sessions SET putaway_status='in_progress', status='putaway_in_progress', updated_at=now()
+			WHERE id=$1 AND status NOT IN ('closed','completed')`, sessionID)
+		writeEvent(db, c, sessionID, "PUTAWAY_STARTED", fiber.Map{
+			"part_no": itemCode, "quantity": qty, "result": "started",
+			"payload": fiber.Map{"target_location": target},
+		})
+		return
+	}
+	writeEvent(db, c, sessionID, "PUTAWAY_STARTED", fiber.Map{
+		"part_no": itemCode, "quantity": qty, "result": "in_progress",
+		"payload": fiber.Map{"target_location": target},
+	})
+}
+
+func completePutaway(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessionID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
+		}
+		recordPutawayProgress(c, db, sessionID, "", 0, "", true)
+		return shared.OK(c, fiber.Map{"id": sessionID, "putaway_status": "completed"})
+	}
+}
+
+func attachSupportingDoc(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
+		}
+		var body struct {
+			AttachmentID int `json:"attachment_id"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.AttachmentID < 1 {
+			return shared.Err(c, fiber.StatusBadRequest, "attachment_id required")
+		}
+		tag, err := db.Exec(c.Context(), `
+			UPDATE grn_sessions SET arrival_attachment_id=$2, updated_at=now() WHERE id=$1`, id, body.AttachmentID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		writeEvent(db, c, id, "TRUCK_CREATED", fiber.Map{
+			"result": "supporting_doc", "payload": fiber.Map{"attachment_id": body.AttachmentID},
+		})
+		return shared.OK(c, fiber.Map{"id": id, "arrival_attachment_id": body.AttachmentID})
+	}
+}
+
+func createOtherException(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessionID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
+		}
+		var body struct {
+			ExceptionType string  `json:"exception_type"`
+			InvoiceNo     string  `json:"invoice_no"`
+			BoxNo         string  `json:"box_no"`
+			PartNo        string  `json:"part_no"`
+			ExpectedQty   float64 `json:"expected_qty"`
+			ScannedQty    float64 `json:"scanned_qty"`
+			Notes         string  `json:"notes"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		et := strings.ToLower(strings.TrimSpace(body.ExceptionType))
+		if et == "" {
+			et = "other"
+		}
+		allowed := map[string]bool{
+			"shortage": true, "excess": true, "wrong_item": true, "duplicate_box": true,
+			"excess_box": true, "missing_box": true, "other": true,
+		}
+		if !allowed[et] {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid exception_type")
+		}
+		writeException(db, c, sessionID, et, fiber.Map{
+			"invoice_no": body.InvoiceNo, "box_no": body.BoxNo, "part_no": body.PartNo,
+			"expected_qty": body.ExpectedQty, "scanned_qty": body.ScannedQty,
+			"variance": body.ScannedQty - body.ExpectedQty,
+		})
+		if strings.TrimSpace(body.Notes) != "" {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE grn_exceptions SET resolution=$2 WHERE id = (
+					SELECT id FROM grn_exceptions WHERE grn_session_id=$1 ORDER BY id DESC LIMIT 1
+				)`, sessionID, body.Notes)
+		}
+		return shared.OK(c, fiber.Map{"ok": true, "exception_type": et})
 	}
 }

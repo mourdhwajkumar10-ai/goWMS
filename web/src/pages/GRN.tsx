@@ -5,6 +5,7 @@ import Comments from '../components/Comments'
 import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
+import { lookupItemName, rememberItemName, rememberItems } from '../utils/itemNameCache'
 
 export default function GRN() {
   const role = (getRole() || '').toLowerCase()
@@ -16,7 +17,7 @@ export default function GRN() {
   const [cartonNo, setCartonNo] = useState('')
   const [item, setItem] = useState('')
   const [exp, setExp] = useState('')
-  const [scan, setScan] = useState('')
+  const [scan, setScan] = useState('1')
   const [batch, setBatch] = useState('')
   const [serial, setSerial] = useState('')
   const [mfgDate, setMfgDate] = useState('')
@@ -44,14 +45,39 @@ export default function GRN() {
   const [receivingMode, setReceivingMode] = useState<'packing_list' | 'invoice_only'>('packing_list')
   const [truckNo, setTruckNo] = useState('')
   const [driverName, setDriverName] = useState('')
+  const [driverPhone, setDriverPhone] = useState('')
+  const [arrivalAt, setArrivalAt] = useState('')
   const [expectedBoxes, setExpectedBoxes] = useState('')
   const [invoiceNos, setInvoiceNos] = useState('')
+  const [packingListAvailable, setPackingListAvailable] = useState(true)
+  const [dashFilter, setDashFilter] = useState<'all' | 'in_progress' | 'verify' | 'exceptions' | 'followups' | 'completed'>('all')
+  const [otherExc, setOtherExc] = useState({ box_no: '', part_no: '', notes: '' })
+  const [auditCustom, setAuditCustom] = useState('')
   const [grnTab, setGrnTab] = useState<'overview' | 'boxes' | 'items' | 'exceptions' | 'audit' | 'activity'>('overview')
   const [boxSummary, setBoxSummary] = useState<any>(null)
   const [events, setEvents] = useState<any[]>([])
   const [exceptions, setExceptions] = useState<any[]>([])
   const [activeBox, setActiveBox] = useState<any>(null)
   const [verifyItemCode, setVerifyItemCode] = useState('')
+  const [scanConfirm, setScanConfirm] = useState<null | {
+    kind: 'verify' | 'carton'
+    raw: string
+    itemCode: string
+    qty: number
+    isCasePack: boolean
+    boxNo?: string
+    expected?: number
+    already?: number
+    remaining?: number
+    remainingAfter?: number
+    notOnBox?: boolean
+    overscan?: boolean
+    cartonExpected?: boolean | null
+    cartonStatus?: string
+    itemName?: string
+  }>(null)
+  const [scanConfirmBusy, setScanConfirmBusy] = useState(false)
+  const [rescanAfterConfirm, setRescanAfterConfirm] = useState(false)
   const [audits, setAudits] = useState<any[]>([])
   const [followUps, setFollowUps] = useState<any[]>([])
   const [podUploading, setPodUploading] = useState(false)
@@ -63,21 +89,26 @@ export default function GRN() {
   ])
   const [itemSummary, setItemSummary] = useState<any>(null)
   const STEPS = [
-    { key: 'receiving', label: 'Truck / GRN' },
+    { key: 'draft', label: 'Truck' },
+    { key: 'receiving', label: 'GRN' },
     { key: 'box_reconciliation', label: 'Box receiving' },
+    { key: 'pod', label: 'POD' },
     { key: 'item_verification', label: 'Item verify' },
     { key: 'exception_pending', label: 'Exceptions' },
+    { key: 'putaway_pending', label: 'Put-away' },
     { key: 'completed', label: 'Complete' },
   ]
 
-  const stepIndex = (status?: string) => {
+  const stepIndex = (status?: string, podId?: number) => {
     const s = (status || 'receiving').toLowerCase()
-    if (s === 'open' || s === 'draft' || s === 'receiving') return 0
-    if (s === 'box_reconciliation') return 1
-    if (s === 'item_verification') return 2
-    if (s === 'exception_pending' || s === 'item_verification_complete') return 3
-    if (s === 'closed' || s === 'completed' || s.includes('putaway')) return 4
-    return 0
+    if (s === 'draft') return 0
+    if (s === 'open' || s === 'receiving') return 1
+    if (s === 'box_reconciliation') return podId ? 3 : 2
+    if (s === 'item_verification') return 4
+    if (s === 'exception_pending') return 5
+    if (s === 'item_verification_complete' || s === 'putaway_pending' || s === 'putaway_in_progress') return 6
+    if (s === 'closed' || s === 'completed') return 7
+    return 1
   }
 
   const openPOStatuses = new Set([
@@ -116,9 +147,12 @@ export default function GRN() {
       purchase_receipt_no: fullPO.name || po.name,
       supplier_name: fullPO.supplier_name || po.supplier_name,
       purchase_order_id: po.id,
-      receiving_mode: receivingMode,
+      receiving_mode: packingListAvailable ? 'packing_list' : 'invoice_only',
+      packing_list_available: packingListAvailable,
       truck_no: truckNo || undefined,
       driver_name: driverName || undefined,
+      driver_phone: driverPhone || undefined,
+      arrival_at: arrivalAt || undefined,
       expected_boxes: expectedBoxes ? +expectedBoxes : undefined,
       invoice_nos: invoiceNos || undefined,
     })
@@ -134,17 +168,21 @@ export default function GRN() {
     }
   }
 
-  const createBlankSession = async () => {
+  const createBlankSession = async (asDraft = false) => {
     setLoading(true)
     const r = await api.grnCreate({
       warehouse_id: warehouseId ? +warehouseId : undefined,
       purchase_receipt_no: '',
       supplier_name: '',
-      receiving_mode: receivingMode,
+      receiving_mode: packingListAvailable ? 'packing_list' : 'invoice_only',
+      packing_list_available: packingListAvailable,
       truck_no: truckNo || undefined,
       driver_name: driverName || undefined,
+      driver_phone: driverPhone || undefined,
+      arrival_at: arrivalAt || undefined,
       expected_boxes: expectedBoxes ? +expectedBoxes : undefined,
       invoice_nos: invoiceNos || undefined,
+      as_draft: asDraft,
     })
     setLoading(false)
     if (r.ok) {
@@ -200,6 +238,9 @@ export default function GRN() {
     if (isum.ok) setItemSummary(isum.data)
   }
 
+  useEffect(() => { rememberItems(selectedPO?.items) }, [selectedPO])
+  useEffect(() => { rememberItems(activeBox?.lines) }, [activeBox])
+
   const openBoxForVerify = async () => {
     if (!session || !cartonNo.trim()) return
     const r = await api.grnOpenBox(session.id, { carton_no: cartonNo.trim() })
@@ -218,29 +259,200 @@ export default function GRN() {
     }
   }
 
-  const verifyScan = async () => {
-    if (!session || !verifyItemCode.trim()) return
+  const parsePackedQR = (raw: string) => {
+    const s = (raw || '').trim().replace(/[\s\n\r\t]/g, '')
+    const us = s.lastIndexOf('_')
+    if (us <= 0) return null
+    const amount = s.slice(us + 1).replace(/,/g, '')
+    if (!amount || Number.isNaN(+amount)) return null
+    const left = s.slice(0, us)
+    const hy = left.lastIndexOf('-')
+    if (hy <= 0) return null
+    const item = left.slice(0, hy)
+    const qty = +left.slice(hy + 1)
+    if (!item || !(qty > 0)) return null
+    return { item, qty }
+  }
+
+  const applyPackedScan = (raw: string, target: 'carton' | 'item' | 'verify') => {
+    const packed = parsePackedQR(raw)
+    if (target === 'verify' && packed) {
+      setVerifyItemCode(packed.item)
+      setScan(String(packed.qty))
+      return packed
+    }
+    if (target === 'item' && packed) {
+      setItem(packed.item)
+      setScan(String(packed.qty))
+      if (!exp) setExp(String(packed.qty))
+      return packed
+    }
+    if (target === 'carton') setCartonNo(raw)
+    else if (target === 'verify') setVerifyItemCode(raw)
+    else setItem(raw)
+    return packed
+  }
+
+  const findBoxLine = (itemCode: string) => {
+    const want = (itemCode || '').trim().toUpperCase()
+    return (activeBox?.lines || []).find((l: any) => String(l.item_code || '').toUpperCase() === want)
+  }
+
+  const resolveItemName = (itemCode: string, line?: any) => {
+    const fromLine = (line?.item_name || line?.name || '').trim()
+    if (fromLine) {
+      rememberItemName(itemCode, fromLine)
+      return fromLine
+    }
+    const fromPO = (selectedPO?.items || []).find((p: any) =>
+      String(p.item_code || '').toUpperCase() === itemCode.trim().toUpperCase()
+    )
+    const poName = (fromPO?.item_name || fromPO?.name || '').trim()
+    if (poName) {
+      rememberItemName(itemCode, poName)
+      return poName
+    }
+    return lookupItemName(itemCode)
+  }
+
+  const fillItemNameInBackground = async (itemCode: string) => {
+    if (lookupItemName(itemCode)) return
+    const r = await api.itemCheck(itemCode)
+    let name = r.ok && r.data?.exists ? (r.data.name || '') : ''
+    if (!name) {
+      const list = await api.itemList(itemCode)
+      const hit = (list.ok ? list.data : [])?.find((i: any) =>
+        String(i.code || '').toUpperCase() === itemCode.trim().toUpperCase()
+      )
+      name = hit?.name || ''
+    }
+    if (!name) return
+    rememberItemName(itemCode, name)
+    setScanConfirm(prev => {
+      if (!prev || prev.kind !== 'verify') return prev
+      if (prev.itemCode.toUpperCase() !== itemCode.trim().toUpperCase()) return prev
+      if (prev.itemName) return prev
+      return { ...prev, itemName: name }
+    })
+  }
+
+  const requestVerifyConfirm = (rawOverride?: string, qtyOverride?: number) => {
+    const raw = (rawOverride ?? verifyItemCode).trim()
+    if (!session || !raw) return
+    const packed = parsePackedQR(raw)
+    const itemCode = packed?.item || raw
+    const qty = packed?.qty || qtyOverride || +(scan || 1) || 1
+    const line = findBoxLine(itemCode)
+    const expected = line ? +line.expected_qty : undefined
+    const already = line ? +(line.scanned_qty || 0) : undefined
+    const remaining = line != null
+      ? +(line.remaining ?? ((line.expected_qty || 0) - (line.scanned_qty || 0)))
+      : undefined
+    const remainingAfter = remaining != null ? remaining - qty : undefined
+    const hasList = (activeBox?.lines?.length ?? 0) > 0
+    const itemName = resolveItemName(itemCode, line)
+    applyPackedScan(raw, 'verify')
+    if (!packed) {
+      setVerifyItemCode(itemCode)
+      setScan(String(qty))
+    }
+    setScanConfirm({
+      kind: 'verify',
+      raw,
+      itemCode,
+      qty,
+      isCasePack: !!packed && packed.qty > 1,
+      boxNo: activeBox?.carton_no,
+      expected,
+      already,
+      remaining,
+      remainingAfter,
+      notOnBox: hasList && !line,
+      overscan: remaining != null && remainingAfter != null && remainingAfter < 0,
+      itemName,
+    })
+    if (!itemName) void fillItemNameInBackground(itemCode)
+  }
+
+  const requestCartonConfirm = (rawOverride?: string) => {
+    const raw = (rawOverride ?? cartonNo).trim()
+    if (!raw || !session) return
+    setCartonNo(raw)
+    const box = (boxSummary?.boxes || []).find((b: any) =>
+      String(b.carton_no || '').toUpperCase() === raw.toUpperCase()
+    )
+    setScanConfirm({
+      kind: 'carton',
+      raw,
+      itemCode: raw,
+      qty: 1,
+      isCasePack: false,
+      boxNo: raw,
+      cartonExpected: box ? !!box.is_expected : null,
+      cartonStatus: box?.status,
+    })
+  }
+
+  const dismissScanConfirm = (clearFields = true) => {
+    setScanConfirm(null)
+    setScanConfirmBusy(false)
+    setRescanAfterConfirm(false)
+    if (clearFields) {
+      if (scanConfirm?.kind === 'verify') {
+        setVerifyItemCode('')
+        setScan('1')
+      }
+    }
+  }
+
+  const commitScanConfirm = async () => {
+    if (!scanConfirm || scanConfirmBusy) return
+    if (scanConfirm.kind === 'carton') {
+      setScanConfirmBusy(true)
+      const ok = await addCarton()
+      setScanConfirmBusy(false)
+      if (!ok) return
+      setScanConfirm(null)
+      const reopen = rescanAfterConfirm
+      setRescanAfterConfirm(false)
+      if (reopen) setTimeout(() => { setScanTarget('carton'); setShowScanner(true) }, 150)
+      return
+    }
+    if (!session) return
+    setScanConfirmBusy(true)
+    const packed = parsePackedQR(scanConfirm.raw)
     const r = await api.grnVerifyItem(session.id, {
-      item_code: verifyItemCode.trim(),
-      qty: +(scan || 1) || 1,
+      item_code: packed ? scanConfirm.raw : scanConfirm.itemCode,
+      qty: scanConfirm.qty,
       carton_id: activeBox?.id,
     })
+    setScanConfirmBusy(false)
     if (!r.ok) {
       notify({ type: 'error', title: 'Verify failed', message: r.error || '' })
       return
     }
+    setScanConfirm(null)
     if (r.data.wrong_item) {
       notify({ type: 'warning', title: 'Wrong item', message: r.data.message })
     } else if (r.data.box_auto_closed) {
       notify({ type: 'success', title: 'Box auto-closed', message: r.data.box_message })
       setActiveBox(null)
     } else {
-      notify({ type: 'success', title: 'Item scanned', message: `${r.data.item_code} → ${r.data.scanned_qty}/${r.data.expected_qty}` })
-      if (r.data.lines) setActiveBox((prev: any) => prev ? { ...prev, lines: r.data.lines } : prev)
+      const packNote = (r.data.pack_qty || packed?.qty) > 1
+        ? ` (case pack ${r.data.pack_qty || packed?.qty})`
+        : ''
+      notify({ type: 'success', title: 'Item scanned', message: `${r.data.item_code} → ${r.data.scanned_qty}/${r.data.expected_qty}${packNote}` })
+      if (r.data.lines) {
+        rememberItems(r.data.lines)
+        setActiveBox((prev: any) => prev ? { ...prev, lines: r.data.lines } : prev)
+      }
     }
     setVerifyItemCode('')
     setScan('1')
     reloadSession(session.id)
+    const reopen = rescanAfterConfirm && !r.data.box_auto_closed
+    setRescanAfterConfirm(false)
+    if (reopen) setTimeout(() => { setScanTarget('verify'); setShowScanner(true) }, 150)
   }
 
   const uploadPOD = async (file: File | null) => {
@@ -385,21 +597,23 @@ export default function GRN() {
   }
 
   const addCarton = async () => {
-    if (!cartonNo) return
-    const r = await api.grnScanCarton({ grn_session_id: session.id, carton_no: cartonNo })
+    const no = (scanConfirm?.kind === 'carton' ? scanConfirm.raw : cartonNo).trim()
+    if (!no || !session) return false
+    const r = await api.grnScanCarton({ grn_session_id: session.id, carton_no: no })
     if (r.ok) {
       const msgText = r.data?.message || r.data?.status
       notify({
         type: r.data?.excess || r.data?.duplicate ? 'warning' : 'success',
         title: r.data?.duplicate ? 'Duplicate box' : r.data?.excess ? 'Excess box' : 'Box received',
-        message: `${cartonNo} · ${msgText}`,
+        message: `${no} · ${msgText}`,
       })
-      setMsg(`Carton ${cartonNo} scanned`)
+      setMsg(`Carton ${no} scanned`)
       setCartonNo('')
       reloadSession(session.id)
-    } else {
-      notify({ type: 'error', title: 'Carton scan failed', message: r.error || '' })
+      return true
     }
+    notify({ type: 'error', title: 'Carton scan failed', message: r.error || '' })
+    return false
   }
 
   const finishBoxReceiving = async () => {
@@ -488,6 +702,7 @@ export default function GRN() {
       control_mode: cmControl,
     })
     if (r.ok) {
+      rememberItemName(completeMaster.code, cmName)
       notify({ type: 'success', title: 'Item master saved', message: completeMaster.code })
       setCompleteMaster(null)
     } else {
@@ -500,6 +715,7 @@ export default function GRN() {
     const r = await api.grnPutaway({
       item_code: putawayItem, source_warehouse: putawaySource,
       target_location: putawayTarget, quantity: +putawayQty,
+      grn_session_id: session?.id,
     })
     if (r.ok) {
       setMsg(`Putaway complete: ${r.data.quantity} x ${putawayItem} → ${r.data.target_location}`)
@@ -509,9 +725,19 @@ export default function GRN() {
 
   const handleScan = (code: string) => {
     setShowScanner(false)
-    if (scanTarget === 'carton') setCartonNo(code)
-    else if (scanTarget === 'verify') setVerifyItemCode(code)
-    else setItem(code)
+    const raw = (code || '').trim()
+    if (!raw) return
+    if (scanTarget === 'verify' && session) {
+      setRescanAfterConfirm(true)
+      requestVerifyConfirm(raw)
+      return
+    }
+    if (scanTarget === 'carton' && session) {
+      setRescanAfterConfirm(true)
+      requestCartonConfirm(raw)
+      return
+    }
+    applyPackedScan(code, scanTarget)
   }
 
   const fillFromPOItem = (poItem: any) => {
@@ -581,6 +807,122 @@ export default function GRN() {
         </div>
       )}
 
+      {scanConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }}>
+          <div className="erpnext-card max-w-md w-full mx-4 p-6 space-y-4" style={{ background: 'var(--panel)' }}>
+            <h2 className="text-xl font-semibold">
+              {scanConfirm.kind === 'carton' ? 'Confirm box scan' : 'Confirm item scan'}
+            </h2>
+            <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
+              Check this scan before it is recorded. Cancel leaves it out of the GRN.
+            </p>
+            {scanConfirm.kind === 'verify' ? (
+              <div className="rounded-lg p-3 space-y-2 text-sm" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                {scanConfirm.boxNo && (
+                  <div className="flex justify-between gap-3">
+                    <span style={{ color: 'var(--text-dim)' }}>Box</span>
+                    <span className="font-medium">{scanConfirm.boxNo}</span>
+                  </div>
+                )}
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: 'var(--text-dim)' }}>Item</span>
+                  <span className="font-medium text-right">{scanConfirm.itemCode}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: 'var(--text-dim)' }}>Name</span>
+                  <span className="font-medium text-right">
+                    {scanConfirm.itemName || '—'}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: 'var(--text-dim)' }}>QR</span>
+                  <span className="text-right">
+                    {scanConfirm.isCasePack ? 'Case pack' : 'Item'} · qty {scanConfirm.qty}
+                  </span>
+                </div>
+                {scanConfirm.expected != null && (
+                  <>
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: 'var(--text-dim)' }}>Expected in box</span>
+                      <span>{scanConfirm.expected}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: 'var(--text-dim)' }}>Already scanned</span>
+                      <span>{scanConfirm.already ?? 0}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: 'var(--text-dim)' }}>After this scan</span>
+                      <span className="font-medium">
+                        {(scanConfirm.already ?? 0) + scanConfirm.qty} / {scanConfirm.expected}
+                        {scanConfirm.remainingAfter != null && scanConfirm.remainingAfter > 0
+                          ? ` · ${scanConfirm.remainingAfter} left`
+                          : ''}
+                      </span>
+                    </div>
+                  </>
+                )}
+                {scanConfirm.raw !== scanConfirm.itemCode && (
+                  <div className="text-xs break-all pt-1" style={{ color: 'var(--text-dim)' }}>
+                    QR: {scanConfirm.raw}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="rounded-lg p-3 space-y-2 text-sm" style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}>
+                <div className="flex justify-between gap-3">
+                  <span style={{ color: 'var(--text-dim)' }}>Box / carton</span>
+                  <span className="font-medium">{scanConfirm.raw}</span>
+                </div>
+                {scanConfirm.cartonExpected != null && (
+                  <div className="flex justify-between gap-3">
+                    <span style={{ color: 'var(--text-dim)' }}>On packing list</span>
+                    <span>{scanConfirm.cartonExpected ? 'Yes' : 'No — excess'}</span>
+                  </div>
+                )}
+                {scanConfirm.cartonStatus && (
+                  <div className="flex justify-between gap-3">
+                    <span style={{ color: 'var(--text-dim)' }}>Current status</span>
+                    <span>{scanConfirm.cartonStatus}</span>
+                  </div>
+                )}
+              </div>
+            )}
+            {scanConfirm.notOnBox && (
+              <div className="text-sm px-3 py-2 rounded-lg" style={{ background: 'var(--yellow-50)', color: 'var(--yellow-700)' }}>
+                This item is not on the packing list for this box.
+              </div>
+            )}
+            {scanConfirm.overscan && (
+              <div className="text-sm px-3 py-2 rounded-lg" style={{ background: 'var(--yellow-50)', color: 'var(--yellow-700)' }}>
+                Qty exceeds remaining expected ({scanConfirm.remaining} left). Confirm only if this is correct.
+              </div>
+            )}
+            {scanConfirm.kind === 'carton' && scanConfirm.cartonExpected === false && (
+              <div className="text-sm px-3 py-2 rounded-lg" style={{ background: 'var(--yellow-50)', color: 'var(--yellow-700)' }}>
+                This box is not on the packing list (excess).
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                className="erpnext-btn-primary flex-1"
+                autoFocus
+                disabled={scanConfirmBusy}
+                onClick={() => { void commitScanConfirm() }}
+              >
+                {scanConfirmBusy ? 'Recording…' : 'Confirm & record'}
+              </button>
+              <button
+                className="erpnext-btn-secondary"
+                disabled={scanConfirmBusy}
+                onClick={() => dismissScanConfirm(true)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {completeMaster && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.45)' }}>
           <div className="erpnext-card max-w-md w-full mx-4 p-6 space-y-4" style={{ background: 'var(--panel)' }}>
@@ -632,9 +974,12 @@ export default function GRN() {
             </select>
           </div>
           <button onClick={() => { setScanTarget('carton'); setShowScanner(true) }} className="erpnext-btn-secondary">
-            📷 Scan
+            Scan
           </button>
-          <button onClick={createBlankSession} disabled={loading} className="erpnext-btn-secondary">
+          <button onClick={() => createBlankSession(true)} disabled={loading} className="erpnext-btn-secondary">
+            Save draft
+          </button>
+          <button onClick={() => createBlankSession(false)} disabled={loading} className="erpnext-btn-secondary">
             + Blank Session
           </button>
         </div>
@@ -645,8 +990,24 @@ export default function GRN() {
           <div className="text-sm font-medium mb-3">Truck arrival / receiving options</div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div>
+              <label className="erpnext-label">Packing list available</label>
+              <select className="erpnext-input" value={packingListAvailable ? 'yes' : 'no'}
+                onChange={e => {
+                  const yes = e.target.value === 'yes'
+                  setPackingListAvailable(yes)
+                  setReceivingMode(yes ? 'packing_list' : 'invoice_only')
+                }}>
+                <option value="yes">Yes — packing list</option>
+                <option value="no">No — invoice only</option>
+              </select>
+            </div>
+            <div>
               <label className="erpnext-label">Mode</label>
-              <select className="erpnext-input" value={receivingMode} onChange={e => setReceivingMode(e.target.value as any)}>
+              <select className="erpnext-input" value={receivingMode} onChange={e => {
+                const m = e.target.value as 'packing_list' | 'invoice_only'
+                setReceivingMode(m)
+                setPackingListAvailable(m === 'packing_list')
+              }}>
                 <option value="packing_list">Packing list</option>
                 <option value="invoice_only">Invoice only</option>
               </select>
@@ -658,6 +1019,14 @@ export default function GRN() {
             <div>
               <label className="erpnext-label">Driver</label>
               <input className="erpnext-input" value={driverName} onChange={e => setDriverName(e.target.value)} />
+            </div>
+            <div>
+              <label className="erpnext-label">Driver phone</label>
+              <input className="erpnext-input" value={driverPhone} onChange={e => setDriverPhone(e.target.value)} />
+            </div>
+            <div>
+              <label className="erpnext-label">Arrival</label>
+              <input className="erpnext-input" type="datetime-local" value={arrivalAt} onChange={e => setArrivalAt(e.target.value)} />
             </div>
             <div>
               <label className="erpnext-label">Expected boxes</label>
@@ -730,6 +1099,19 @@ export default function GRN() {
             <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
               <h2 className="text-lg font-semibold">Existing GRN Sessions</h2>
               <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>Continue or review previous receiving sessions</p>
+              <div className="flex gap-2 flex-wrap mt-3">
+                {([
+                  ['all', 'All'],
+                  ['in_progress', 'In progress'],
+                  ['verify', 'Awaiting verify'],
+                  ['exceptions', 'Exceptions'],
+                  ['followups', 'Follow-ups'],
+                  ['completed', 'Completed'],
+                ] as const).map(([k, label]) => (
+                  <button key={k} className={`erpnext-btn-secondary text-xs ${dashFilter === k ? 'erpnext-btn-primary' : ''}`}
+                    onClick={() => setDashFilter(k)}>{label}</button>
+                ))}
+              </div>
             </div>
             <div className="p-4">
               <table className="erpnext-table">
@@ -744,7 +1126,15 @@ export default function GRN() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sessions.map((s: any) => (
+                  {sessions.filter((s: any) => {
+                    const st = (s.status || '').toLowerCase()
+                    if (dashFilter === 'all') return true
+                    if (dashFilter === 'followups') return !!s.is_followup
+                    if (dashFilter === 'completed') return st === 'completed' || st === 'closed'
+                    if (dashFilter === 'exceptions') return st === 'exception_pending'
+                    if (dashFilter === 'verify') return st === 'item_verification' || st === 'item_verification_complete'
+                    return !['completed', 'closed', 'exception_pending', 'item_verification', 'item_verification_complete'].includes(st) && !s.is_followup
+                  }).map((s: any) => (
                     <tr key={s.id} className="hover:opacity-90">
                       <td className="font-medium" style={{ color: 'var(--accent)' }}>{s.session_no}</td>
                       <td>{s.supplier || '-'}</td>
@@ -800,6 +1190,9 @@ export default function GRN() {
                     <button onClick={doPutaway} className="erpnext-btn-primary w-full">Putaway</button>
                   </div>
                 </div>
+                <p className="text-xs mt-3" style={{ color: 'var(--text-dim)' }}>
+                  If the bin does not fit, change Target Location here, or open Putaway and use Bin too big / too small to split leftover qty.
+                </p>
               </div>
             )}
           </div>
@@ -832,7 +1225,7 @@ export default function GRN() {
             {/* Progress stepper */}
             <div className="px-6 py-3 border-b flex flex-wrap gap-2 items-center" style={{ borderColor: 'var(--border)' }}>
               {STEPS.map((st, i) => {
-                const cur = stepIndex(session.status)
+                const cur = stepIndex(session.status, session.pod_attachment_id)
                 const done = i < cur
                 const active = i === cur
                 return (
@@ -890,6 +1283,15 @@ export default function GRN() {
                       <button className="erpnext-btn-secondary text-xs" onClick={startAudit}>Start physical audit</button>
                       <button className="erpnext-btn-secondary text-xs" onClick={createFollowUp}>Create follow-up GRN</button>
                       <button className="erpnext-btn-primary text-xs" onClick={() => finalizeSession(false)}>Finalize</button>
+                      <button className="erpnext-btn-secondary text-xs" onClick={async () => {
+                        const r = await api.grnCompletePutaway(session.id)
+                        if (r.ok) {
+                          notify({ type: 'success', title: 'Put-away completed', message: session.session_no })
+                          reloadSession(session.id)
+                        } else {
+                          notify({ type: 'error', title: 'Put-away complete failed', message: r.error || '' })
+                        }
+                      }}>Complete put-away</button>
                     </>
                   )}
                   <label className="erpnext-btn-secondary text-xs" style={{ cursor: 'pointer' }}>
@@ -905,6 +1307,36 @@ export default function GRN() {
                   {session.pod_attachment_id ? (
                     <a className="text-xs" style={{ color: 'var(--accent)' }} href={api.attachmentUrl(session.pod_attachment_id)} target="_blank" rel="noreferrer">
                       View POD #{session.pod_attachment_id}
+                    </a>
+                  ) : null}
+                  <label className="erpnext-btn-secondary text-xs" style={{ cursor: 'pointer' }}>
+                    {session.arrival_attachment_id ? 'Replace arrival doc' : 'Arrival document'}
+                    <input
+                      type="file"
+                      accept="image/*,.pdf"
+                      style={{ display: 'none' }}
+                      onChange={async e => {
+                        const file = e.target.files?.[0]
+                        e.target.value = ''
+                        if (!file || !session) return
+                        const up = await api.attachmentUpload('grn', session.id, file)
+                        if (!up.ok) {
+                          notify({ type: 'error', title: 'Upload failed', message: up.error || '' })
+                          return
+                        }
+                        const r = await api.grnSupportingDoc(session.id, up.data.id)
+                        if (r.ok) {
+                          notify({ type: 'success', title: 'Arrival document attached', message: file.name })
+                          reloadSession(session.id)
+                        } else {
+                          notify({ type: 'error', title: 'Attach failed', message: r.error || '' })
+                        }
+                      }}
+                    />
+                  </label>
+                  {session.arrival_attachment_id ? (
+                    <a className="text-xs" style={{ color: 'var(--accent)' }} href={api.attachmentUrl(session.arrival_attachment_id)} target="_blank" rel="noreferrer">
+                      View arrival doc
                     </a>
                   ) : null}
                 </div>
@@ -977,6 +1409,39 @@ export default function GRN() {
                     )}
                   </tbody>
                 </table>
+                {isSupervisor && (
+                  <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                    <div>
+                      <label className="erpnext-label">Other discrepancy</label>
+                      <input className="erpnext-input" placeholder="Box" value={otherExc.box_no}
+                        onChange={e => setOtherExc(p => ({ ...p, box_no: e.target.value }))} />
+                    </div>
+                    <div>
+                      <label className="erpnext-label">Part</label>
+                      <input className="erpnext-input" placeholder="Part no" value={otherExc.part_no}
+                        onChange={e => setOtherExc(p => ({ ...p, part_no: e.target.value }))} />
+                    </div>
+                    <div className="md:col-span-2">
+                      <label className="erpnext-label">Notes</label>
+                      <div className="flex gap-2">
+                        <input className="erpnext-input flex-1" placeholder="Describe the discrepancy"
+                          value={otherExc.notes} onChange={e => setOtherExc(p => ({ ...p, notes: e.target.value }))} />
+                        <button className="erpnext-btn-secondary text-xs" onClick={async () => {
+                          const r = await api.grnCreateException(session.id, {
+                            exception_type: 'other', box_no: otherExc.box_no, part_no: otherExc.part_no, notes: otherExc.notes,
+                          })
+                          if (r.ok) {
+                            notify({ type: 'success', title: 'Exception logged', message: 'other' })
+                            setOtherExc({ box_no: '', part_no: '', notes: '' })
+                            refreshWorkspace(session.id)
+                          } else {
+                            notify({ type: 'error', title: 'Could not log', message: r.error || '' })
+                          }
+                        }}>Log other</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -985,12 +1450,15 @@ export default function GRN() {
                 <div className="flex gap-2 items-end flex-wrap">
                   <div>
                     <label className="erpnext-label">Sample size</label>
-                    <select className="erpnext-input" value={auditSample} onChange={e => setAuditSample(+e.target.value)}>
-                      <option value={5}>5</option>
-                      <option value={10}>10</option>
-                      <option value={20}>20</option>
-                      <option value={50}>Custom 50</option>
-                    </select>
+                    <div className="flex gap-2">
+                      {[5, 10, 20].map(n => (
+                        <button key={n} className={`erpnext-btn-secondary text-xs ${auditSample === n ? 'erpnext-btn-primary' : ''}`}
+                          onClick={() => { setAuditSample(n); setAuditCustom('') }}>{n}</button>
+                      ))}
+                      <input className="erpnext-input" style={{ width: 80 }} type="number" min={1} max={100}
+                        placeholder="Custom" value={auditCustom}
+                        onChange={e => { setAuditCustom(e.target.value); if (+e.target.value > 0) setAuditSample(+e.target.value) }} />
+                    </div>
                   </div>
                   <button className="erpnext-btn-primary text-xs" onClick={startAudit}>Start audit</button>
                 </div>
@@ -1062,7 +1530,7 @@ export default function GRN() {
                 <table className="erpnext-table text-sm">
                   <thead>
                     <tr style={{ background: 'var(--panel-2)' }}>
-                      <th>Time</th><th>Event</th><th>Box</th><th>Part</th><th>Result</th><th>User</th>
+                      <th>Time</th><th>Event</th><th>Box</th><th>Part</th><th>Result</th><th>User</th><th>Device</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1074,10 +1542,11 @@ export default function GRN() {
                         <td>{ev.part_no || '—'}</td>
                         <td>{ev.result || '—'}</td>
                         <td>{ev.actor_name || '—'}</td>
+                        <td className="text-xs" style={{ color: 'var(--text-dim)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis' }}>{ev.device || '—'}</td>
                       </tr>
                     ))}
                     {events.length === 0 && (
-                      <tr><td colSpan={6} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No events yet</td></tr>
+                      <tr><td colSpan={7} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No events yet</td></tr>
                     )}
                   </tbody>
                 </table>
@@ -1191,10 +1660,10 @@ export default function GRN() {
                     className="erpnext-input flex-1" 
                     value={cartonNo} 
                     onChange={e => setCartonNo(e.target.value)} 
-                    onKeyDown={e => e.key === 'Enter' && addCarton()} 
+                    onKeyDown={e => e.key === 'Enter' && requestCartonConfirm()} 
                     placeholder="Enter carton number..." 
                   />
-                  <button onClick={addCarton} className="erpnext-btn-primary">Receive Box</button>
+                  <button onClick={() => requestCartonConfirm()} className="erpnext-btn-primary">Receive Box</button>
                   <button onClick={finishBoxReceiving} className="erpnext-btn-secondary">Finish boxes</button>
                 </div>
                 {(boxSummary?.boxes?.length ?? 0) > 0 && (
@@ -1294,6 +1763,7 @@ export default function GRN() {
                         <thead>
                           <tr>
                             <th>Item</th>
+                            <th>Name</th>
                             <th className="text-right">Expected</th>
                             <th className="text-right">Scanned</th>
                             <th className="text-right">Left</th>
@@ -1304,6 +1774,7 @@ export default function GRN() {
                           {activeBox.lines.map((l: any) => (
                             <tr key={l.id}>
                               <td className="font-medium">{l.item_code}</td>
+                              <td>{l.item_name || lookupItemName(l.item_code) || '—'}</td>
                               <td className="text-right">{l.expected_qty}</td>
                               <td className="text-right">{l.scanned_qty}</td>
                               <td className="text-right">{l.remaining ?? (l.expected_qty - l.scanned_qty)}</td>
@@ -1320,9 +1791,27 @@ export default function GRN() {
                           <div className="flex-1">
                             <ItemAutocomplete
                               value={verifyItemCode}
-                              onSelect={(found) => setVerifyItemCode(found.code)}
-                              onChangeText={setVerifyItemCode}
-                              placeholder="Scan / type item code"
+                              onSelect={(found) => {
+                                rememberItemName(found.code, found.name)
+                                setVerifyItemCode(found.code)
+                                setScan('1')
+                              }}
+                              onChangeText={(text) => {
+                                const packed = parsePackedQR(text)
+                                if (packed) {
+                                  setVerifyItemCode(text)
+                                  setScan(String(packed.qty))
+                                } else {
+                                  setVerifyItemCode(text)
+                                }
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') {
+                                  e.preventDefault()
+                                  requestVerifyConfirm(e.currentTarget.value)
+                                }
+                              }}
+                              placeholder="Scan case QR or item code"
                               className="erpnext-input"
                             />
                           </div>
@@ -1337,9 +1826,9 @@ export default function GRN() {
                             type="number"
                             value={scan}
                             onChange={e => setScan(e.target.value)}
-                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); verifyScan() } }}
+                            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); requestVerifyConfirm() } }}
                           />
-                          <button onClick={verifyScan} className="erpnext-btn-primary">Verify</button>
+                          <button onClick={() => requestVerifyConfirm()} className="erpnext-btn-primary">Verify</button>
                         </div>
                       </div>
                     </div>
@@ -1347,6 +1836,7 @@ export default function GRN() {
                 )}
 
                 {/* Manual / invoice-only line entry */}
+                {(session.receiving_mode === 'invoice_only') && (
                 <div>
                   <h3 className="text-sm font-semibold mb-3">Manual line scan (invoice-only / ad-hoc)</h3>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1356,7 +1846,10 @@ export default function GRN() {
                         <div className="flex-1">
                           <ItemAutocomplete
                             value={item}
-                            onSelect={(found) => setItem(found.code)}
+                            onSelect={(found) => {
+                              rememberItemName(found.code, found.name)
+                              setItem(found.code)
+                            }}
                             onChangeText={setItem}
                             placeholder="ITEM-001"
                             className="erpnext-input"
@@ -1405,6 +1898,7 @@ export default function GRN() {
                     </div>
                   )}
                 </div>
+                )}
               </div>
               )}
             </div>

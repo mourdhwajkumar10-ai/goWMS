@@ -20,6 +20,7 @@ interface Item {
   master_complete?: boolean
   barcode?: string
   carton_qty?: number
+  max_qty_per_bin?: number | null
   shelf_life_in_days?: number | null
   mrp?: number
   hsn_no?: string
@@ -81,6 +82,7 @@ export default function Items() {
   const [homeLocationId, setHomeLocationId] = useState('')
   const [barcode, setBarcode] = useState('')
   const [cartonQty, setCartonQty] = useState('')
+  const [maxQtyPerBin, setMaxQtyPerBin] = useState('')
   const [shelfLife, setShelfLife] = useState('')
   const [showEdit, setShowEdit] = useState(false)
   const [editForm, setEditForm] = useState<Record<string, any>>({})
@@ -133,6 +135,7 @@ export default function Items() {
       home_location_id: item.home_location_id || '',
       barcode: item.barcode || '',
       carton_qty: item.carton_qty ?? 0,
+      max_qty_per_bin: item.max_qty_per_bin ?? '',
       has_serial: !!item.has_serial,
       has_batch: !!item.has_batch,
       has_expiry_date: !!item.has_expiry_date,
@@ -157,6 +160,9 @@ export default function Items() {
       threshold_value: +editForm.threshold_value || 0,
       max_rate_discount: +editForm.max_rate_discount || 0,
       carton_qty: +editForm.carton_qty || 0,
+      max_qty_per_bin: editForm.max_qty_per_bin === '' || editForm.max_qty_per_bin == null || +editForm.max_qty_per_bin <= 0
+        ? null
+        : +editForm.max_qty_per_bin,
     })
     if (r.ok) {
       notify({ type: 'success', title: 'Product updated', message: selected.code })
@@ -190,7 +196,7 @@ export default function Items() {
     setCode(''); setName(''); setBrand(''); setItemGroup('')
     setHasSerial(false); setHasBatch(false); setHasExpiry(false)
     setPackType('loose'); setControlMode('item_controlled'); setHomeLocationId('')
-    setBarcode(''); setCartonQty(''); setShelfLife('')
+    setBarcode(''); setCartonQty(''); setMaxQtyPerBin(''); setShelfLife('')
   }
 
   const createItem = async () => {
@@ -200,6 +206,7 @@ export default function Items() {
       pack_type: packType, control_mode: controlMode,
       home_location_id: homeLocationId ? +homeLocationId : undefined,
       barcode, carton_qty: cartonQty ? +cartonQty : 0,
+      max_qty_per_bin: maxQtyPerBin && +maxQtyPerBin > 0 ? +maxQtyPerBin : null,
       shelf_life_in_days: shelfLife ? +shelfLife : undefined,
     })
     if (r.ok) {
@@ -323,6 +330,10 @@ export default function Items() {
                   <input className="erpnext-input" type="number" value={cartonQty} onChange={e => setCartonQty(e.target.value)} />
                 </div>
               )}
+              <div>
+                <label className="erpnext-label">Max qty per bin</label>
+                <input className="erpnext-input" type="number" value={maxQtyPerBin} onChange={e => setMaxQtyPerBin(e.target.value)} placeholder="e.g. 5 — leave blank if unknown" />
+              </div>
               <div className="flex items-end gap-4 flex-wrap">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" checked={hasSerial} onChange={e => setHasSerial(e.target.checked)} className="w-4 h-4" />
@@ -408,6 +419,7 @@ export default function Items() {
                 <div>{selected.brand || '—'}</div>
                 <div>Pack: {selected.pack_type || 'loose'}</div>
                 <div>Control: {selected.control_mode || 'item_controlled'}</div>
+                <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
                 <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>
                 <div>Expiry: {selected.has_expiry_date ? 'yes' : 'no'}</div>
               </div>
@@ -506,6 +518,20 @@ export default function Items() {
                 <div>
                   <label className="erpnext-label">Uom *</label>
                   <input className="erpnext-input" value={editForm.uom || 'PCS'} onChange={e => setEditForm({ ...editForm, uom: e.target.value })} />
+                </div>
+                <div>
+                  <label className="erpnext-label">Max qty per bin</label>
+                  <input
+                    className="erpnext-input"
+                    type="number"
+                    min={0}
+                    value={editForm.max_qty_per_bin ?? ''}
+                    onChange={e => setEditForm({ ...editForm, max_qty_per_bin: e.target.value })}
+                    placeholder="e.g. 5 — blank = no default"
+                  />
+                  <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
+                    How many of this SKU fit in one pick/storage bin. Putaway uses this when suggesting and confirming.
+                  </p>
                 </div>
                 <div>
                   <label className="erpnext-label">MOQ</label>

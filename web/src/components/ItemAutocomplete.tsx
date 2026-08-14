@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react'
 import { api } from '../services/api'
 
 export type ItemSuggestion = {
@@ -14,12 +14,13 @@ type Props = {
   value: string
   onSelect: (item: ItemSuggestion) => void
   onChangeText?: (text: string) => void
+  onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   placeholder?: string
   className?: string
 }
 
 /** Debounced item typeahead against GET /masterdata/items?q= */
-export default function ItemAutocomplete({ value, onSelect, onChangeText, placeholder, className }: Props) {
+export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyDown, placeholder, className }: Props) {
   const [query, setQuery] = useState(value)
   const [results, setResults] = useState<ItemSuggestion[]>([])
   const [open, setOpen] = useState(false)
@@ -72,6 +73,7 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, placeh
         onFocus={() => query.trim() && results.length > 0 && setOpen(true)}
         placeholder={placeholder || 'Scan barcode or type...'}
         autoComplete="off"
+        onKeyDown={onKeyDown}
       />
       {loading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--text-dim)' }}>...</div>

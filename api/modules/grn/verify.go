@@ -1,6 +1,7 @@
 package grn
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -54,10 +55,14 @@ func attachPOD(db *pgxpool.Pool) fiber.Handler {
 		if tag.RowsAffected() == 0 {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
 		}
-		writeEvent(db, c.Context(), id, userID(c), "POD_CAPTURED", fiber.Map{
-			"payload": fiber.Map{"attachment_id": body.AttachmentID},
+		summary := snapshotBoxCounts(db, c, id)
+		if b, err := json.Marshal(summary); err == nil {
+			_, _ = db.Exec(c.Context(), `UPDATE grn_sessions SET pod_box_summary=$2::jsonb WHERE id=$1`, id, string(b))
+		}
+		writeEvent(db, c, id, "POD_CAPTURED", fiber.Map{
+			"payload": fiber.Map{"attachment_id": body.AttachmentID, "box_summary": summary},
 		})
-		return shared.OK(c, fiber.Map{"id": id, "pod_attachment_id": body.AttachmentID})
+		return shared.OK(c, fiber.Map{"id": id, "pod_attachment_id": body.AttachmentID, "box_summary": summary})
 	}
 }
 
@@ -101,7 +106,7 @@ func openBoxForVerify(db *pgxpool.Pool) fiber.Handler {
 		_, _ = db.Exec(c.Context(), `
 			UPDATE grn_sessions SET active_verify_carton_id=$2, status='item_verification', updated_at=now()
 			WHERE id=$1 AND status NOT IN ('closed','completed')`, sessionID, cartonID)
-		writeEvent(db, c.Context(), sessionID, userID(c), "BOX_OPENED_FOR_VERIFY", fiber.Map{"box_no": cNo})
+		writeEvent(db, c, sessionID, "BOX_OPENED_FOR_VERIFY", fiber.Map{"box_no": cNo})
 		contents, _ := loadBoxContents(db, c, cartonID)
 		return shared.OK(c, fiber.Map{
 			"id": cartonID, "carton_no": cNo, "status": status, "lines": contents,
@@ -134,9 +139,13 @@ func activeBoxContents(db *pgxpool.Pool) fiber.Handler {
 
 func loadBoxContents(db *pgxpool.Pool, c *fiber.Ctx, cartonID int) ([]fiber.Map, error) {
 	rows, err := db.Query(c.Context(), `
-		SELECT id, item_code, COALESCE(expected_qty,0), COALESCE(scanned_qty,0), COALESCE(damaged_qty,0), status,
-		       COALESCE(invoice_no,'')
-		FROM grn_lines WHERE grn_carton_id=$1 ORDER BY id`, cartonID)
+		SELECT gl.id, gl.item_code, COALESCE(i.name,''),
+		       COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0), COALESCE(gl.damaged_qty,0), gl.status,
+		       COALESCE(gl.invoice_no,'')
+		FROM grn_lines gl
+		LEFT JOIN items i ON UPPER(i.code) = UPPER(gl.item_code) AND COALESCE(i.disabled,false)=false
+		WHERE gl.grn_carton_id=$1
+		ORDER BY gl.id`, cartonID)
 	if err != nil {
 		return nil, err
 	}
@@ -144,13 +153,13 @@ func loadBoxContents(db *pgxpool.Pool, c *fiber.Ctx, cartonID int) ([]fiber.Map,
 	out := []fiber.Map{}
 	for rows.Next() {
 		var id int
-		var code, st, inv string
+		var code, name, st, inv string
 		var exp, scan, dmg float64
-		if err := rows.Scan(&id, &code, &exp, &scan, &dmg, &st, &inv); err != nil {
+		if err := rows.Scan(&id, &code, &name, &exp, &scan, &dmg, &st, &inv); err != nil {
 			return nil, err
 		}
 		out = append(out, fiber.Map{
-			"id": id, "item_code": code, "expected_qty": exp, "scanned_qty": scan,
+			"id": id, "item_code": code, "item_name": name, "expected_qty": exp, "scanned_qty": scan,
 			"damaged_qty": dmg, "status": st, "invoice_no": inv,
 			"remaining": exp - scan,
 		})
@@ -177,7 +186,12 @@ func verifyItemScan(db *pgxpool.Pool) fiber.Handler {
 		if itemCode == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 		}
-		if body.Qty <= 0 {
+		packQty := 0.0
+		if parsedItem, parsedQty, ok := shared.ParsePackedItemQR(itemCode); ok {
+			itemCode = parsedItem
+			packQty = parsedQty
+			body.Qty = parsedQty
+		} else if body.Qty <= 0 {
 			body.Qty = 1
 		}
 
@@ -196,13 +210,13 @@ func verifyItemScan(db *pgxpool.Pool) fiber.Handler {
 			if cartonID < 1 {
 				return shared.Err(c, fiber.StatusBadRequest, "open a box first (scan box for item verification)")
 			}
-			return verifyAgainstBox(c, db, sessionID, cartonID, itemCode, body.Qty)
+			return verifyAgainstBox(c, db, sessionID, cartonID, itemCode, body.Qty, packQty)
 		}
-		return verifyInvoiceOnly(c, db, sessionID, itemCode, body.Qty)
+		return verifyInvoiceOnly(c, db, sessionID, itemCode, body.Qty, packQty)
 	}
 }
 
-func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, itemCode string, qty float64) error {
+func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, itemCode string, qty, packQty float64) error {
 	var boxNo string
 	if err := db.QueryRow(c.Context(), `SELECT carton_no FROM grn_cartons WHERE id=$1 AND grn_session_id=$2`,
 		cartonID, sessionID).Scan(&boxNo); err != nil {
@@ -218,16 +232,16 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
 		LIMIT 1`, cartonID, itemCode).Scan(&lineID, &expected, &scanned, &lineStatus)
 	if err == pgx.ErrNoRows {
-		writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_WRONG_SCANNED", fiber.Map{
+		writeEvent(db, c, sessionID, "ITEM_WRONG_SCANNED", fiber.Map{
 			"box_no": boxNo, "part_no": itemCode, "quantity": qty, "result": "wrong_item",
 		})
-		writeException(db, c.Context(), sessionID, userID(c), "wrong_item", fiber.Map{
+		writeException(db, c, sessionID, "wrong_item", fiber.Map{
 			"box_no": boxNo, "part_no": itemCode, "scanned_qty": qty, "expected_qty": 0, "variance": qty,
 		})
 		_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status='exception' WHERE id=$1 AND status <> 'verified'`, cartonID)
 		return shared.OK(c, fiber.Map{
 			"ok": false, "wrong_item": true, "message": "WRONG ITEM — not expected in this box",
-			"item_code": itemCode, "box_no": boxNo,
+			"item_code": itemCode, "box_no": boxNo, "pack_qty": packQty, "scan_qty": qty,
 		})
 	}
 	if err != nil {
@@ -240,10 +254,10 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 	if expected > 0 && newScanned > expected {
 		excess = newScanned - expected
 		newStatus = "excess"
-		writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_EXCESS_DETECTED", fiber.Map{
+		writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
 			"box_no": boxNo, "part_no": itemCode, "quantity": qty, "result": "excess",
 		})
-		writeException(db, c.Context(), sessionID, userID(c), "excess", fiber.Map{
+		writeException(db, c, sessionID, "excess", fiber.Map{
 			"box_no": boxNo, "part_no": itemCode, "expected_qty": expected, "scanned_qty": newScanned, "variance": excess,
 		})
 		_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status='exception' WHERE id=$1 AND status <> 'verified'`, cartonID)
@@ -256,7 +270,7 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 			  AND COALESCE(box_no,'')=$2 AND COALESCE(part_no,'')=$3`, sessionID, boxNo, itemCode).Scan(&exists)
 		if exists == 0 {
 			ensureShortageException(db, c, sessionID, "", boxNo, itemCode, expected, newScanned)
-			writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SHORT_RECORDED", fiber.Map{
+			writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
 				"box_no": boxNo, "part_no": itemCode, "quantity": expected - newScanned, "result": "shortage",
 			})
 		}
@@ -278,9 +292,10 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		}
 	}
 
-	writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SCANNED", fiber.Map{
+	writeEvent(db, c, sessionID, "ITEM_SCANNED", fiber.Map{
 		"box_no": boxNo, "part_no": itemCode, "quantity": qty, "result": newStatus,
 	})
+	applyFollowUpToParent(c, db, sessionID, boxNo, itemCode, qty)
 
 	closed, closeMsg := tryAutoCloseBox(db, c, sessionID, cartonID, boxNo)
 	contents, _ := loadBoxContents(db, c, cartonID)
@@ -288,6 +303,7 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		"ok": true, "line_id": lineID, "item_code": itemCode, "scanned_qty": newScanned,
 		"expected_qty": expected, "status": newStatus, "box_auto_closed": closed,
 		"box_message": closeMsg, "lines": contents, "box_no": boxNo,
+		"pack_qty": packQty, "scan_qty": qty,
 	})
 }
 
@@ -314,7 +330,7 @@ func tryAutoCloseBox(db *pgxpool.Pool, c *fiber.Ctx, sessionID, cartonID int, bo
 	_, _ = db.Exec(c.Context(), `
 		UPDATE grn_sessions SET active_verify_carton_id=NULL WHERE id=$1 AND active_verify_carton_id=$2`,
 		sessionID, cartonID)
-	writeEvent(db, c.Context(), sessionID, userID(c), "BOX_AUTO_VERIFIED", fiber.Map{
+	writeEvent(db, c, sessionID, "BOX_AUTO_VERIFIED", fiber.Map{
 		"box_no": boxNo, "result": "verified",
 	})
 	return true, "BOX VERIFIED — no discrepancy — next box ready"
@@ -352,22 +368,22 @@ func forceCloseBox(db *pgxpool.Pool) fiber.Handler {
 				var exp, scan float64
 				_ = rows.Scan(&lid, &code, &exp, &scan)
 				_, _ = db.Exec(c.Context(), `UPDATE grn_lines SET status='shortage' WHERE id=$1`, lid)
-				writeException(db, c.Context(), sessionID, userID(c), "shortage", fiber.Map{
+				writeException(db, c, sessionID, "shortage", fiber.Map{
 					"box_no": boxNo, "part_no": code, "expected_qty": exp, "scanned_qty": scan, "variance": scan - exp,
 				})
-				writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SHORT_RECORDED", fiber.Map{
+				writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
 					"box_no": boxNo, "part_no": code, "quantity": exp - scan, "reason": body.Reason,
 				})
 			}
 		}
 		_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status='exception', verified_at=now(), verified_by=$2 WHERE id=$1`, body.CartonID, userID(c))
 		_, _ = db.Exec(c.Context(), `UPDATE grn_sessions SET active_verify_carton_id=NULL WHERE id=$1`, sessionID)
-		writeEvent(db, c.Context(), sessionID, userID(c), "BOX_CLOSED", fiber.Map{"box_no": boxNo, "result": "exception", "reason": body.Reason})
+		writeEvent(db, c, sessionID, "BOX_CLOSED", fiber.Map{"box_no": boxNo, "result": "exception", "reason": body.Reason})
 		return shared.OK(c, fiber.Map{"id": body.CartonID, "status": "exception", "carton_no": boxNo})
 	}
 }
 
-func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode string, qty float64) error {
+func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode string, qty, packQty float64) error {
 	var lineID int
 	var expected, scanned float64
 	err := db.QueryRow(c.Context(), `
@@ -399,13 +415,13 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 		}
-		writeException(db, c.Context(), sessionID, userID(c), "excess", fiber.Map{
+		writeException(db, c, sessionID, "excess", fiber.Map{
 			"part_no": itemCode, "expected_qty": 0, "scanned_qty": qty, "variance": qty,
 		})
-		writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_EXCESS_DETECTED", fiber.Map{
+		writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
 			"part_no": itemCode, "quantity": qty, "result": "excess",
 		})
-		return shared.OK(c, fiber.Map{"ok": true, "status": "excess", "item_code": itemCode, "scanned_qty": qty})
+		return shared.OK(c, fiber.Map{"ok": true, "status": "excess", "item_code": itemCode, "scanned_qty": qty, "pack_qty": packQty, "scan_qty": qty})
 	}
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -421,23 +437,24 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 			  AND COALESCE(part_no,'')=$2`, sessionID, itemCode).Scan(&exists)
 		if exists == 0 {
 			ensureShortageException(db, c, sessionID, "", "", itemCode, expected, newScanned)
-			writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SHORT_RECORDED", fiber.Map{
+			writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
 				"part_no": itemCode, "quantity": expected - newScanned, "result": "shortage",
 			})
 		}
 	} else if expected > 0 && newScanned > expected {
 		st = "excess"
-		writeException(db, c.Context(), sessionID, userID(c), "excess", fiber.Map{
+		writeException(db, c, sessionID, "excess", fiber.Map{
 			"part_no": itemCode, "expected_qty": expected, "scanned_qty": newScanned, "variance": newScanned - expected,
 		})
 	}
 	_, _ = db.Exec(c.Context(), `UPDATE grn_lines SET scanned_qty=$2, status=$3 WHERE id=$1`, lineID, newScanned, st)
-	writeEvent(db, c.Context(), sessionID, userID(c), "ITEM_SCANNED", fiber.Map{
+	writeEvent(db, c, sessionID, "ITEM_SCANNED", fiber.Map{
 		"part_no": itemCode, "quantity": qty, "result": st,
 	})
+	applyFollowUpToParent(c, db, sessionID, "", itemCode, qty)
 	return shared.OK(c, fiber.Map{
 		"ok": true, "line_id": lineID, "item_code": itemCode, "scanned_qty": newScanned,
-		"expected_qty": expected, "status": st,
+		"expected_qty": expected, "status": st, "pack_qty": packQty, "scan_qty": qty,
 	})
 }
 
@@ -465,9 +482,10 @@ func resolveException(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "exception not found")
 		}
-		writeEvent(db, c.Context(), sessionID, userID(c), "EXCEPTION_RESOLVED", fiber.Map{
+		writeEvent(db, c, sessionID, "EXCEPTION_RESOLVED", fiber.Map{
 			"reason": body.Resolution, "result": st, "payload": fiber.Map{"exception_id": id},
 		})
+		maybeAdvanceAfterExceptions(c, db, sessionID)
 		return shared.OK(c, fiber.Map{"id": id, "status": st})
 	}
 }
@@ -519,7 +537,7 @@ func startAudit(db *pgxpool.Pool) fiber.Handler {
 				auditID, code, qty).Scan(&itemID)
 			items = append(items, fiber.Map{"id": itemID, "part_no": code, "system_qty": qty})
 		}
-		writeEvent(db, c.Context(), sessionID, userID(c), "AUDIT_STARTED", fiber.Map{
+		writeEvent(db, c, sessionID, "AUDIT_STARTED", fiber.Map{
 			"payload": fiber.Map{"audit_id": auditID, "sample_size": len(items)},
 		})
 		return shared.OK(c, fiber.Map{"id": auditID, "sample_size": len(items), "items": items})
@@ -611,12 +629,12 @@ func checkAuditItem(db *pgxpool.Pool) fiber.Handler {
 		result := "pass"
 		if body.PhysicalQty != sys {
 			result = "fail"
-			writeEvent(db, c.Context(), sessionID, userID(c), "AUDIT_DISCREPANCY_FOUND", fiber.Map{
+			writeEvent(db, c, sessionID, "AUDIT_DISCREPANCY_FOUND", fiber.Map{
 				"part_no": part, "quantity": body.PhysicalQty, "result": "fail",
 				"payload": fiber.Map{"system_qty": sys, "physical_qty": body.PhysicalQty},
 			})
 		} else {
-			writeEvent(db, c.Context(), sessionID, userID(c), "AUDIT_ITEM_CHECKED", fiber.Map{
+			writeEvent(db, c, sessionID, "AUDIT_ITEM_CHECKED", fiber.Map{
 				"part_no": part, "quantity": body.PhysicalQty, "result": "pass",
 			})
 		}
@@ -646,7 +664,7 @@ func completeAudit(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		writeEvent(db, c.Context(), sessionID, userID(c), "AUDIT_COMPLETED", fiber.Map{
+		writeEvent(db, c, sessionID, "AUDIT_COMPLETED", fiber.Map{
 			"payload": fiber.Map{"audit_id": auditID},
 		})
 		return shared.OK(c, fiber.Map{"id": auditID, "status": "completed"})
@@ -714,10 +732,10 @@ func createFollowUp(db *pgxpool.Pool) fiber.Handler {
 				created++
 			}
 		}
-		writeEvent(db, c.Context(), parentID, userID(c), "FOLLOWUP_RECEIPT_CREATED", fiber.Map{
+		writeEvent(db, c, parentID, "FOLLOWUP_RECEIPT_CREATED", fiber.Map{
 			"payload": fiber.Map{"followup_id": id, "session_no": sessionNo, "lines": created},
 		})
-		writeEvent(db, c.Context(), id, userID(c), "GRN_CREATED", fiber.Map{
+		writeEvent(db, c, id, "GRN_CREATED", fiber.Map{
 			"payload": fiber.Map{"parent_grn_id": parentID, "is_followup": true},
 		})
 		return shared.OK(c, fiber.Map{
@@ -750,4 +768,132 @@ func listFollowUps(db *pgxpool.Pool) fiber.Handler {
 		}
 		return shared.OK(c, out)
 	}
+}
+
+func parentOutstandingAfterFollowUp(parentExpected, parentScanned, followQty float64) (newScanned, outstanding float64) {
+	newScanned = parentScanned + followQty
+	if parentExpected > 0 && newScanned > parentExpected {
+		newScanned = parentExpected
+	}
+	outstanding = parentExpected - newScanned
+	if outstanding < 0 {
+		outstanding = 0
+	}
+	return
+}
+
+func applyFollowUpToParent(c *fiber.Ctx, db *pgxpool.Pool, followupID int, boxNo, part string, qty float64) {
+	if db == nil || followupID < 1 || part == "" || qty <= 0 {
+		return
+	}
+	var parentID *int
+	var isFU bool
+	if err := db.QueryRow(c.Context(), `
+		SELECT parent_grn_id, COALESCE(is_followup,false) FROM grn_sessions WHERE id=$1`, followupID).
+		Scan(&parentID, &isFU); err != nil || !isFU || parentID == nil || *parentID < 1 {
+		return
+	}
+	var lineID int
+	var expected, scanned float64
+	if boxNo != "" && boxNo != "CONSOLIDATED" {
+		_ = db.QueryRow(c.Context(), `
+			SELECT gl.id, COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0)
+			FROM grn_lines gl JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+			WHERE gl.grn_session_id=$1 AND gl.item_code=$2 AND gc.carton_no=$3
+			ORDER BY CASE WHEN COALESCE(gl.scanned_qty,0) < COALESCE(gl.expected_qty,0) THEN 0 ELSE 1 END, gl.id
+			LIMIT 1`, *parentID, part, boxNo).Scan(&lineID, &expected, &scanned)
+	}
+	if lineID < 1 {
+		_ = db.QueryRow(c.Context(), `
+			SELECT id, COALESCE(expected_qty,0), COALESCE(scanned_qty,0)
+			FROM grn_lines WHERE grn_session_id=$1 AND item_code=$2
+			ORDER BY CASE WHEN COALESCE(scanned_qty,0) < COALESCE(expected_qty,0) THEN 0 ELSE 1 END, id
+			LIMIT 1`, *parentID, part).Scan(&lineID, &expected, &scanned)
+	}
+	if lineID < 1 {
+		return
+	}
+	newScanned, outstanding := parentOutstandingAfterFollowUp(expected, scanned, qty)
+	st := "shortage"
+	if outstanding <= 0 {
+		st = "full_match"
+	}
+	_, _ = db.Exec(c.Context(), `
+		UPDATE grn_lines SET scanned_qty=$2, status=$3,
+			qty_short = GREATEST(COALESCE(expected_qty,0)-$2,0),
+			qty_excess = GREATEST($2-COALESCE(expected_qty,0),0)
+		WHERE id=$1`, lineID, newScanned, st)
+	if outstanding <= 0 {
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_exceptions SET status='resolved', resolution='Follow-up received',
+				resolved_at=now(), resolved_by=$3
+			WHERE grn_session_id=$1 AND exception_type='shortage' AND status='open'
+			  AND COALESCE(part_no,'')=$2`, *parentID, part, userID(c))
+	}
+	fields := fiber.Map{
+		"box_no": boxNo, "part_no": part, "quantity": qty, "result": st,
+		"payload": fiber.Map{
+			"parent_grn_id": *parentID, "followup_id": followupID,
+			"parent_scanned": newScanned, "outstanding": outstanding,
+		},
+	}
+	writeEvent(db, c, followupID, "FOLLOWUP_ITEM_RECEIVED", fields)
+	writeEvent(db, c, *parentID, "FOLLOWUP_ITEM_RECEIVED", fields)
+}
+
+func snapshotBoxCounts(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) fiber.Map {
+	rows, err := db.Query(c.Context(), `
+		SELECT carton_no, status, COALESCE(is_expected,false)
+		FROM grn_cartons WHERE grn_session_id=$1 AND carton_no <> 'CONSOLIDATED'`, sessionID)
+	if err != nil {
+		return fiber.Map{}
+	}
+	defer rows.Close()
+	expected, received, excess, missing := 0, 0, 0, 0
+	boxes := []fiber.Map{}
+	for rows.Next() {
+		var no, st string
+		var isExp bool
+		if err := rows.Scan(&no, &st, &isExp); err != nil {
+			continue
+		}
+		stl := strings.ToLower(st)
+		switch stl {
+		case "excess":
+			excess++
+		case "received", "accounted", "verified", "exception":
+			received++
+			expected++
+		case "expected", "pending", "missing":
+			expected++
+			missing++
+		default:
+			if isExp {
+				expected++
+				missing++
+			}
+		}
+		boxes = append(boxes, fiber.Map{"carton_no": no, "status": st, "is_expected": isExp})
+	}
+	return fiber.Map{
+		"expected_boxes": expected, "received_boxes": received,
+		"excess_boxes": excess, "missing_boxes": missing, "boxes": boxes,
+	}
+}
+
+func maybeAdvanceAfterExceptions(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) {
+	var openExc int
+	_ = db.QueryRow(c.Context(), `
+		SELECT COUNT(*) FROM grn_exceptions WHERE grn_session_id=$1 AND status='open'`, sessionID).Scan(&openExc)
+	if openExc > 0 {
+		return
+	}
+	var status string
+	_ = db.QueryRow(c.Context(), `SELECT status FROM grn_sessions WHERE id=$1`, sessionID).Scan(&status)
+	if strings.ToLower(status) != "exception_pending" {
+		return
+	}
+	_, _ = db.Exec(c.Context(), `
+		UPDATE grn_sessions SET status='putaway_pending', updated_at=now() WHERE id=$1`, sessionID)
+	writeEvent(db, c, sessionID, "STATUS_CHANGED", fiber.Map{"result": "putaway_pending", "reason": "exceptions_cleared"})
 }

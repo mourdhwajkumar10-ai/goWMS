@@ -298,9 +298,9 @@ func importIntoGRN(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		_, _ = db.Exec(c.Context(), `
-			INSERT INTO grn_events (grn_session_id, event_type, actor_id, payload)
-			VALUES ($1,'PACKING_LIST_IMPORTED',$2,$3::jsonb)`,
-			body.GRNSessionID, userID(c),
+			INSERT INTO grn_events (grn_session_id, event_type, actor_id, device, payload)
+			VALUES ($1,'PACKING_LIST_IMPORTED',$2,$3,$4::jsonb)`,
+			body.GRNSessionID, userID(c), eventDevice(c),
 			mustJSON(map[string]any{
 				"cartons_created": createdCartons, "lines_created": createdLines, "skipped": skipped,
 			}))
@@ -349,4 +349,18 @@ func userID(c *fiber.Ctx) int {
 		return v
 	}
 	return 0
+}
+
+func eventDevice(c *fiber.Ctx) string {
+	if c == nil {
+		return ""
+	}
+	d := strings.TrimSpace(c.Get("X-Device"))
+	if d == "" {
+		d = strings.TrimSpace(c.Get("User-Agent"))
+	}
+	if len(d) > 100 {
+		return d[:100]
+	}
+	return d
 }

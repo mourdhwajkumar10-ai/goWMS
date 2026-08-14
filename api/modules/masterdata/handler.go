@@ -78,7 +78,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
 			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
-			       COALESCE(standard_rate,0)
+			       COALESCE(standard_rate,0), max_qty_per_bin
 			FROM items
 			WHERE disabled=false`
 		args := []any{}
@@ -96,39 +96,40 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type item struct {
-			ID               int      `json:"id"`
-			Code             string   `json:"code"`
-			Name             string   `json:"name"`
-			Brand            string   `json:"brand"`
-			ItemGroup        string   `json:"item_group"`
-			HasSerial        bool     `json:"has_serial"`
-			HasBatch         bool     `json:"has_batch"`
-			HasExpiryDate    bool     `json:"has_expiry_date"`
-			SafetyStock      *float64 `json:"safety_stock"`
-			ValuationRate    *float64 `json:"valuation_rate"`
-			PackType         string   `json:"pack_type"`
-			ControlMode      string   `json:"control_mode"`
-			HomeLocationID   *int     `json:"home_location_id"`
-			MasterComplete   bool     `json:"master_complete"`
-			Barcode          string   `json:"barcode"`
-			CartonQty        int      `json:"carton_qty"`
-			ShelfLifeDays    *int     `json:"shelf_life_in_days"`
-			MRP              float64  `json:"mrp"`
-			HSNNo            string   `json:"hsn_no"`
-			GSTPercentage    float64  `json:"gst_percentage"`
-			Vech             string   `json:"vech"`
-			Make             string   `json:"make"`
-			UOM              string   `json:"uom"`
-			Category         string   `json:"category"`
-			PartsMovement    string   `json:"parts_movement"`
-			PartsPBO         string   `json:"parts_pbo"`
-			ThresholdValue   float64  `json:"threshold_value"`
-			MaxRateDiscount  float64  `json:"max_rate_discount"`
-			Remark           string   `json:"remark"`
-			Description      string   `json:"description"`
-			MinOrderQty      float64  `json:"min_order_qty"`
-			WeightPerUnit    float64  `json:"weight_per_unit"`
-			StandardRate     float64  `json:"standard_rate"`
+			ID              int      `json:"id"`
+			Code            string   `json:"code"`
+			Name            string   `json:"name"`
+			Brand           string   `json:"brand"`
+			ItemGroup       string   `json:"item_group"`
+			HasSerial       bool     `json:"has_serial"`
+			HasBatch        bool     `json:"has_batch"`
+			HasExpiryDate   bool     `json:"has_expiry_date"`
+			SafetyStock     *float64 `json:"safety_stock"`
+			ValuationRate   *float64 `json:"valuation_rate"`
+			PackType        string   `json:"pack_type"`
+			ControlMode     string   `json:"control_mode"`
+			HomeLocationID  *int     `json:"home_location_id"`
+			MasterComplete  bool     `json:"master_complete"`
+			Barcode         string   `json:"barcode"`
+			CartonQty       int      `json:"carton_qty"`
+			ShelfLifeDays   *int     `json:"shelf_life_in_days"`
+			MRP             float64  `json:"mrp"`
+			HSNNo           string   `json:"hsn_no"`
+			GSTPercentage   float64  `json:"gst_percentage"`
+			Vech            string   `json:"vech"`
+			Make            string   `json:"make"`
+			UOM             string   `json:"uom"`
+			Category        string   `json:"category"`
+			PartsMovement   string   `json:"parts_movement"`
+			PartsPBO        string   `json:"parts_pbo"`
+			ThresholdValue  float64  `json:"threshold_value"`
+			MaxRateDiscount float64  `json:"max_rate_discount"`
+			Remark          string   `json:"remark"`
+			Description     string   `json:"description"`
+			MinOrderQty     float64  `json:"min_order_qty"`
+			WeightPerUnit   float64  `json:"weight_per_unit"`
+			StandardRate    float64  `json:"standard_rate"`
+			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 		}
 		list := []item{}
 		for rows.Next() {
@@ -140,7 +141,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 				&i.CartonQty, &i.ShelfLifeDays,
 				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.Category,
 				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
-				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate); err != nil {
+				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			i.ItemGroup = groupID
@@ -153,35 +154,36 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 func createItem(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			Code           string  `json:"code"`
-			Name           string  `json:"name"`
-			Brand          string  `json:"brand"`
-			ItemGroup      string  `json:"item_group"`
-			HasSerial      bool    `json:"has_serial"`
-			HasBatch       bool    `json:"has_batch"`
-			HasExpiryDate  bool    `json:"has_expiry_date"`
-			PackType       string  `json:"pack_type"`
-			ControlMode    string  `json:"control_mode"`
-			HomeLocationID *int    `json:"home_location_id"`
-			Barcode        string  `json:"barcode"`
-			CartonQty      int     `json:"carton_qty"`
-			ShelfLifeDays  *int    `json:"shelf_life_in_days"`
-			SafetyStock    float64 `json:"safety_stock"`
-			MRP            float64 `json:"mrp"`
-			HSNNo          string  `json:"hsn_no"`
-			GSTPercentage  float64 `json:"gst_percentage"`
-			Vech           string  `json:"vech"`
-			Make           string  `json:"make"`
-			UOM            string  `json:"uom"`
-			Category       string  `json:"category"`
-			PartsMovement  string  `json:"parts_movement"`
-			PartsPBO       string  `json:"parts_pbo"`
-			ThresholdValue float64 `json:"threshold_value"`
-			MaxRateDiscount float64 `json:"max_rate_discount"`
-			Remark         string  `json:"remark"`
-			Description    string  `json:"description"`
-			MinOrderQty    float64 `json:"min_order_qty"`
-			WeightPerUnit  float64 `json:"weight_per_unit"`
+			Code            string   `json:"code"`
+			Name            string   `json:"name"`
+			Brand           string   `json:"brand"`
+			ItemGroup       string   `json:"item_group"`
+			HasSerial       bool     `json:"has_serial"`
+			HasBatch        bool     `json:"has_batch"`
+			HasExpiryDate   bool     `json:"has_expiry_date"`
+			PackType        string   `json:"pack_type"`
+			ControlMode     string   `json:"control_mode"`
+			HomeLocationID  *int     `json:"home_location_id"`
+			Barcode         string   `json:"barcode"`
+			CartonQty       int      `json:"carton_qty"`
+			ShelfLifeDays   *int     `json:"shelf_life_in_days"`
+			SafetyStock     float64  `json:"safety_stock"`
+			MRP             float64  `json:"mrp"`
+			HSNNo           string   `json:"hsn_no"`
+			GSTPercentage   float64  `json:"gst_percentage"`
+			Vech            string   `json:"vech"`
+			Make            string   `json:"make"`
+			UOM             string   `json:"uom"`
+			Category        string   `json:"category"`
+			PartsMovement   string   `json:"parts_movement"`
+			PartsPBO        string   `json:"parts_pbo"`
+			ThresholdValue  float64  `json:"threshold_value"`
+			MaxRateDiscount float64  `json:"max_rate_discount"`
+			Remark          string   `json:"remark"`
+			Description     string   `json:"description"`
+			MinOrderQty     float64  `json:"min_order_qty"`
+			WeightPerUnit   float64  `json:"weight_per_unit"`
+			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -207,6 +209,10 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
 
+		if body.MaxQtyPerBin != nil && *body.MaxQtyPerBin <= 0 {
+			body.MaxQtyPerBin = nil
+		}
+
 		if body.UOM == "" {
 			body.UOM = "PCS"
 		}
@@ -220,9 +226,9 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 				shelf_life_in_days, safety_stock, master_complete,
 				mrp, hsn_no, gst_percentage, vech, make, uom, category,
 				parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
-				description, min_order_qty, weight_per_unit
+				description, min_order_qty, weight_per_unit, max_qty_per_bin
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-			          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+			          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30)
 			RETURNING id`,
 			body.Code, body.Name, nullIfEmpty(body.Brand), body.HasSerial, body.HasBatch, body.HasExpiryDate,
 			body.PackType, body.ControlMode, body.HomeLocationID, nullIfEmpty(body.Barcode), body.CartonQty,
@@ -230,7 +236,7 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			body.MRP, nullIfEmpty(body.HSNNo), body.GSTPercentage, nullIfEmpty(body.Vech), nullIfEmpty(body.Make),
 			body.UOM, nullIfEmpty(body.Category), nullIfEmpty(body.PartsMovement), nullIfEmpty(body.PartsPBO),
 			body.ThresholdValue, body.MaxRateDiscount, nullIfEmpty(body.Remark),
-			nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit,
+			nullIfEmpty(body.Description), body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 		).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -278,6 +284,7 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			Description     *string  `json:"description"`
 			MinOrderQty     *float64 `json:"min_order_qty"`
 			WeightPerUnit   *float64 `json:"weight_per_unit"`
+			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -330,6 +337,9 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 		if controlMode == "bin_controlled" && homeID == nil {
 			return shared.Err(c, fiber.StatusBadRequest, "home_location_id required for bin_controlled items")
 		}
+		if body.MaxQtyPerBin != nil && *body.MaxQtyPerBin <= 0 {
+			body.MaxQtyPerBin = nil
+		}
 		complete := itemMasterComplete(code, name, packType, controlMode, homeID, hasExpiry, shelfLife)
 
 		_, err = db.Exec(c.Context(), `
@@ -361,7 +371,8 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 				remark = COALESCE($26, remark),
 				description = COALESCE($27, description),
 				min_order_qty = COALESCE($28, min_order_qty),
-				weight_per_unit = COALESCE($29, weight_per_unit)
+				weight_per_unit = COALESCE($29, weight_per_unit),
+				max_qty_per_bin = $30
 			WHERE id=$1`,
 			id,
 			body.Name, body.Brand, body.HasSerial, body.HasBatch, body.HasExpiryDate,
@@ -369,7 +380,7 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			body.SafetyStock, complete,
 			body.MRP, body.HSNNo, body.GSTPercentage, body.Vech, body.Make, body.UOM, body.Category,
 			body.PartsMovement, body.PartsPBO, body.ThresholdValue, body.MaxRateDiscount, body.Remark,
-			body.Description, body.MinOrderQty, body.WeightPerUnit,
+			body.Description, body.MinOrderQty, body.WeightPerUnit, body.MaxQtyPerBin,
 		)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -989,13 +1000,13 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 }
 
 type locationLabel struct {
-	ID          int    `json:"id"`
-	Code        string `json:"code"`
-	WarehouseID int    `json:"warehouse_id"`
-	Aisle       string `json:"aisle"`
-	Bay         string `json:"bay"`
-	Level       string `json:"level"`
-	Bin         string `json:"bin"`
+	ID           int    `json:"id"`
+	Code         string `json:"code"`
+	WarehouseID  int    `json:"warehouse_id"`
+	Aisle        string `json:"aisle"`
+	Bay          string `json:"bay"`
+	Level        string `json:"level"`
+	Bin          string `json:"bin"`
 	LocationType string `json:"location_type"`
 }
 
@@ -1187,15 +1198,15 @@ func listAllLocations(db *pgxpool.Pool) fiber.Handler {
 func createSupplier(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			Name                 string `json:"name"`
-			SupplierGroup        string `json:"supplier_group"`
-			GSTIN                string `json:"gstin"`
-			IsTransporter        bool   `json:"is_transporter"`
-			CarrierCode          string `json:"carrier_code"`
-			ContactPhone         string `json:"contact_phone"`
-			ContactEmail         string `json:"contact_email"`
-			VehicleFleet         string `json:"vehicle_fleet"`
-			DefaultServiceLevel  string `json:"default_service_level"`
+			Name                string `json:"name"`
+			SupplierGroup       string `json:"supplier_group"`
+			GSTIN               string `json:"gstin"`
+			IsTransporter       bool   `json:"is_transporter"`
+			CarrierCode         string `json:"carrier_code"`
+			ContactPhone        string `json:"contact_phone"`
+			ContactEmail        string `json:"contact_email"`
+			VehicleFleet        string `json:"vehicle_fleet"`
+			DefaultServiceLevel string `json:"default_service_level"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err

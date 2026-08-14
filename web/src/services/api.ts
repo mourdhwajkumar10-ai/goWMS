@@ -31,6 +31,9 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   const token = getToken();
   if (token) headers["Authorization"] = `Bearer ${token}`;
   if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (typeof navigator !== "undefined" && navigator.userAgent) {
+    headers["X-Device"] = navigator.userAgent.slice(0, 100);
+  }
 
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -139,6 +142,9 @@ export const api = {
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
+    if (typeof navigator !== 'undefined' && navigator.userAgent) {
+      headers['X-Device'] = navigator.userAgent.slice(0, 100)
+    }
     const res = await fetch(`${BASE}/attachments/`, { method: 'POST', headers, body: fd })
     const payload = await res.json().catch(() => ({}))
     if (!res.ok || payload.ok === false) {
@@ -208,6 +214,10 @@ export const api = {
   grnScanLine: (data: any) => post<any>("/grn/line", data),
   grnClose: (data: any) => post<any>("/grn/close", data),
   grnPutaway: (data: any) => post<any>("/grn/putaway", data),
+  grnCompletePutaway: (id: number) => post<any>(`/grn/session/${id}/complete-putaway`, {}),
+  grnCreateException: (id: number, data: any) => post<any>(`/grn/session/${id}/exceptions`, data),
+  grnSupportingDoc: (id: number, attachmentId: number) =>
+    post<any>(`/grn/session/${id}/supporting-doc`, { attachment_id: attachmentId }),
 
   // Picking
   pickLists: () => get<any[]>("/picking/lists"),
@@ -269,14 +279,25 @@ export const api = {
   // Putaway
   putawayRules: () => get<any[]>("/putaway/rules"),
   putawayCreate: (data: any) => post<any>("/putaway/", data),
-  putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number, preferred?: { aisle?: string; bay?: string }) => {
+  putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number, preferred?: { aisle?: string; bay?: string; excludeLocationIds?: number[] }) => {
     let q = `/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}`
     if (warehouseId) q += `&warehouse_id=${warehouseId}`
     if (preferred?.aisle) q += `&preferred_aisle=${encodeURIComponent(preferred.aisle)}`
     if (preferred?.bay) q += `&preferred_bay=${encodeURIComponent(preferred.bay)}`
+    if (preferred?.excludeLocationIds?.length) q += `&exclude_location_ids=${preferred.excludeLocationIds.join(',')}`
     return get<any>(q)
   },
   putawayQueue: () => get<any[]>("/putaway/queue"),
+  putawayFitException: (data: {
+    item_code: string
+    rejected_location?: string
+    rejected_location_id?: number
+    reason: 'too_small' | 'too_large'
+    requested_qty?: number
+    fits_qty?: number
+    override_location?: string
+    notes?: string
+  }) => post<any>("/putaway/fit-exception", data),
 
   // Cycle Count
   cycleCountSheets: () => get<any[]>("/cyclecount/sheets"),
