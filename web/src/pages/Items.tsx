@@ -68,7 +68,7 @@ export default function Items() {
 
   const [newForm, setNewForm] = useState(emptyProductForm())
   const [showEdit, setShowEdit] = useState(false)
-  const [editForm, setEditForm] = useState<Record<string, any>>({})
+  const [editForm, setEditForm] = useState(emptyProductForm())
   const [attachments, setAttachments] = useState<any[]>([])
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
@@ -118,14 +118,14 @@ export default function Items() {
       weight_per_unit: item.weight_per_unit ?? 0,
       pack_type: item.pack_type || 'loose',
       control_mode: item.control_mode || 'item_controlled',
-      home_location_id: item.home_location_id || '',
+      home_location_id: item.home_location_id ? String(item.home_location_id) : '',
       barcode: item.barcode || '',
-      carton_qty: item.carton_qty ?? 0,
-      max_qty_per_bin: item.max_qty_per_bin ?? '',
+      carton_qty: item.carton_qty != null ? String(item.carton_qty) : '',
+      max_qty_per_bin: item.max_qty_per_bin != null && item.max_qty_per_bin > 0 ? String(item.max_qty_per_bin) : '',
       has_serial: !!item.has_serial,
       has_batch: !!item.has_batch,
       has_expiry_date: !!item.has_expiry_date,
-      shelf_life_in_days: item.shelf_life_in_days ?? '',
+      shelf_life_in_days: item.shelf_life_in_days != null ? String(item.shelf_life_in_days) : '',
     })
     setShowEdit(true)
     const ar = await api.attachmentList('item', item.id)

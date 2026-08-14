@@ -1,3 +1,5 @@
+import type { Dispatch, SetStateAction } from 'react'
+
 export interface LocOpt {
   id: number
   code: string
@@ -39,6 +41,8 @@ export function emptyProductForm() {
     shelf_life_in_days: '',
   }
 }
+
+export type ProductForm = ReturnType<typeof emptyProductForm>
 
 export function productPayload(form: Record<string, any>, extra: Record<string, any> = {}) {
   return {
@@ -82,12 +86,13 @@ export default function ProductMasterFields({
   locations,
   showCode = false,
 }: {
-  form: Record<string, any>
-  setForm: (next: Record<string, any>) => void
+  form: ProductForm
+  setForm: Dispatch<SetStateAction<ProductForm>>
   locations: LocOpt[]
   showCode?: boolean
 }) {
-  const set = (key: string, value: any) => setForm({ ...form, [key]: value })
+  const set = (key: keyof ProductForm, value: ProductForm[keyof ProductForm]) =>
+    setForm({ ...form, [key]: value } as ProductForm)
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
