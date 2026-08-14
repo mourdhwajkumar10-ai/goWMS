@@ -3,15 +3,30 @@ import { notify } from './Notifications'
 
 interface Props {
   onImport: (rows: any[]) => void | Promise<void>
+  onImportFile?: (file: File) => void | Promise<void>
   disabled?: boolean
+  accept?: string
+  label?: string
 }
 
-export default function CSVImport({ onImport, disabled }: Props) {
+export default function CSVImport({ onImport, onImportFile, disabled, accept, label }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
+    e.target.value = ''
+
+    if (onImportFile) {
+      void onImportFile(file)
+      return
+    }
+
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.xlsx') || lower.endsWith('.xls')) {
+      notify({ type: 'error', title: 'Excel not supported here', message: 'Save as CSV, or import from Items which accepts .xlsx' })
+      return
+    }
 
     const reader = new FileReader()
     reader.onload = async (ev) => {
@@ -22,7 +37,7 @@ export default function CSVImport({ onImport, disabled }: Props) {
         return
       }
 
-      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, ''))
+      const headers = lines[0].split(',').map(h => h.trim().replace(/"/g, '').replace(/^\uFEFF/, ''))
       const rows = lines.slice(1).map(line => {
         const values = line.split(',').map(v => v.trim().replace(/"/g, ''))
         const row: any = {}
@@ -34,9 +49,6 @@ export default function CSVImport({ onImport, disabled }: Props) {
       await onImport(rows)
     }
     reader.readAsText(file)
-
-    // Reset input so same file can be re-imported
-    e.target.value = ''
   }
 
   return (
@@ -44,7 +56,7 @@ export default function CSVImport({ onImport, disabled }: Props) {
       <input
         ref={fileRef}
         type="file"
-        accept=".csv"
+        accept={accept || (onImportFile ? '.csv,.xlsx' : '.csv')}
         onChange={handleFile}
         style={{ display: 'none' }}
       />
@@ -54,7 +66,7 @@ export default function CSVImport({ onImport, disabled }: Props) {
         style={{ fontSize: 12 }}
         disabled={disabled}
       >
-        {disabled ? 'Importing…' : '📄 Import CSV'}
+        {disabled ? 'Importing…' : (label || (onImportFile ? '📄 Import CSV / Excel' : '📄 Import CSV'))}
       </button>
     </>
   )

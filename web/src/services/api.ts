@@ -131,6 +131,22 @@ export const api = {
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
   itemUpdate: (id: number, data: any) => patch<any>(`/masterdata/items/${id}`, data),
   itemImport: (data: any) => post<any>("/masterdata/items/import", data),
+  itemImportFile: async (file: File) => {
+    const fd = new FormData()
+    fd.append("file", file)
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (typeof navigator !== "undefined" && navigator.userAgent) {
+      headers["X-Device"] = navigator.userAgent.slice(0, 100)
+    }
+    const res = await fetch(`${BASE}/masterdata/items/import-file`, { method: "POST", headers, body: fd })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok || payload.ok === false) {
+      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` }
+    }
+    return { ok: true as const, data: payload.data }
+  },
   itemGroups: () => get<any[]>("/masterdata/item-groups"),
   itemGroupCreate: (data: any) => post<any>("/masterdata/item-groups", data),
   itemComplete: (data: any) => post<any>("/masterdata/items/complete", data),

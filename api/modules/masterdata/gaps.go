@@ -4,7 +4,11 @@ package masterdata
 // Kept in a separate file to avoid bloating handler.go further.
 
 import (
+	"context"
+	"encoding/csv"
 	"encoding/json"
+	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -13,10 +17,12 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/xuri/excelize/v2"
 )
 
 func registerGapRoutes(md fiber.Router, db *pgxpool.Pool) {
 	md.Post("/items/import", importItemsCSV(db))
+	md.Post("/items/import-file", importItemsFile(db))
 
 	md.Get("/item-groups", listItemGroups(db))
 	md.Post("/item-groups", createItemGroup(db))
@@ -48,103 +54,154 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 		if len(body.Rows) == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "rows required")
 		}
+		created, skipped, errors, err := importItemRows(c.Context(), db, body.Rows)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{
+			"created": created, "skipped": skipped, "errors": errors, "total": len(body.Rows),
+		})
+	}
+}
 
-		created, skipped, errors := 0, 0, []string{}
-		codes := make([]string, 0, len(body.Rows))
-		for _, row := range body.Rows {
-			code := strings.ToUpper(firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*"))
-			if code != "" {
-				codes = append(codes, code)
+func importItemsFile(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		fh, err := c.FormFile("file")
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "file required")
+		}
+		src, err := fh.Open()
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		defer src.Close()
+		name := strings.ToLower(fh.Filename)
+		if strings.HasSuffix(name, ".xls") && !strings.HasSuffix(name, ".xlsx") {
+			return shared.Err(c, fiber.StatusBadRequest, "save the file as .xlsx or .csv and try again")
+		}
+		var rows []map[string]string
+		if strings.HasSuffix(name, ".xlsx") {
+			rows, err = rowsFromXLSX(src)
+		} else {
+			rows, err = rowsFromCSV(src)
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		if len(rows) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "no data rows found")
+		}
+		created, skipped, errors, err := importItemRows(c.Context(), db, rows)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{
+			"created": created, "skipped": skipped, "errors": errors, "total": len(rows),
+		})
+	}
+}
+
+func importItemRows(ctx context.Context, db *pgxpool.Pool, rows []map[string]string) (created, skipped int, errors []string, err error) {
+	codes := make([]string, 0, len(rows))
+	for _, row := range rows {
+		code := strings.ToUpper(itemCodeFrom(row))
+		if code != "" {
+			codes = append(codes, code)
+		}
+	}
+	existing := map[string]bool{}
+	if len(codes) > 0 {
+		qrows, qerr := db.Query(ctx, `SELECT upper(code) FROM items WHERE upper(code) = ANY($1)`, codes)
+		if qerr != nil {
+			return 0, 0, nil, qerr
+		}
+		for qrows.Next() {
+			var c string
+			if qrows.Scan(&c) == nil {
+				existing[c] = true
 			}
 		}
-		existing := map[string]bool{}
-		if len(codes) > 0 {
-			qrows, err := db.Query(c.Context(), `SELECT upper(code) FROM items WHERE upper(code) = ANY($1)`, codes)
-			if err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-			}
-			for qrows.Next() {
-				var c string
-				if qrows.Scan(&c) == nil {
-					existing[c] = true
-				}
-			}
-			qrows.Close()
-		}
+		qrows.Close()
+	}
 
-		for i, row := range body.Rows {
-			code := firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*")
-			name := firstKey(row, "name", "item_name", "Item Name", "Part Name", "Description")
-			if code == "" || name == "" {
+	for i, row := range rows {
+		code := itemCodeFrom(row)
+		name := itemNameFrom(row)
+		if code == "" || name == "" {
+			skipped++
+			if len(errors) < 50 {
+				errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
+			}
+			continue
+		}
+		if existing[strings.ToUpper(code)] {
+			skipped++
+			continue
+		}
+		brand := firstKey(row, "brand", "Brand")
+		barcode := firstKey(row, "barcode", "Barcode")
+		packType := "loose"
+		if raw := firstKey(row, "pack_type", "pack_mode", "Pack Type"); raw != "" {
+			pt, nerr := normalizePackType(raw)
+			if nerr != nil {
 				skipped++
 				if len(errors) < 50 {
-					errors = append(errors, "row "+strconv.Itoa(i+2)+": code and name required")
+					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+nerr.Error())
 				}
 				continue
 			}
-			if existing[strings.ToUpper(code)] {
+			packType = pt
+		}
+		controlMode := "item_controlled"
+		if raw := firstKey(row, "control_mode", "Control Mode"); raw != "" {
+			cm, nerr := normalizeControlMode(raw)
+			if nerr != nil {
 				skipped++
+				if len(errors) < 50 {
+					errors = append(errors, "row "+strconv.Itoa(i+2)+": "+nerr.Error())
+				}
 				continue
 			}
-			brand := firstKey(row, "brand", "Brand")
-			barcode := firstKey(row, "barcode", "Barcode")
-			packType := "loose"
-			if raw := firstKey(row, "pack_type", "pack_mode", "Pack Type"); raw != "" {
-				pt, err := normalizePackType(raw)
-				if err != nil {
-					skipped++
-					if len(errors) < 50 {
-						errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
-					}
-					continue
-				}
-				packType = pt
+			controlMode = cm
+		}
+		hasBatch := truthy(firstKey(row, "has_batch", "Has Batch"))
+		hasSerial := truthy(firstKey(row, "has_serial", "Has Serial"))
+		hasExpiry := truthy(firstKey(row, "has_expiry_date", "has_expiry", "Has Expiry"))
+		safety, _ := strconv.ParseFloat(firstKey(row, "safety_stock", "min_stock", "Safety Stock"), 64)
+		carton, _ := strconv.Atoi(firstKey(row, "carton_qty", "Carton Qty"))
+		var shelf *int
+		if s := firstKey(row, "shelf_life_in_days", "shelf_life", "Shelf Life"); s != "" {
+			if v, aerr := strconv.Atoi(s); aerr == nil {
+				shelf = &v
 			}
-			controlMode := "item_controlled"
-			if raw := firstKey(row, "control_mode", "Control Mode"); raw != "" {
-				cm, err := normalizeControlMode(raw)
-				if err != nil {
-					skipped++
-					if len(errors) < 50 {
-						errors = append(errors, "row "+strconv.Itoa(i+2)+": "+err.Error())
-					}
-					continue
-				}
-				controlMode = cm
+		}
+		mrp := parseFloatKey(row, "mrp", "MRP", "Mrp", "MRP - per unit", "Basic Price - per unit")
+		hsn := firstKey(row, "hsn_no", "hsn", "HSN_No", "HSN", "HSN Code")
+		gst := parseFloatKey(row, "gst_percentage", "gst", "GST_Percentage", "GST", "GST %")
+		vech := firstKey(row, "vech", "VECH")
+		make := firstKey(row, "make", "MAKE")
+		uom := firstKey(row, "uom", "Uom", "UOM")
+		if uom == "" {
+			uom = "PCS"
+		}
+		productGroup := firstKey(row, "product_group", "Product GROUP", "Product Group", "Item Segment")
+		category := firstKey(row, "category", "Category", "Item Segment")
+		partsMovement := firstKey(row, "parts_movement", "Parts Movement")
+		partsPBO := firstKey(row, "parts_pbo", "Parts pbo", "Parts PBO")
+		threshold := parseFloatKey(row, "threshold_value", "Threshold Value")
+		maxDisc := parseFloatKey(row, "max_rate_discount", "Max Rate Discount")
+		remark := firstKey(row, "remark", "Remark")
+		desc := itemNameFrom(row)
+		moq := parseFloatKey(row, "min_order_qty", "moq", "MOQ", "VEH_DLR Set Qty")
+		weight := parseFloatKey(row, "weight_per_unit", "weight", "Weight")
+		if carton == 0 {
+			if v := firstKey(row, "Distributor Set Qty", "carton_qty", "Carton Qty"); v != "" {
+				carton, _ = strconv.Atoi(strings.Split(v, ".")[0])
 			}
-			hasBatch := truthy(firstKey(row, "has_batch", "Has Batch"))
-			hasSerial := truthy(firstKey(row, "has_serial", "Has Serial"))
-			hasExpiry := truthy(firstKey(row, "has_expiry_date", "has_expiry", "Has Expiry"))
-			safety, _ := strconv.ParseFloat(firstKey(row, "safety_stock", "min_stock", "Safety Stock"), 64)
-			carton, _ := strconv.Atoi(firstKey(row, "carton_qty", "Carton Qty"))
-			var shelf *int
-			if s := firstKey(row, "shelf_life_in_days", "shelf_life", "Shelf Life"); s != "" {
-				if v, err := strconv.Atoi(s); err == nil {
-					shelf = &v
-				}
-			}
-			mrp := parseFloatKey(row, "mrp", "MRP", "Mrp")
-			hsn := firstKey(row, "hsn_no", "hsn", "HSN_No", "HSN")
-			gst := parseFloatKey(row, "gst_percentage", "gst", "GST_Percentage", "GST")
-			vech := firstKey(row, "vech", "VECH")
-			make := firstKey(row, "make", "MAKE")
-			uom := firstKey(row, "uom", "Uom", "UOM")
-			if uom == "" {
-				uom = "PCS"
-			}
-			productGroup := firstKey(row, "product_group", "Product GROUP", "Product Group")
-			category := firstKey(row, "category", "Category")
-			partsMovement := firstKey(row, "parts_movement", "Parts Movement")
-			partsPBO := firstKey(row, "parts_pbo", "Parts pbo", "Parts PBO")
-			threshold := parseFloatKey(row, "threshold_value", "Threshold Value")
-			maxDisc := parseFloatKey(row, "max_rate_discount", "Max Rate Discount")
-			remark := firstKey(row, "remark", "Remark")
-			desc := firstKey(row, "description", "Description")
-			moq := parseFloatKey(row, "min_order_qty", "moq", "MOQ")
-			weight := parseFloatKey(row, "weight_per_unit", "weight", "Weight")
+		}
 
-			complete := itemMasterComplete(code, name, packType, controlMode, nil, hasExpiry, shelf)
-			_, err := db.Exec(c.Context(), `
+		complete := itemMasterComplete(code, name, packType, controlMode, nil, hasExpiry, shelf)
+		_, ierr := db.Exec(ctx, `
 				INSERT INTO items (
 					code, name, brand, has_serial, has_batch, has_expiry_date,
 					pack_type, control_mode, barcode, carton_qty, shelf_life_in_days,
@@ -154,24 +211,21 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 					description, min_order_qty, weight_per_unit
 				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
 				          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
-				code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
-				packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete,
-				mrp, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
-				nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
-				threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
-			if err != nil {
-				if len(errors) < 50 {
-					errors = append(errors, code+": "+err.Error())
-				}
-				continue
+			code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
+			packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete,
+			mrp, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
+			nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
+			threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
+		if ierr != nil {
+			if len(errors) < 50 {
+				errors = append(errors, code+": "+ierr.Error())
 			}
-			existing[strings.ToUpper(code)] = true
-			created++
+			continue
 		}
-		return shared.OK(c, fiber.Map{
-			"created": created, "skipped": skipped, "errors": errors, "total": len(body.Rows),
-		})
+		existing[strings.ToUpper(code)] = true
+		created++
 	}
+	return created, skipped, errors, nil
 }
 
 func listItemGroups(db *pgxpool.Pool) fiber.Handler {
@@ -440,19 +494,103 @@ func parseFloatKey(row map[string]string, keys ...string) float64 {
 	return v
 }
 
+func itemCodeFrom(row map[string]string) string {
+	return firstKey(row, "code", "sku", "item_code", "Item Code", "Part Code", "Product No", "Product No*", "Part No", "ItemCode")
+}
+
+func itemNameFrom(row map[string]string) string {
+	return firstKey(row, "name", "item_name", "Item Name", "Part Name", "Item Description", "Description", "ItemDescription")
+}
+
+func normHeader(s string) string {
+	s = strings.TrimSpace(strings.TrimPrefix(s, "\ufeff"))
+	return strings.ToLower(strings.Join(strings.Fields(s), " "))
+}
+
 func firstKey(row map[string]string, keys ...string) string {
-	for _, k := range keys {
-		if v, ok := row[k]; ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
+	norm := make(map[string]string, len(row))
+	for rk, rv := range row {
+		nk := normHeader(rk)
+		if nk == "" {
+			continue
 		}
-		// case-insensitive
-		for rk, rv := range row {
-			if strings.EqualFold(rk, k) && strings.TrimSpace(rv) != "" {
-				return strings.TrimSpace(rv)
-			}
+		if _, exists := norm[nk]; !exists || strings.TrimSpace(norm[nk]) == "" {
+			norm[nk] = rv
+		}
+	}
+	for _, k := range keys {
+		if v, ok := norm[normHeader(k)]; ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
 		}
 	}
 	return ""
+}
+
+func rowsFromCSV(r io.Reader) ([]map[string]string, error) {
+	cr := csv.NewReader(r)
+	cr.LazyQuotes = true
+	cr.FieldsPerRecord = -1
+	records, err := cr.ReadAll()
+	if err != nil {
+		return nil, err
+	}
+	return mapsFromTable(records), nil
+}
+
+func rowsFromXLSX(r io.Reader) ([]map[string]string, error) {
+	f, err := excelize.OpenReader(r)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("workbook has no sheets")
+	}
+	table, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, err
+	}
+	return mapsFromTable(table), nil
+}
+
+func mapsFromTable(table [][]string) []map[string]string {
+	if len(table) == 0 {
+		return nil
+	}
+	headerIdx := 0
+	for i, row := range table {
+		blob := strings.ToLower(strings.Join(row, " "))
+		if strings.Contains(blob, "item code") ||
+			(strings.Contains(blob, "item description") && strings.Contains(blob, "code")) {
+			headerIdx = i
+			break
+		}
+	}
+	headers := table[headerIdx]
+	out := make([]map[string]string, 0, len(table)-headerIdx)
+	for _, row := range table[headerIdx+1:] {
+		m := map[string]string{}
+		empty := true
+		for i, h := range headers {
+			h = strings.TrimSpace(strings.TrimPrefix(h, "\ufeff"))
+			if h == "" {
+				continue
+			}
+			v := ""
+			if i < len(row) {
+				v = strings.TrimSpace(row[i])
+			}
+			m[h] = v
+			if v != "" {
+				empty = false
+			}
+		}
+		if !empty {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 func truthy(s string) bool {

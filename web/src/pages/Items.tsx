@@ -213,39 +213,27 @@ export default function Items() {
           </p>
         </div>
         <div className="flex gap-2">
-          <CSVImport disabled={importing} onImport={async (rows) => {
-            const BATCH = 400
-            const total = rows.length
-            const batches = Math.max(1, Math.ceil(total / BATCH))
+          <CSVImport disabled={importing} onImport={() => {}} onImportFile={async (file) => {
             setImporting(true)
-            let created = 0
-            let skipped = 0
-            let failedAt = ''
+            notify({ type: 'info', title: 'Importing items', message: `Uploading ${file.name}… this can take a minute for large price lists.`, duration: 4000 })
             try {
-              for (let i = 0; i < batches; i++) {
-                const chunk = rows.slice(i * BATCH, (i + 1) * BATCH)
-                const r = await api.itemImport({ rows: chunk })
-                if (!r.ok) {
-                  failedAt = `batch ${i + 1}/${batches}: ${r.error || 'import failed'}`
-                  break
-                }
-                created += r.data?.created ?? 0
-                skipped += r.data?.skipped ?? 0
-                if (i === 0 || i === batches - 1 || (i + 1) % 5 === 0) {
-                  notify({
-                    type: 'info',
-                    title: 'Importing items',
-                    message: `${Math.min((i + 1) * BATCH, total)} / ${total} rows`,
-                    duration: 2500,
-                  })
-                }
+              const r = await api.itemImportFile(file)
+              if (!r.ok) {
+                notify({ type: 'error', title: 'Import failed', message: r.error || 'import failed' })
+                return
               }
-              if (failedAt) {
-                notify({ type: 'error', title: 'Import failed', message: `${failedAt}. Created ${created}, skipped ${skipped} before the error.` })
-              } else {
-                notify({ type: 'success', title: 'Items imported', message: `created ${created}, skipped ${skipped} of ${total}` })
-                loadList()
-              }
+              const created = r.data?.created ?? 0
+              const skipped = r.data?.skipped ?? 0
+              const totalRows = r.data?.total ?? 0
+              const errs = (r.data?.errors as string[] | undefined) || []
+              notify({
+                type: created > 0 ? 'success' : 'warning',
+                title: created > 0 ? 'Items imported' : 'Nothing imported',
+                message: `created ${created}, skipped ${skipped} of ${totalRows}${errs.length ? `. ${errs[0]}` : ''}`,
+              })
+              setSearch('')
+              setPage(1)
+              await loadList(1, '')
             } finally {
               setImporting(false)
             }
@@ -296,16 +284,13 @@ export default function Items() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="erpnext-card">
-          <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-lg font-semibold">Items ({total})</h2>
-            <div className="flex gap-3">
-              <input className="erpnext-input text-sm" style={{ width: 180 }} placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} />
-              <button onClick={handleSearch} className="erpnext-btn-secondary text-sm">Search</button>
-            </div>
-          </div>
-          <div className="p-4 overflow-auto" style={{ maxHeight: '70vh' }}>
+      <div className="erpnext-card">
+        <div className="px-6 py-4 flex flex-wrap items-center gap-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <h2 className="text-lg font-semibold mr-auto">Items ({total})</h2>
+          <input className="erpnext-input text-sm" style={{ width: 260 }} placeholder="Search code or name…" value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} />
+          <button onClick={handleSearch} className="erpnext-btn-secondary text-sm">Search</button>
+        </div>
+        <div className="p-4 overflow-auto" style={{ maxHeight: '70vh' }}>
             <table className="erpnext-table">
               <thead>
                 <tr style={{ background: 'var(--panel-2)' }}>
@@ -352,9 +337,9 @@ export default function Items() {
               </div>
             </div>
           </div>
-        </div>
+      </div>
 
-        <div className="erpnext-card">
+      <div className="erpnext-card">
           <div className="px-6 py-4 border-b flex items-center justify-between gap-2" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">
               {selected ? `Stock locations — ${selected.code}` : 'Select an item'}
@@ -433,7 +418,6 @@ export default function Items() {
               <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Click an item to see where it sits in the warehouse.</p>
             )}
           </div>
-        </div>
       </div>
 
       {showEdit && selected && (
