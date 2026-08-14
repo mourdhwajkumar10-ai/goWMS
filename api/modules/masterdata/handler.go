@@ -67,6 +67,43 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 func listItems(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		q := strings.TrimSpace(c.Query("q"))
+		limit := c.QueryInt("limit", 50)
+		if limit <= 0 {
+			limit = 50
+		}
+		if limit > 200 {
+			limit = 200
+		}
+		offset := c.QueryInt("offset", 0)
+		if offset < 0 {
+			offset = 0
+		}
+
+		where := `WHERE disabled=false`
+		args := []any{}
+		if q != "" {
+			args = append(args, "%"+q+"%")
+			where += ` AND (code ILIKE $1 OR name ILIKE $1 OR COALESCE(brand,'') ILIKE $1
+				OR COALESCE(hsn_no,'') ILIKE $1 OR COALESCE(category,'') ILIKE $1
+				OR COALESCE(product_group,'') ILIKE $1 OR COALESCE(vech,'') ILIKE $1
+				OR COALESCE(make,'') ILIKE $1 OR COALESCE(barcode,'') ILIKE $1)`
+		}
+
+		var total int
+		countSQL := `SELECT count(*) FROM items ` + where
+		if err := db.QueryRow(c.Context(), countSQL, args...).Scan(&total); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		order := ` ORDER BY code`
+		if q != "" {
+			args = append(args, q)
+			order = ` ORDER BY CASE WHEN upper(code) = upper($2) THEN 0 ELSE 1 END, code`
+		}
+		limitArg := len(args) + 1
+		offsetArg := len(args) + 2
+		args = append(args, limit, offset)
+
 		sql := `
 			SELECT id, code, name, COALESCE(brand,''), COALESCE(item_group_id::text,''),
 			       has_serial, has_batch, has_expiry_date, safety_stock, valuation_rate,
@@ -80,17 +117,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
 			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
 			       COALESCE(standard_rate,0), max_qty_per_bin
-			FROM items
-			WHERE disabled=false`
-		args := []any{}
-		if q != "" {
-			sql += ` AND (code ILIKE $1 OR name ILIKE $1 OR COALESCE(brand,'') ILIKE $1
-				OR COALESCE(hsn_no,'') ILIKE $1 OR COALESCE(category,'') ILIKE $1
-				OR COALESCE(product_group,'') ILIKE $1 OR COALESCE(vech,'') ILIKE $1
-				OR COALESCE(make,'') ILIKE $1)`
-			args = append(args, "%"+q+"%")
-		}
-		sql += ` ORDER BY code`
+			FROM items ` + where + order + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
 
 		rows, err := db.Query(c.Context(), sql, args...)
 		if err != nil {
@@ -151,7 +178,9 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			i.ItemGroup = groupID
 			list = append(list, i)
 		}
-		return shared.OK(c, list)
+		return c.JSON(fiber.Map{
+			"ok": true, "data": list, "total": total, "limit": limit, "offset": offset,
+		})
 	}
 }
 

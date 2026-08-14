@@ -48,9 +48,6 @@ func importItemsCSV(db *pgxpool.Pool) fiber.Handler {
 		if len(body.Rows) == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "rows required")
 		}
-		if len(body.Rows) > 1000 {
-			return shared.Err(c, fiber.StatusBadRequest, "send at most 1000 rows per request")
-		}
 
 		created, skipped, errors := 0, 0, []string{}
 		codes := make([]string, 0, len(body.Rows))

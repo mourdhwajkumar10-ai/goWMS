@@ -60,6 +60,9 @@ interface InvRow {
 export default function Items() {
   const [list, setList] = useState<Item[]>([])
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const PAGE_SIZE = 50
   const [showNew, setShowNew] = useState(false)
   const [selected, setSelected] = useState<Item | null>(null)
   const [inventory, setInventory] = useState<InvRow[]>([])
@@ -73,9 +76,16 @@ export default function Items() {
   const [uploading, setUploading] = useState(false)
   const [importing, setImporting] = useState(false)
 
-  const loadList = () => api.itemList().then(r => { if (r.ok) setList(r.data ?? []) })
+  const loadList = (pageNum = page, q = search) => {
+    const offset = (pageNum - 1) * PAGE_SIZE
+    return api.itemList(q.trim() || undefined, { limit: PAGE_SIZE, offset }).then(r => {
+      if (r.ok) {
+        setList(r.data ?? [])
+        setTotal(r.total ?? 0)
+      }
+    })
+  }
   useEffect(() => {
-    loadList()
     api.get<LocOpt[]>('/masterdata/locations').then(r => {
       if (r.ok) setLocations((r.data ?? []).map((l: any) => ({
         id: l.id, code: l.code, warehouse_code: l.warehouse_code,
@@ -83,10 +93,13 @@ export default function Items() {
     })
   }, [])
 
+  useEffect(() => {
+    loadList(page)
+  }, [page])
+
   const handleSearch = async () => {
-    if (!search.trim()) { loadList(); return }
-    const r = await api.itemList(search)
-    if (r.ok) setList(r.data ?? [])
+    if (page !== 1) setPage(1)
+    else await loadList(1)
   }
 
   const openItem = async (item: Item) => {
@@ -143,7 +156,7 @@ export default function Items() {
       notify({ type: 'success', title: 'Product updated', message: selected.code })
       setShowEdit(false)
       loadList()
-      const refreshed = await api.itemList(selected.code)
+      const refreshed = await api.itemList(selected.code, { limit: 20, offset: 0 })
       if (refreshed.ok) {
         const found = (refreshed.data ?? []).find((x: Item) => x.id === selected.id)
         if (found) openItem(found)
@@ -286,7 +299,7 @@ export default function Items() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="erpnext-card">
           <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-lg font-semibold">All Items ({list.length})</h2>
+            <h2 className="text-lg font-semibold">Items ({total})</h2>
             <div className="flex gap-3">
               <input className="erpnext-input text-sm" style={{ width: 180 }} placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} />
               <button onClick={handleSearch} className="erpnext-btn-secondary text-sm">Search</button>
@@ -320,6 +333,24 @@ export default function Items() {
                 {list.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td></tr>}
               </tbody>
             </table>
+            <div className="flex items-center justify-between mt-3 text-sm" style={{ color: 'var(--text-dim)' }}>
+              <span>
+                {total === 0 ? '0' : `${(page - 1) * PAGE_SIZE + 1}–${Math.min(page * PAGE_SIZE, total)}`} of {total}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  className="erpnext-btn-secondary text-sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                >Prev</button>
+                <span className="px-2 py-1">Page {page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                <button
+                  className="erpnext-btn-secondary text-sm"
+                  disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                  onClick={() => setPage(p => p + 1)}
+                >Next</button>
+              </div>
+            </div>
           </div>
         </div>
 

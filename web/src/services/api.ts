@@ -24,6 +24,7 @@ interface ApiResponse<T> {
   data: T;
   ok: boolean;
   error?: string;
+  total?: number;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
@@ -45,7 +46,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (!res.ok || payload.ok === false) {
     return { ok: false, data: payload.data, error: payload.error || `Request failed (${res.status})` };
   }
-  return { ok: true, data: payload.data };
+  return { ok: true, data: payload.data, total: (payload as { total?: number }).total };
 }
 
 const get = <T>(path: string) => request<T>("GET", path);
@@ -119,7 +120,14 @@ export const api = {
   returnsScrap: (id: number, data: any) => post<any>(`/returns/${id}/scrap`, data),
 
   // Items
-  itemList: (q?: string) => get<any[]>(`/masterdata/items${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  itemList: (q?: string, opts?: { limit?: number; offset?: number }) => {
+    const p = new URLSearchParams()
+    if (q) p.set("q", q)
+    if (opts?.limit != null) p.set("limit", String(opts.limit))
+    if (opts?.offset != null) p.set("offset", String(opts.offset))
+    const qs = p.toString()
+    return get<any[]>(`/masterdata/items${qs ? `?${qs}` : ""}`)
+  },
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
   itemUpdate: (id: number, data: any) => patch<any>(`/masterdata/items/${id}`, data),
   itemImport: (data: any) => post<any>("/masterdata/items/import", data),
