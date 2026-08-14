@@ -85,6 +85,11 @@ export default function Putaway() {
   const [fitOverrideId, setFitOverrideId] = useState<number | null>(null)
   const [fitNotes, setFitNotes] = useState('')
   const [fitBusy, setFitBusy] = useState(false)
+  const [putawaySourceId, setPutawaySourceId] = useState<number | null>(null)
+  const [selectedQueueId, setSelectedQueueId] = useState<number | null>(null)
+  const [formError, setFormError] = useState('')
+  const [confirmBusy, setConfirmBusy] = useState(false)
+  const [suggestBusy, setSuggestBusy] = useState(false)
 
   const loadRules = () => api.putawayRules().then(r => { if (r.ok) setRules(r.data ?? []) })
   const loadQueue = () => api.putawayQueue().then(r => { if (r.ok) setQueue(r.data ?? []) })
@@ -119,16 +124,31 @@ export default function Putaway() {
     setPutawayItem(code)
   }
 
-  const suggest = async (qtyOverride?: number, extraExclude?: number[]) => {
-    if (!putawayItem) return
+  const suggest = async (
+    qtyOverride?: number,
+    extraExclude?: number[],
+    opts?: { item?: string; warehouseId?: number; aisle?: string; bay?: string },
+  ) => {
+    const item = (opts?.item ?? putawayItem).trim()
+    if (!item) {
+      setFormError('Pick a line from the queue, then suggest a bin.')
+      notify({ type: 'error', title: 'Item required', message: 'Pick a pending queue line first' })
+      return
+    }
     const qty = qtyOverride ?? (+putawayQty || 1)
     const exclude = extraExclude ?? excludeIds
+    const warehouseId = opts?.warehouseId ?? putawayWarehouseId ?? undefined
+    const aisle = opts?.aisle ?? prefAisle
+    const bay = opts?.bay ?? prefBay
+    setSuggestBusy(true)
+    setFormError('')
     const r = await api.putawaySuggest(
-      putawayItem,
+      item,
       qty,
-      putawayWarehouseId || undefined,
-      { aisle: prefAisle || undefined, bay: prefBay || undefined, excludeLocationIds: exclude },
+      warehouseId,
+      { aisle: aisle || undefined, bay: bay || undefined, excludeLocationIds: exclude },
     )
+    setSuggestBusy(false)
     if (r.ok && r.data) {
       setSuggestion(r.data)
       setCandidates(r.data.candidates || [])
@@ -146,14 +166,18 @@ export default function Putaway() {
     } else {
       setSuggestion(null)
       setCandidates([])
-      notify({ type: 'error', title: 'No suggestion', message: r.error || '' })
+      const err = r.error || 'No bin found for this item'
+      setFormError(err)
+      notify({ type: 'error', title: 'No suggestion', message: err })
     }
   }
 
   const pickQueueRow = (row: QueueRow) => {
+    setSelectedQueueId(row.id)
     setPutawayItem(row.item_code)
     setPutawayQty(String(row.qty))
     setPutawaySource(row.location_code)
+    setPutawaySourceId(row.location_id)
     setPutawayWarehouseId(row.warehouse_id)
     setPutawayBatch(row.batch_no || '')
     setPutawayTarget('')
@@ -161,7 +185,16 @@ export default function Putaway() {
     setSuggestion(null)
     setCandidates([])
     setExcludeIds([])
+    setFormError('')
+    setPrefAisle('')
+    setPrefBay('')
     loadBins(row.warehouse_id)
+    void suggest(row.qty, [], {
+      item: row.item_code,
+      warehouseId: row.warehouse_id,
+      aisle: '',
+      bay: '',
+    })
   }
 
   const selectCandidate = (c: Candidate) => {
@@ -174,6 +207,9 @@ export default function Putaway() {
     setPutawayItem(''); setPutawayQty(''); setPutawayTarget(''); setPutawayTargetId(null)
     setPutawayBatch(''); setSuggestion(null); setCandidates([])
     setExcludeIds([])
+    setPutawaySourceId(null)
+    setSelectedQueueId(null)
+    setFormError('')
     setFitOpen(false)
     setFitQty(''); setFitOverride(''); setFitOverrideId(null); setFitNotes('')
   }
@@ -189,15 +225,31 @@ export default function Putaway() {
     const qty = opts?.qty ?? +putawayQty
     const target = (opts?.target ?? putawayTarget).trim()
     const targetId = opts?.targetId === undefined ? putawayTargetId : opts.targetId
-    if (!putawayItem || !qty || (!target && !targetId)) return { ok: false as const }
-    if (!putawaySource.trim()) {
-      notify({ type: 'error', title: 'Source required', message: 'Pick a queue row or enter source location (e.g. INCOMING-01)' })
+    if (!putawayItem || !qty) {
+      const err = 'Pick a pending line and enter quantity'
+      setFormError(err)
+      notify({ type: 'error', title: 'Cannot confirm', message: err })
       return { ok: false as const }
     }
+    if (!target && !targetId) {
+      const err = 'Click Suggest location (or type a bin) before confirm'
+      setFormError(err)
+      notify({ type: 'error', title: 'Target bin required', message: err })
+      return { ok: false as const }
+    }
+    if (!putawaySource.trim() && !putawaySourceId) {
+      const err = 'Pick a queue line so source (e.g. INCOMING-01) is set'
+      setFormError(err)
+      notify({ type: 'error', title: 'Source required', message: err })
+      return { ok: false as const }
+    }
+    setConfirmBusy(true)
+    setFormError('')
     const r = await api.putawayCreate({
       item_code: putawayItem,
       source_warehouse: putawaySource || undefined,
       source_location: putawaySource || undefined,
+      source_location_id: putawaySourceId || undefined,
       target_location: target,
       target_location_id: targetId || undefined,
       warehouse_id: putawayWarehouseId || undefined,
@@ -206,6 +258,7 @@ export default function Putaway() {
       is_override: !!opts?.isOverride,
       exception_reason: opts?.reason || undefined,
     })
+    setConfirmBusy(false)
     if (r.ok) {
       if (!opts?.skipClear) {
         setMsg(`Putaway complete: ${qty} x ${putawayItem} → ${r.data.target_location || target}`)
@@ -215,7 +268,9 @@ export default function Putaway() {
       }
       return { ok: true as const, data: r.data }
     }
-    notify({ type: 'error', title: 'Putaway failed', message: r.error || '' })
+    const err = r.error || 'Putaway failed'
+    setFormError(err)
+    notify({ type: 'error', title: 'Putaway failed', message: err })
     return { ok: false as const }
   }
 
@@ -472,12 +527,11 @@ export default function Putaway() {
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-semibold">Putaway</h2>
           <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            Home bin (if bin-controlled) → same-item bins with remaining cap → empty pick-face → empty storage.
-            Mixed bins and warehouse / item-bin caps are enforced on confirm.
+            Pick a queue line → we suggest a bin → confirm. Empty “Active rules” is fine; rules are optional caps.
           </p>
         </div>
         <button onClick={() => setShowScanner(true)} className="erpnext-btn-secondary">📷 Scan Item</button>
@@ -487,24 +541,37 @@ export default function Putaway() {
         <div className="erpnext-card lg:col-span-1">
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Pending queue ({queue.length})</h3>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>Incoming / hold / damaged — unallocatable</p>
+            <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>Click a line to fill the form and suggest a bin</p>
           </div>
-          <div className="p-3 overflow-auto" style={{ maxHeight: 360 }}>
+          <div className="p-3 overflow-auto" style={{ maxHeight: 480 }}>
             {queue.length === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No incoming stock waiting.</p>}
-            {queue.map(q => (
-              <button
-                key={q.id}
-                type="button"
-                onClick={() => pickQueueRow(q)}
-                className="w-full text-left p-3 mb-2 rounded-lg"
-                style={{ background: 'var(--panel-2)', border: '1px solid var(--border)' }}
-              >
-                <div className="font-medium" style={{ color: 'var(--accent)' }}>{q.item_code}</div>
-                <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
-                  {q.qty} from {q.warehouse_code}/{q.location_code} ({q.location_type})
-                </div>
-              </button>
-            ))}
+            {queue.map(q => {
+              const selected = selectedQueueId === q.id
+              return (
+                <button
+                  key={q.id}
+                  type="button"
+                  onClick={() => pickQueueRow(q)}
+                  className="w-full text-left p-3 mb-2 rounded-lg"
+                  style={{
+                    background: selected ? 'rgba(36,144,239,0.1)' : 'var(--panel-2)',
+                    border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
+                  }}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="font-semibold" style={{ color: 'var(--text)' }}>{q.item_code}</div>
+                    <div className="text-sm font-semibold tabular-nums" style={{ color: 'var(--accent)' }}>{q.qty}</div>
+                  </div>
+                  {q.item_name && (
+                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-dim)' }}>{q.item_name}</div>
+                  )}
+                  <div className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
+                    {q.warehouse_code} · {q.location_code} · {q.location_type}
+                    {q.batch_no ? ` · batch ${q.batch_no}` : ''}
+                  </div>
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -513,11 +580,16 @@ export default function Putaway() {
             <h3 className="font-semibold">Confirm putaway</h3>
           </div>
           <div className="p-4 space-y-3">
+            {formError && (
+              <div className="p-3 rounded-lg text-sm" style={{ background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.25)', color: 'var(--red, #b91c1c)' }}>
+                {formError}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="erpnext-label">Item Code *</label>
                 <div className="flex gap-1">
-                  <input className="erpnext-input" value={putawayItem} onChange={e => setPutawayItem(e.target.value)} placeholder="ITEM-001" />
+                  <input className="erpnext-input" value={putawayItem} onChange={e => setPutawayItem(e.target.value)} placeholder="Pick from queue" />
                   <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
                 </div>
               </div>
@@ -526,15 +598,15 @@ export default function Putaway() {
                 <input className="erpnext-input" type="number" value={putawayQty} onChange={e => setPutawayQty(e.target.value)} />
               </div>
               <div>
-                <label className="erpnext-label">Source location</label>
-                <input className="erpnext-input" value={putawaySource} onChange={e => setPutawaySource(e.target.value)} placeholder="INCOMING-01" />
+                <label className="erpnext-label">From (incoming / hold)</label>
+                <input className="erpnext-input" value={putawaySource} onChange={e => { setPutawaySource(e.target.value); setPutawaySourceId(null) }} placeholder="INCOMING-01" />
               </div>
               <div>
                 <label className="erpnext-label">Batch</label>
                 <input className="erpnext-input" value={putawayBatch} onChange={e => setPutawayBatch(e.target.value)} />
               </div>
               <div>
-                <label className="erpnext-label">Preferred aisle (dedicated bay)</label>
+                <label className="erpnext-label">Preferred aisle</label>
                 <input className="erpnext-input" value={prefAisle} onChange={e => setPrefAisle(e.target.value.toUpperCase())} placeholder="A" />
               </div>
               <div>
@@ -542,23 +614,30 @@ export default function Putaway() {
                 <input className="erpnext-input" value={prefBay} onChange={e => setPrefBay(e.target.value)} placeholder="01" />
               </div>
               <div>
-                <label className="erpnext-label">Target Location *</label>
+                <label className="erpnext-label">Put into bin *</label>
                 <input
                   className="erpnext-input"
                   value={putawayTarget}
                   onChange={e => { setPutawayTarget(e.target.value); setPutawayTargetId(null) }}
-                  placeholder="A-01-01-01"
+                  placeholder="Suggested after you pick a queue line"
                 />
               </div>
               <div className="flex items-end">
-                <button onClick={() => { void suggest() }} className="erpnext-btn-secondary w-full">Suggest location</button>
+                <button
+                  onClick={() => { void suggest() }}
+                  className="erpnext-btn-secondary w-full"
+                  disabled={suggestBusy || !putawayItem}
+                >
+                  {suggestBusy ? 'Finding bin…' : 'Suggest location'}
+                </button>
               </div>
             </div>
 
             {suggestion && (
               <div className="p-3 rounded-lg text-sm space-y-1" style={{ background: 'rgba(36,144,239,0.08)', border: '1px solid rgba(36,144,239,0.25)' }}>
                 <div>
-                  Suggested <strong>{suggestion.location_code}</strong> — {reasonLabel(suggestion.reason)}
+                  Put <strong>{putawayQty}</strong> × {putawayItem} into <strong>{suggestion.location_code}</strong>
+                  {' — '}{reasonLabel(suggestion.reason)}
                   {suggestion.zone && <> · {suggestion.zone === 'pick_face' ? 'pick-face' : 'storage'}</>}
                   {suggestion.same_bay && <> · dedicated bay</>}
                   {suggestion.on_hand_qty > 0 && <> · already {suggestion.on_hand_qty} here</>}
@@ -581,7 +660,7 @@ export default function Putaway() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {candidates.length > 0 && (
                   <div>
-                    <label className="erpnext-label">Suggested candidates</label>
+                    <label className="erpnext-label">Other suggested bins</label>
                     <select
                       className="erpnext-input"
                       value={putawayTargetId ?? ''}
@@ -601,7 +680,7 @@ export default function Putaway() {
                 )}
                 {allBins.length > 0 && (
                   <div>
-                    <label className="erpnext-label">Or select any bin</label>
+                    <label className="erpnext-label">Or pick any pick-face / storage bin</label>
                     <select
                       className="erpnext-input"
                       value={putawayTargetId ?? ''}
@@ -627,7 +706,13 @@ export default function Putaway() {
             )}
 
             <div className="flex gap-2 flex-wrap">
-              <button onClick={() => { void doPutaway() }} className="erpnext-btn-primary">Confirm putaway</button>
+              <button
+                onClick={() => { void doPutaway() }}
+                className="erpnext-btn-primary"
+                disabled={confirmBusy || !putawayItem || !putawayQty || (!putawayTarget && !putawayTargetId)}
+              >
+                {confirmBusy ? 'Putting away…' : 'Confirm putaway'}
+              </button>
               <button
                 type="button"
                 onClick={openFitPanel}
@@ -638,7 +723,7 @@ export default function Putaway() {
               </button>
             </div>
             <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
-              If the suggested bin does not fit this SKU, report it — put what fits, then override the rest to another location or leave it in incoming.
+              If the bin is full or the carton does not fit, use Bin too big / too small — put what fits, then override the rest.
             </p>
           </div>
         </div>
@@ -653,9 +738,9 @@ export default function Putaway() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <div className="erpnext-card">
           <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <h3 className="font-semibold">Warehouse putaway rules</h3>
+            <h3 className="font-semibold">Warehouse putaway rules (optional)</h3>
             <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
-              Caps sellable stock (pick-face + storage) for an item in a warehouse. 0 = unlimited. Suggest and confirm both honour this.
+              Not required to put stock away. Use only to cap sellable qty for an item in a warehouse. Empty list is normal.
             </p>
           </div>
           <div className="p-4 space-y-3">
