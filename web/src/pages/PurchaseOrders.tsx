@@ -5,6 +5,8 @@ import Comments from '../components/Comments'
 import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface POItem {
   item_code: string
@@ -69,6 +71,7 @@ export default function PurchaseOrders() {
 
   const loadPOs = () => api.poList().then(r => { if (r.ok) setPOs(r.data ?? []) })
   useEffect(() => { loadPOs() }, [])
+  const pager = useClientPager(pos)
 
   const addItem = () => {
     setItems(withTrailingEmptyRow(
@@ -391,6 +394,7 @@ export default function PurchaseOrders() {
                         <th style={{ minWidth: 150 }}>Item Name</th>
                         <th className="w-20">Qty *</th>
                         <th className="w-24">Rate</th>
+                        <th className="w-28">Batch</th>
                         <th className="w-24">UOM</th>
                         <th className="w-20">Disc %</th>
                         <th className="w-24 text-right">Amount</th>
@@ -424,6 +428,9 @@ export default function PurchaseOrders() {
                           </td>
                           <td>
                             <input className="erpnext-input text-sm w-full" type="number" value={item.rate} onChange={e => updateItem(idx, 'rate', +e.target.value)} />
+                          </td>
+                          <td>
+                            <input className="erpnext-input text-sm w-full" value={item.batch_no} onChange={e => updateItem(idx, 'batch_no', e.target.value)} placeholder="LOT-001" />
                           </td>
                           <td>
                             <select className="erpnext-input text-sm w-full" value={item.uom} onChange={e => updateItem(idx, 'uom', e.target.value)}>
@@ -469,19 +476,9 @@ export default function PurchaseOrders() {
       {/* PO List */}
       {!selectedPO && !showNew && (
         <div className="erpnext-card">
-          <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">All Purchase Orders</h2>
-            <div className="flex gap-3">
-              <input 
-                className="erpnext-input text-sm" 
-                style={{ width: 250 }} 
-                placeholder="Search POs..." 
-                value={search} 
-                onChange={e => setSearch(e.target.value)} 
-                onKeyDown={e => e.key === 'Enter' && handleSearch()} 
-              />
-              <button onClick={handleSearch} className="erpnext-btn-secondary text-sm">Search</button>
-            </div>
+            <ListPager pager={pager} placeholder="Search POs…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -498,7 +495,7 @@ export default function PurchaseOrders() {
                 </tr>
               </thead>
               <tbody>
-                {pos.map((po: any) => (
+                {pager.pageItems.map((po: any) => (
                   <tr key={po.id} className="hover:opacity-90">
                     <td 
                       className="font-medium cursor-pointer hover:underline" 
@@ -530,7 +527,7 @@ export default function PurchaseOrders() {
                     </td>
                   </tr>
                 ))}
-                {pos.length === 0 && (
+                {pager.total === 0 && (
                   <tr><td colSpan={8} className="text-center py-12" style={{ color: 'var(--text-dim)' }}>No purchase orders found</td></tr>
                 )}
               </tbody>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface DashboardData {
   TotalItems: number
@@ -65,17 +67,25 @@ export default function Analytics() {
     { key: 'outbound', label: 'Outbound', count: outbound ? 1 : 0 },
   ] as const
 
-  const renderMovementTable = (rows: FastSlow[], type: string) => (
+  const pager = useClientPager<FastSlow | ExpiryItem>(
+    activeTab === 'fast' ? fast
+      : activeTab === 'slow' ? slow
+        : activeTab === 'dead' ? dead
+          : expiry
+  )
+
+  const renderMovementTable = (type: string) => (
     <div className="erpnext-card">
-      <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-        <h3 className="font-semibold">{type} ({rows.length})</h3>
+      <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
+        <h3 className="font-semibold">{type} ({pager.total})</h3>
+        <ListPager pager={pager} placeholder="Search items…" />
       </div>
       <table className="erpnext-table">
         <thead>
           <tr><th>Item</th><th>Name</th><th>Classification</th><th>Turnover</th><th>Days Since Sale</th><th>Daily Sales</th></tr>
         </thead>
         <tbody>
-          {rows.map(r => (
+          {(pager.pageItems as unknown as FastSlow[]).map(r => (
             <tr key={r.item_code}>
               <td className="font-medium">{r.item_code}</td>
               <td>{r.item_name || '—'}</td>
@@ -89,7 +99,7 @@ export default function Analytics() {
               <td>{r.avg_daily_sales?.toFixed(2) ?? '—'}</td>
             </tr>
           ))}
-          {rows.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No data</td></tr>}
+          {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No data</td></tr>}
         </tbody>
       </table>
     </div>
@@ -134,9 +144,9 @@ export default function Analytics() {
         ))}
       </div>
 
-      {activeTab === 'fast' && renderMovementTable(fast, 'Fast Moving Items')}
-      {activeTab === 'slow' && renderMovementTable(slow, 'Slow Moving Items')}
-      {activeTab === 'dead' && renderMovementTable(dead, 'Dead Stock')}
+      {activeTab === 'fast' && renderMovementTable('Fast Moving Items')}
+      {activeTab === 'slow' && renderMovementTable('Slow Moving Items')}
+      {activeTab === 'dead' && renderMovementTable('Dead Stock')}
       {activeTab === 'outbound' && outbound && (
         <div className="space-y-4">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -176,15 +186,16 @@ export default function Analytics() {
       )}
       {activeTab === 'expiry' && (
         <div className="erpnext-card">
-          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <h3 className="font-semibold">Expiring Items ({expiry.length})</h3>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <h3 className="font-semibold">Expiring Items ({pager.total})</h3>
+            <ListPager pager={pager} placeholder="Search expiring items…" />
           </div>
           <table className="erpnext-table">
             <thead>
               <tr><th>Item</th><th>Name</th><th>Qty</th><th>Batch</th><th>Expiry Date</th><th>Days Left</th></tr>
             </thead>
             <tbody>
-              {expiry.map(r => (
+              {(pager.pageItems as unknown as ExpiryItem[]).map(r => (
                 <tr key={r.item_code + r.batch_no}>
                   <td className="font-medium">{r.item_code}</td>
                   <td>{r.item_name || '—'}</td>
@@ -200,7 +211,7 @@ export default function Analytics() {
                   </td>
                 </tr>
               ))}
-              {expiry.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No expiring items</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No expiring items</td></tr>}
             </tbody>
           </table>
         </div>

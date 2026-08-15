@@ -1,4 +1,5 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { clearSession, getRole } from "../services/api";
 
 const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean; supervisorOnly?: boolean }[] }[] = [
@@ -14,8 +15,9 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
     title: "Inward",
     items: [
       { to: "/grn", label: "GRN", icon: "⇩" },
-      { to: "/grn-exceptions", label: "Exceptions", icon: "⚠", supervisorOnly: true },
-      { to: "/grn-followups", label: "Follow-Up Receipts", icon: "↻", supervisorOnly: true },
+      { to: "/exceptions", label: "Exceptions", icon: "⚠" },
+      { to: "/follow-up", label: "Follow-Up Receipts", icon: "↻" },
+      { to: "/grn-audit", label: "Random Audit", icon: "✚" },
       { to: "/putaway", label: "Putaway", icon: "⇨" },
     ],
   },
@@ -60,6 +62,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
       { to: "/items", label: "Item", icon: "◱" },
       { to: "/warehouses", label: "Warehouse", icon: "▦" },
       { to: "/locations", label: "Locations", icon: "▤" },
+      { to: "/transports", label: "Transport", icon: "⛟" },
       { to: "/employees", label: "Employees", icon: "☺", adminOnly: true },
       { to: "/roles", label: "Roles", icon: "⚿", rolesAdminOnly: true },
       { to: "/workflow", label: "Workflow", icon: "↯" },
@@ -80,22 +83,80 @@ function canSeeRolesNav(role: string | null) {
 
 export default function Layout() {
   const navigate = useNavigate();
+  const location = useLocation();
   const role = getRole();
   const initial = (role || "U").slice(0, 1).toUpperCase();
   const showAdmin = canSeeAdminNav(role);
   const showRoles = canSeeRolesNav(role);
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("gowms_nav") === "collapsed");
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [navQuery, setNavQuery] = useState("");
+  const [navOpen, setNavOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const logout = () => {
     clearSession();
     navigate("/login");
   };
 
+  const toggleMenu = () => {
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      setMobileOpen((v) => !v);
+      return;
+    }
+    const next = !collapsed;
+    setCollapsed(next);
+    localStorage.setItem("gowms_nav", next ? "collapsed" : "expanded");
+  };
+
+  useEffect(() => {
+    if (location.pathname && location.pathname !== "/login") {
+      localStorage.setItem("gowms_last_path", location.pathname);
+    }
+    setMobileOpen(false);
+    setNavOpen(false);
+    setNavQuery("");
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        setNavOpen(true);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const visibleItems = useMemo(() => {
+    return sections.flatMap((section) =>
+      section.items
+        .filter((item) => {
+          if (item.rolesAdminOnly) return showRoles;
+          if (item.adminOnly || item.supervisorOnly) return showAdmin;
+          return true;
+        })
+        .map((item) => ({ ...item, section: section.title })),
+    );
+  }, [showAdmin, showRoles]);
+
+  const searchHits = useMemo(() => {
+    const q = navQuery.trim().toLowerCase();
+    if (!q) return visibleItems.slice(0, 8);
+    return visibleItems.filter((item) =>
+      `${item.label} ${item.section} ${item.to}`.toLowerCase().includes(q),
+    ).slice(0, 12);
+  }, [navQuery, visibleItems]);
+
   return (
     <div className="shell">
-      <aside className="sidebar">
+      {mobileOpen && <div className="nav-backdrop" onClick={() => setMobileOpen(false)} />}
+      <aside className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
         <div className="brand">
           <span className="brand-mark">gW</span>
-          <div>
+          <div className="brand-text">
             <strong>goWMS</strong>
             <small>Warehouse Desk</small>
           </div>
@@ -115,11 +176,12 @@ export default function Layout() {
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  end={item.to === "/"}
+                  end={item.to !== "/grn"}
+                  title={item.label}
                   className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
                 >
                   <span className="nav-icon">{item.icon}</span>
-                  {item.label}
+                  <span className="nav-link-label">{item.label}</span>
                 </NavLink>
               ))}
             </div>
@@ -129,10 +191,39 @@ export default function Layout() {
       </aside>
       <div className="main">
         <header className="topbar">
-          <div className="awesomebar" title="Search (coming soon)">
+          <button type="button" className="hamburger" aria-label="Toggle menu" onClick={toggleMenu}>
+            ☰
+          </button>
+          <div className="awesomebar">
             <span>⌕</span>
-            <span>Search or type a command</span>
+            <input
+              ref={searchRef}
+              value={navQuery}
+              onChange={(e) => { setNavQuery(e.target.value); setNavOpen(true); }}
+              onFocus={() => setNavOpen(true)}
+              onBlur={() => setTimeout(() => setNavOpen(false), 150)}
+              placeholder="Search pages…"
+              aria-label="Search"
+            />
             <kbd>⌘K</kbd>
+            {navOpen && (
+              <div className="awesomebar-results">
+                {searchHits.map((item) => (
+                  <button
+                    key={item.to}
+                    type="button"
+                    onMouseDown={() => navigate(item.to)}
+                  >
+                    <span>{item.icon}</span>
+                    <span>{item.label}</span>
+                    <span style={{ marginLeft: "auto", color: "var(--text-dim)", fontSize: 11 }}>{item.section}</span>
+                  </button>
+                ))}
+                {searchHits.length === 0 && (
+                  <button type="button" disabled>No matching pages</button>
+                )}
+              </div>
+            )}
           </div>
           <div className="topbar-right">
             <span className="role-badge">{role ?? "user"}</span>

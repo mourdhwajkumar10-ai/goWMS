@@ -35,6 +35,8 @@ func registerGapRoutes(md fiber.Router, db *pgxpool.Pool) {
 
 	md.Get("/carriers", listCarriers(db))
 	md.Post("/carriers", createCarrier(db))
+
+	registerTransportRoutes(md, db)
 }
 
 // RegisterCarriersRoot mounts /carriers at API root (QA/docs path).
@@ -391,6 +393,7 @@ func updateSupplier(db *pgxpool.Pool) fiber.Handler {
 			ContactEmail        *string `json:"contact_email"`
 			VehicleFleet        *string `json:"vehicle_fleet"`
 			DefaultServiceLevel *string `json:"default_service_level"`
+			Barcode             *string `json:"barcode"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -415,6 +418,9 @@ func updateSupplier(db *pgxpool.Pool) fiber.Handler {
 		}
 		if tag.RowsAffected() == 0 {
 			return shared.Err(c, fiber.StatusNotFound, "supplier not found")
+		}
+		if body.Barcode != nil {
+			_, _ = db.Exec(c.Context(), `UPDATE suppliers SET barcode=$2 WHERE id=$1`, id, strings.TrimSpace(*body.Barcode))
 		}
 		return shared.OK(c, fiber.Map{"id": id, "updated": true})
 	}

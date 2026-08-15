@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, getToken } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 export default function Backorders() {
   const [tab, setTab] = useState<'v1' | 'v2'>('v2')
@@ -17,6 +19,7 @@ export default function Backorders() {
     api.backorderV2List().then(r => { if (r.ok) setListV2(r.data ?? []) })
   }
   useEffect(() => { load() }, [])
+  const pager = useClientPager(tab === 'v2' ? listV2 : list)
 
   const create = async () => {
     if (!so) return
@@ -71,12 +74,15 @@ export default function Backorders() {
       </div>
 
       <div className="erpnext-card">
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <ListPager pager={pager} placeholder="Search backorders…" />
+        </div>
         <table className="erpnext-table">
           <thead>
             <tr><th>Backorder</th><th>SO</th><th>Customer</th><th>Status</th><th>Lines</th><th>Created</th><th></th></tr>
           </thead>
           <tbody>
-            {(tab === 'v2' ? listV2 : list).map((b: any, i: number) => (
+            {pager.pageItems.map((b: any, i: number) => (
               <tr key={b.id || b.backorder_no || i}>
                 <td className="font-medium">{b.backorder_no}</td>
                 <td>{b.sales_order_no}</td>
@@ -94,7 +100,7 @@ export default function Backorders() {
                 </td>
               </tr>
             ))}
-            {(tab === 'v2' ? listV2 : list).length === 0 && (
+            {pager.total === 0 && (
               <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No open backorders</td></tr>
             )}
           </tbody>

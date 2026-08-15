@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Batch {
   id: number
@@ -15,7 +17,6 @@ interface Batch {
 
 export default function Batches() {
   const [list, setList] = useState<Batch[]>([])
-  const [search, setSearch] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -27,6 +28,7 @@ export default function Batches() {
 
   const loadList = () => api.batchList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
+  const pager = useClientPager(list)
 
   const createBatch = async () => {
     const r = await api.batchCreate({
@@ -113,8 +115,9 @@ export default function Batches() {
       )}
 
       <div className="erpnext-card">
-        <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+        <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-lg font-semibold">All Batches ({list.length})</h2>
+          <ListPager pager={pager} placeholder="Search batches…" />
         </div>
         <div className="p-4">
           <table className="erpnext-table">
@@ -130,7 +133,7 @@ export default function Batches() {
               </tr>
             </thead>
             <tbody>
-              {list.map(b => (
+              {pager.pageItems.map(b => (
                 <tr key={b.id}>
                   <td className="font-medium" style={{ color: 'var(--accent)' }}>{b.batch_id}</td>
                   <td>{b.item_code}</td>
@@ -149,7 +152,7 @@ export default function Batches() {
                   </td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No batches</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No batches</td></tr>}
             </tbody>
           </table>
         </div>

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Wh { id: number; code: string; name: string }
 interface Loc { id: number; code: string; warehouse_id: number }
@@ -35,6 +37,7 @@ export default function Transfers() {
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
     api.get<Loc[]>('/masterdata/locations').then(r => { if (r.ok) setLocations(r.data ?? []) })
   }, [])
+  const pager = useClientPager(list)
 
   const create = async () => {
     const r = await api.post<{ name: string }>('/inventory/transfers', {
@@ -140,8 +143,9 @@ export default function Transfers() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Transfers ({list.length})</h2>
+            <ListPager pager={pager} placeholder="Search transfers…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -153,14 +157,14 @@ export default function Transfers() {
                 </tr>
               </thead>
               <tbody>
-                {list.map(t => (
+                {pager.pageItems.map(t => (
                   <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => open(t.id)}>
                     <td className="font-medium" style={{ color: 'var(--accent)' }}>{t.name}</td>
                     <td>{t.from_warehouse} → {t.to_warehouse}</td>
                     <td><span className="erpnext-badge erpnext-badge-blue">{t.status}</span></td>
                   </tr>
                 ))}
-                {list.length === 0 && <tr><td colSpan={3} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No transfers</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={3} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No transfers</td></tr>}
               </tbody>
             </table>
           </div>

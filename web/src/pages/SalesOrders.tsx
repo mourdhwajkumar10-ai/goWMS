@@ -5,6 +5,8 @@ import CSVImport from '../components/CSVTools'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface SORow {
   id: number
@@ -36,7 +38,6 @@ export default function SalesOrders() {
   const [list, setList] = useState<SORow[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [showNew, setShowNew] = useState(false)
-  const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [warehouses, setWarehouses] = useState<any[]>([])
 
@@ -63,7 +64,6 @@ export default function SalesOrders() {
 
   const loadList = () => {
     const qs = new URLSearchParams()
-    if (search) qs.set('q', search)
     if (statusFilter) qs.set('status', statusFilter)
     api.soList(qs.toString()).then(r => { if (r.ok) setList(r.data ?? []) })
   }
@@ -72,6 +72,8 @@ export default function SalesOrders() {
     loadList()
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
   }, [])
+
+  const pager = useClientPager(list)
 
   const openSO = async (id: number) => {
     const r = await api.soGet(id)
@@ -293,7 +295,6 @@ export default function SalesOrders() {
           <div className="px-4 py-3 flex flex-wrap gap-2 items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Orders (priority DESC)</h3>
             <div className="flex gap-2">
-              <input className="erpnext-input text-sm" placeholder="Search…" value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && loadList()} />
               <select className="erpnext-input text-sm" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
                 <option value="">All statuses</option>
                 <option value="draft">Draft</option>
@@ -304,13 +305,16 @@ export default function SalesOrders() {
               <button onClick={loadList} className="erpnext-btn-secondary text-sm">Filter</button>
             </div>
           </div>
+          <div className="px-4 pt-3">
+            <ListPager pager={pager} placeholder="Search sales orders…" />
+          </div>
           <div className="p-4 overflow-x-auto">
             <table className="erpnext-table">
               <thead>
                 <tr><th>SO</th><th>Customer</th><th>Priority</th><th>Status</th><th>Delivery</th><th>Total</th><th>Lines</th><th>Picked%</th><th></th></tr>
               </thead>
               <tbody>
-                {list.map(o => (
+                {pager.pageItems.map(o => (
                   <tr key={o.id}>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openSO(o.id)}>{o.name}</td>
                     <td>{o.customer_name || '—'}</td>
@@ -323,7 +327,7 @@ export default function SalesOrders() {
                     <td><button onClick={() => openSO(o.id)} className="erpnext-btn-secondary text-xs">Open</button></td>
                   </tr>
                 ))}
-                {list.length === 0 && <tr><td colSpan={9} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sales orders</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={9} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sales orders</td></tr>}
               </tbody>
             </table>
           </div>

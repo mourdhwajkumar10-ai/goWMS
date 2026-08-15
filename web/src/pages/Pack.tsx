@@ -4,6 +4,8 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Box {
   id: number
@@ -39,6 +41,7 @@ export default function Pack() {
 
   const loadBoxes = () => api.packSessions().then(r => { if (r.ok) setBoxes(r.data ?? []) })
   useEffect(() => { loadBoxes() }, [])
+  const pager = useClientPager(boxes)
   useEffect(() => {
     const fromUrl = searchParams.get('pick_list_id')
     if (fromUrl) setPickListId(fromUrl)
@@ -159,15 +162,16 @@ export default function Pack() {
           )}
 
           <div className="erpnext-card">
-            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Boxes</h3>
+              <ListPager pager={pager} placeholder="Search boxes…" />
             </div>
             <table className="erpnext-table">
               <thead>
                 <tr><th>ID</th><th>Label</th><th>Pick List</th><th>Delivery Note</th><th>Items</th><th>Loaded</th><th>Created</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {boxes.map(b => (
+                {pager.pageItems.map(b => (
                   <tr key={b.id}>
                     <td>{b.id}</td>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openBox(b.id)}>{b.label}</td>
@@ -190,7 +194,7 @@ export default function Pack() {
                     </td>
                   </tr>
                 ))}
-                {boxes.length === 0 && <tr><td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No boxes</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No boxes</td></tr>}
               </tbody>
             </table>
           </div>

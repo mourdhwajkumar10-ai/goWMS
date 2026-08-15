@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Dn {
   id: number
@@ -13,10 +15,10 @@ interface Dn {
 
 export default function DeliveryNotes() {
   const [list, setList] = useState<Dn[]>([])
-  const [search, setSearch] = useState('')
 
   const loadList = () => api.deliveryNoteList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
+  const pager = useClientPager(list)
 
   const statusBadge = (status: string) => {
     const cls = status === 'completed' ? 'erpnext-badge-green' :
@@ -36,9 +38,9 @@ export default function DeliveryNotes() {
       </div>
 
       <div className="erpnext-card">
-        <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
+        <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-lg font-semibold">All Delivery Notes ({list.length})</h2>
-          <input className="erpnext-input text-sm" style={{ width: 250 }} placeholder="Search delivery notes..." value={search} onChange={e => setSearch(e.target.value)} />
+          <ListPager pager={pager} placeholder="Search delivery notes…" />
         </div>
         <div className="p-4">
           <table className="erpnext-table">
@@ -52,7 +54,7 @@ export default function DeliveryNotes() {
               </tr>
             </thead>
             <tbody>
-              {list.map(d => (
+              {pager.pageItems.map(d => (
                 <tr key={d.id}>
                   <td className="font-medium" style={{ color: 'var(--accent)' }}>{d.name}</td>
                   <td>{d.customer_name || '—'}</td>
@@ -61,7 +63,7 @@ export default function DeliveryNotes() {
                   <td className="text-right font-medium">{d.currency} {d.grand_total?.toFixed(2) || '0.00'}</td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No delivery notes</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No delivery notes</td></tr>}
             </tbody>
           </table>
         </div>

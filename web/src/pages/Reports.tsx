@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface GrnSummary {
   session_no: string
@@ -30,6 +32,8 @@ export default function Reports() {
     api.get<GrnSummary[]>('/reports/grn-summary').then(r => { if (r.ok) setGrn(r.data ?? []) }).catch((e) => setError((e as Error).message))
     api.get<PickPerf[]>('/reports/pick-performance').then(r => { if (r.ok) setPerf(r.data ?? []) }).catch(() => {})
   }, [])
+  const grnPager = useClientPager(grn)
+  const perfPager = useClientPager(perf)
 
   return (
     <div className="space-y-6">
@@ -68,15 +72,16 @@ export default function Reports() {
 
       {activeTab === 'grn' && (
         <div className="erpnext-card">
-          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">GRN Summary</h3>
+            <ListPager pager={grnPager} placeholder="Search GRN…" />
           </div>
           <table className="erpnext-table">
             <thead>
               <tr><th>Session</th><th>Supplier</th><th>Status</th><th>Cartons</th><th>Received</th><th>Shortage</th><th>Date</th></tr>
             </thead>
             <tbody>
-              {grn.map(r => (
+              {grnPager.pageItems.map(r => (
                 <tr key={r.session_no}>
                   <td className="font-medium">{r.session_no}</td>
                   <td>{r.supplier_name || '—'}</td>
@@ -95,7 +100,7 @@ export default function Reports() {
                   <td>{new Date(r.created_at).toLocaleDateString()}</td>
                 </tr>
               ))}
-              {grn.length === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No GRN data</td></tr>}
+              {grnPager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No GRN data</td></tr>}
             </tbody>
           </table>
         </div>
@@ -103,15 +108,16 @@ export default function Reports() {
 
       {activeTab === 'pick' && (
         <div className="erpnext-card">
-          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Pick Performance</h3>
+            <ListPager pager={perfPager} placeholder="Search pick logs…" />
           </div>
           <table className="erpnext-table">
             <thead>
               <tr><th>Log</th><th>Pick List</th><th>Item</th><th>Qty</th><th>Drift</th><th>Time</th></tr>
             </thead>
             <tbody>
-              {perf.map(r => (
+              {perfPager.pageItems.map(r => (
                 <tr key={r.log_no}>
                   <td className="font-medium">{r.log_no}</td>
                   <td>{r.pick_list || '—'}</td>
@@ -125,7 +131,7 @@ export default function Reports() {
                   <td>{r.scanned_at ? new Date(r.scanned_at).toLocaleString() : '—'}</td>
                 </tr>
               ))}
-              {perf.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No pick data</td></tr>}
+              {perfPager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No pick data</td></tr>}
             </tbody>
           </table>
         </div>

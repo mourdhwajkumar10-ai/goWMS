@@ -5,6 +5,8 @@ import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface PickList {
   id: number
@@ -40,7 +42,6 @@ export default function Pick() {
   const [warehouses, setWarehouses] = useState<any[]>([])
   const [selectedList, setSelectedList] = useState<any>(null)
   const [showNew, setShowNew] = useState(false)
-  const [search, setSearch] = useState('')
   const [msg, setMsg] = useState('')
   const [showScanner, setShowScanner] = useState(false)
   const [scanTarget, setScanTarget] = useState<'item' | 'bin'>('item')
@@ -69,6 +70,8 @@ export default function Pick() {
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
     api.soList('status=confirmed').then(r => { if (r.ok) setConfirmedSOs(r.data ?? []) })
   }, [])
+
+  const pager = useClientPager(lists)
 
   const createWave = async () => {
     const ids = waveSOIds.split(/[,\s]+/).map(s => +s).filter(n => n > 0)
@@ -209,14 +212,6 @@ export default function Pick() {
     return <span className={`erpnext-badge ${cls} ml-1`}>{badge}</span>
   }
 
-  const filtered = lists.filter(l => {
-    if (!search) return true
-    const q = search.toLowerCase()
-    return l.name.toLowerCase().includes(q)
-      || (l.sales_order_no || '').toLowerCase().includes(q)
-      || (l.customer || '').toLowerCase().includes(q)
-  })
-
   return (
     <div className="space-y-6">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
@@ -335,11 +330,9 @@ export default function Pick() {
 
       {!selectedList ? (
         <div className="erpnext-card">
-          <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Pick Lists</h3>
-            <div className="flex gap-2">
-              <input className="erpnext-input text-sm" placeholder="Search..." value={search} onChange={e => setSearch(e.target.value)} />
-            </div>
+            <ListPager pager={pager} placeholder="Search pick lists…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -347,7 +340,7 @@ export default function Pick() {
                 <tr><th>Name</th><th>Sales Order</th><th>Customer</th><th>Status</th><th>Mode</th><th>Picked</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {filtered.map(l => (
+                {pager.pageItems.map(l => (
                   <tr key={l.id}>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openList(l.id)}>{l.name}</td>
                     <td>{l.sales_order_no || '—'}</td>
@@ -360,7 +353,7 @@ export default function Pick() {
                     </td>
                   </tr>
                 ))}
-                {filtered.length === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No pick lists</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No pick lists</td></tr>}
               </tbody>
             </table>
           </div>

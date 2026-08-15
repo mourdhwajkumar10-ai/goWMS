@@ -14,10 +14,12 @@ func registerCompletionRoutes(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/session/:id/invoice-expected", seedInvoiceExpected(db))
 	r.Get("/session/:id/invoice-expected", listInvoiceExpected(db))
 	r.Get("/session/:id/item-summary", itemSummary(db))
+	registerDocCompare(r, db)
 	r.Post("/session/:id/complete-verification", completeItemVerification(db))
 	r.Post("/session/:id/finalize", finalizeGRN(db))
 	r.Get("/exceptions", listAllExceptions(db))
 	r.Get("/follow-ups", listAllFollowUps(db))
+	r.Get("/audits", listAllAudits(db))
 }
 
 // seedInvoiceExpected accepts invoice expected lines for invoice-only mode and
@@ -118,8 +120,10 @@ func seedInvoiceExpected(db *pgxpool.Pool) fiber.Handler {
 		writeEvent(db, c, sessionID, "INVOICE_EXPECTED_SEEDED", fiber.Map{
 			"payload": fiber.Map{"created": created, "updated": updated, "mode": mode},
 		})
+		cmp := applyInvoiceComparison(c, db, sessionID)
 		return shared.OK(c, fiber.Map{
 			"created": created, "updated": updated, "carton_id": cartonID,
+			"comparison": cmp, "mismatch": cmp.Mismatch,
 		})
 	}
 }
@@ -213,7 +217,6 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 			  AND COALESCE(gl.expected_qty,0) > 0`, sessionID)
 		shortCount := 0
 		if err == nil {
-			defer rows.Close()
 			for rows.Next() {
 				var lid int
 				var box, part, inv string
@@ -229,6 +232,31 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 				})
 				shortCount++
 			}
+			rows.Close()
+		}
+
+		excessCount := 0
+		exRows, exErr := db.Query(c.Context(), `
+			SELECT gl.id, COALESCE(gc.carton_no,''), gl.item_code, COALESCE(gl.invoice_no,''),
+			       COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0)
+			FROM grn_lines gl
+			LEFT JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+			WHERE gl.grn_session_id=$1
+			  AND COALESCE(gl.scanned_qty,0) > COALESCE(gl.expected_qty,0)`, sessionID)
+		if exErr == nil {
+			for exRows.Next() {
+				var lid int
+				var box, part, inv string
+				var exp, scan float64
+				_ = exRows.Scan(&lid, &box, &part, &inv, &exp, &scan)
+				_, _ = db.Exec(c.Context(), `UPDATE grn_lines SET status='excess' WHERE id=$1`, lid)
+				ensureExcessException(db, c, sessionID, inv, box, part, exp, scan)
+				writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
+					"invoice_no": inv, "box_no": box, "part_no": part, "quantity": scan - exp, "result": "excess",
+				})
+				excessCount++
+			}
+			exRows.Close()
 		}
 
 		var openExc int
@@ -242,10 +270,15 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		_, _ = db.Exec(c.Context(), `
 			UPDATE grn_sessions SET status=$2, active_verify_carton_id=NULL, updated_at=now() WHERE id=$1`, sessionID, next)
 		writeEvent(db, c, sessionID, "ITEM_VERIFICATION_COMPLETE", fiber.Map{
-			"result": next, "payload": fiber.Map{"shortages": shortCount, "open_exceptions": openExc},
+			"result": next, "payload": fiber.Map{
+				"shortages": shortCount, "excesses": excessCount, "open_exceptions": openExc,
+				"net_offset": shortCount > 0 && excessCount > 0,
+			},
 		})
 		return shared.OK(c, fiber.Map{
-			"id": sessionID, "status": next, "shortages_recorded": shortCount, "open_exceptions": openExc,
+			"id": sessionID, "status": next,
+			"shortages_recorded": shortCount, "excesses_recorded": excessCount,
+			"open_exceptions": openExc, "net_offset": shortCount > 0 && excessCount > 0,
 		})
 	}
 }
@@ -260,6 +293,21 @@ func ensureShortageException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, inv,
 		return
 	}
 	writeException(db, c, sessionID, "shortage", fiber.Map{
+		"invoice_no": inv, "box_no": box, "part_no": part,
+		"expected_qty": exp, "scanned_qty": scan, "variance": scan - exp,
+	})
+}
+
+func ensureExcessException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, inv, box, part string, exp, scan float64) {
+	var exists int
+	_ = db.QueryRow(c.Context(), `
+		SELECT COUNT(*) FROM grn_exceptions
+		WHERE grn_session_id=$1 AND exception_type='excess' AND status='open'
+		  AND COALESCE(box_no,'')=$2 AND COALESCE(part_no,'')=$3`, sessionID, box, part).Scan(&exists)
+	if exists > 0 {
+		return
+	}
+	writeException(db, c, sessionID, "excess", fiber.Map{
 		"invoice_no": inv, "box_no": box, "part_no": part,
 		"expected_qty": exp, "scanned_qty": scan, "variance": scan - exp,
 	})
@@ -356,6 +404,23 @@ func itemSummaryData(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (fiber.Map, 
 	if err != nil {
 		return nil, err
 	}
+	if exp == 0 {
+		var poExp float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(GREATEST(COALESCE(poi.qty,0)-COALESCE(poi.received_qty,0),0)),0)
+			FROM purchase_order_items poi
+			JOIN purchase_orders po ON po.id = poi.purchase_order_id
+			JOIN grn_sessions gs ON gs.purchase_receipt_no = po.name
+			WHERE gs.id=$1`, sessionID).Scan(&poExp)
+		if poExp > 0 {
+			exp = poExp
+			short = poExp - recv
+			if short < 0 {
+				excess = -short
+				short = 0
+			}
+		}
+	}
 	var openExc, resolvedExc int
 	_ = db.QueryRow(c.Context(), `
 		SELECT COUNT(*) FILTER (WHERE status='open'), COUNT(*) FILTER (WHERE status='resolved')
@@ -364,9 +429,31 @@ func itemSummaryData(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (fiber.Map, 
 	_ = db.QueryRow(c.Context(), `
 		SELECT COALESCE((SELECT status FROM grn_audits WHERE grn_session_id=$1 ORDER BY id DESC LIMIT 1),'none')`,
 		sessionID).Scan(&auditStatus)
+
+	partRows, _ := db.Query(c.Context(), `
+		SELECT COALESCE(gl.item_code,''), COALESCE(gc.carton_no,''),
+		       SUM(COALESCE(gl.expected_qty,0)), SUM(COALESCE(gl.scanned_qty,0))
+		FROM grn_lines gl
+		LEFT JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+		WHERE gl.grn_session_id=$1
+		GROUP BY gl.item_code, gc.carton_no
+		ORDER BY gl.item_code, gc.carton_no`, sessionID)
+	var partLines []partBoxQty
+	if partRows != nil {
+		defer partRows.Close()
+		for partRows.Next() {
+			var ln partBoxQty
+			if err := partRows.Scan(&ln.PartNo, &ln.BoxNo, &ln.Expected, &ln.Scanned); err == nil {
+				partLines = append(partLines, ln)
+			}
+		}
+	}
+
 	return fiber.Map{
 		"expected_qty": exp, "received_qty": recv, "short_qty": short, "excess_qty": excess,
 		"exceptions_open": openExc, "exceptions_resolved": resolvedExc, "audit_status": auditStatus,
+		"parts":      rollupPartReconciliation(partLines),
+		"net_offset": short > 0 && excess > 0,
 	}, nil
 }
 
@@ -413,7 +500,9 @@ func listAllFollowUps(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT f.id, f.session_no, f.status, f.parent_grn_id, p.session_no, f.created_at::text,
-			       COALESCE(f.supplier_name,'')
+			       COALESCE(f.supplier_name,''),
+			       COALESCE((SELECT SUM(expected_qty) FROM grn_lines WHERE grn_session_id=f.id),0),
+			       COALESCE((SELECT SUM(scanned_qty) FROM grn_lines WHERE grn_session_id=f.id),0)
 			FROM grn_sessions f
 			LEFT JOIN grn_sessions p ON p.id = f.parent_grn_id
 			WHERE COALESCE(f.is_followup,false)=true
@@ -428,12 +517,42 @@ func listAllFollowUps(db *pgxpool.Pool) fiber.Handler {
 			var no, st, created, supplier string
 			var parentID *int
 			var parentNo *string
-			if err := rows.Scan(&id, &no, &st, &parentID, &parentNo, &created, &supplier); err != nil {
+			var exp, recv float64
+			if err := rows.Scan(&id, &no, &st, &parentID, &parentNo, &created, &supplier, &exp, &recv); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": id, "session_no": no, "status": st, "parent_grn_id": parentID,
 				"parent_session_no": parentNo, "created_at": created, "supplier_name": supplier,
+				"expected_qty": exp, "received_qty": recv, "outstanding_qty": exp - recv,
+			})
+		}
+		return shared.OK(c, out)
+	}
+}
+
+func listAllAudits(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT a.id, a.grn_session_id, s.session_no, a.sample_size, COALESCE(a.status,'open'),
+			       a.started_at::text, COALESCE(s.supplier_name,'')
+			FROM grn_audits a
+			JOIN grn_sessions s ON s.id = a.grn_session_id
+			ORDER BY a.id DESC LIMIT 100`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+		out := []fiber.Map{}
+		for rows.Next() {
+			var id, sid, sample int
+			var sno, st, started, supplier string
+			if err := rows.Scan(&id, &sid, &sno, &sample, &st, &started, &supplier); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			out = append(out, fiber.Map{
+				"id": id, "grn_session_id": sid, "session_no": sno, "sample_size": sample,
+				"status": st, "started_at": started, "supplier_name": supplier,
 			})
 		}
 		return shared.OK(c, out)
@@ -658,11 +777,7 @@ func createOtherException(db *pgxpool.Pool) fiber.Handler {
 		if et == "" {
 			et = "other"
 		}
-		allowed := map[string]bool{
-			"shortage": true, "excess": true, "wrong_item": true, "duplicate_box": true,
-			"excess_box": true, "missing_box": true, "other": true,
-		}
-		if !allowed[et] {
+		if !allowedGRNException(et) {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid exception_type")
 		}
 		writeException(db, c, sessionID, et, fiber.Map{

@@ -2,6 +2,10 @@ import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { setSession } from "../services/api";
 
+function looksLikeWarehouseScan(s: string) {
+  return /^(BOX|PART|ITEM|INV|PO|GRN)[-_]/i.test((s || "").trim());
+}
+
 export default function Login() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<"password" | "pin">("password");
@@ -41,7 +45,8 @@ export default function Login() {
         }
         setSession(r.data.token, r.data.role);
       }
-      navigate("/");
+      const next = localStorage.getItem("gowms_last_path") || "/";
+      navigate(next.startsWith("/") ? next : "/");
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -64,6 +69,16 @@ export default function Login() {
           <button type="button" className={mode === "pin" ? "btn" : "btn btn-ghost"} onClick={() => setMode("pin")}>PIN</button>
         </div>
         {error && <div className="error-banner">{error}</div>}
+        {mode === "password" && looksLikeWarehouseScan(username) && (
+          <div className="error-banner" role="alert">
+            That looks like a box/part barcode ({username.trim()}). This field is your username — log in first, then scan on GRN.
+          </div>
+        )}
+        {mode === "pin" && looksLikeWarehouseScan(badge) && (
+          <div className="error-banner" role="alert">
+            That looks like a box/part barcode ({badge.trim()}). Log in first, then scan it on GRN — this field is the employee badge only.
+          </div>
+        )}
         {mode === "password" ? (
           <>
             <div className="field">
@@ -78,8 +93,14 @@ export default function Login() {
         ) : (
           <>
             <div className="field">
-              <label>Badge Code</label>
-              <input value={badge} onChange={(e) => setBadge(e.target.value)} placeholder="Scan badge" autoFocus />
+              <label>Employee badge code</label>
+              <input
+                value={badge}
+                onChange={(e) => setBadge(e.target.value)}
+                placeholder="Employee badge code — not a box or part barcode"
+                autoFocus
+                aria-label="Employee badge code"
+              />
             </div>
             <div className="field">
               <label>or Employee Number</label>

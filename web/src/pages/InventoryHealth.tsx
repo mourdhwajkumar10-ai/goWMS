@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface ReorderAlert {
   item_code: string
@@ -38,6 +40,8 @@ export default function InventoryHealth() {
     api.get<ExpiryAlert[]>(`/inventory/expiry-alerts?days=${+days || 90}`).then(r => { if (r.ok) setExpiry(r.data ?? []) })
   }
   useEffect(() => { load() }, [days])
+  const reorderPager = useClientPager(reorder)
+  const expiryPager = useClientPager(expiry)
 
   const refresh = async () => {
     const r = await api.post<{ notifications_created: number }>('/inventory/refresh-alerts', {})
@@ -79,8 +83,9 @@ export default function InventoryHealth() {
 
       {tab === 'reorder' && (
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Below min / above max</h2>
+            <ListPager pager={reorderPager} placeholder="Search reorder alerts…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -95,7 +100,7 @@ export default function InventoryHealth() {
                 </tr>
               </thead>
               <tbody>
-                {reorder.map(a => (
+                {reorderPager.pageItems.map(a => (
                   <tr key={a.item_code + a.alert_type}>
                     <td>
                       <div className="font-medium" style={{ color: 'var(--accent)' }}>{a.item_code}</div>
@@ -112,7 +117,7 @@ export default function InventoryHealth() {
                     <td className="text-right">{a.suggested_qty || '—'}</td>
                   </tr>
                 ))}
-                {reorder.length === 0 && (
+                {reorderPager.total === 0 && (
                   <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>All stock within min/max</td></tr>
                 )}
               </tbody>
@@ -123,8 +128,9 @@ export default function InventoryHealth() {
 
       {tab === 'expiry' && (
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Expiring stock (pick FEFO first)</h2>
+            <ListPager pager={expiryPager} placeholder="Search expiry alerts…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -140,7 +146,7 @@ export default function InventoryHealth() {
                 </tr>
               </thead>
               <tbody>
-                {expiry.map((a, i) => (
+                {expiryPager.pageItems.map((a, i) => (
                   <tr key={`${a.item_code}-${a.location_code}-${a.batch_no}-${i}`}>
                     <td>
                       <div className="font-medium" style={{ color: 'var(--accent)' }}>{a.item_code}</div>
@@ -160,7 +166,7 @@ export default function InventoryHealth() {
                     </td>
                   </tr>
                 ))}
-                {expiry.length === 0 && (
+                {expiryPager.total === 0 && (
                   <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No expiring batches in window</td></tr>
                 )}
               </tbody>

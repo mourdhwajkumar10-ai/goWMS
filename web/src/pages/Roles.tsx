@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api, getRole } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 type AccessLevel = 'none' | 'view' | 'edit'
 type AccessProfile = { inbound: AccessLevel; outbound: AccessLevel; admin: AccessLevel }
@@ -52,6 +54,8 @@ export default function Roles() {
   }
 
   useEffect(() => { load() }, [])
+
+  const pager = useClientPager(roles)
 
   const selectRole = (r: Role) => {
     setSelectedId(r.id)
@@ -178,10 +182,13 @@ export default function Roles() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="erpnext-card overflow-hidden">
+          <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+            <ListPager pager={pager} placeholder="Search roles…" />
+          </div>
           <table className="erpnext-table">
             <thead><tr><th>Role</th><th></th></tr></thead>
             <tbody>
-              {roles.map(r => (
+              {pager.pageItems.map(r => (
                 <tr
                   key={r.id}
                   className={selectedId === r.id ? 'bg-black/5' : ''}
@@ -204,6 +211,9 @@ export default function Roles() {
                   </td>
                 </tr>
               ))}
+              {pager.total === 0 && (
+                <tr><td colSpan={2} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No roles</td></tr>
+              )}
             </tbody>
           </table>
         </div>

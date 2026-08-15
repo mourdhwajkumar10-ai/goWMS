@@ -3,6 +3,8 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 type Mode = 'auto' | 'item' | 'location'
 
@@ -54,6 +56,7 @@ export default function StockScan() {
 
   const summary = result?.summary
   const rows: any[] = result?.rows ?? []
+  const pager = useClientPager(rows)
 
   return (
     <div className="space-y-6">
@@ -153,6 +156,9 @@ export default function StockScan() {
             </div>
           </div>
           <div className="px-6 pb-6 overflow-x-auto">
+            <div className="mb-3">
+              <ListPager pager={pager} placeholder="Search stock…" />
+            </div>
             <table className="erpnext-table text-sm">
               <thead>
                 <tr style={{ background: 'var(--panel-2)' }}>
@@ -160,7 +166,7 @@ export default function StockScan() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row: any) => (
+                {pager.pageItems.map((row: any) => (
                   <tr key={row.id}>
                     <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
                     <td>{row.location_type}</td>
@@ -169,7 +175,7 @@ export default function StockScan() {
                     <td>{allocBadge(row.allocation_status)}</td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {pager.total === 0 && (
                   <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No stock for this item</td></tr>
                 )}
               </tbody>
@@ -191,6 +197,9 @@ export default function StockScan() {
             </p>
           </div>
           <div className="p-6 overflow-x-auto">
+            <div className="mb-3">
+              <ListPager pager={pager} placeholder="Search items…" />
+            </div>
             <table className="erpnext-table text-sm">
               <thead>
                 <tr style={{ background: 'var(--panel-2)' }}>
@@ -198,7 +207,7 @@ export default function StockScan() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row: any) => (
+                {pager.pageItems.map((row: any) => (
                   <tr key={row.id}>
                     <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.item_code}</td>
                     <td>{row.item_name || '—'}</td>
@@ -207,7 +216,7 @@ export default function StockScan() {
                     <td>{allocBadge(row.allocation_status)}</td>
                   </tr>
                 ))}
-                {rows.length === 0 && (
+                {pager.total === 0 && (
                   <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>Empty location</td></tr>
                 )}
               </tbody>

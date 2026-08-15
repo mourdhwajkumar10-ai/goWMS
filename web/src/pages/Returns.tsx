@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 export default function Returns() {
   const [list, setList] = useState<any[]>([])
@@ -17,6 +19,7 @@ export default function Returns() {
 
   const load = () => api.returnsList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { load() }, [])
+  const pager = useClientPager(list)
 
   const create = async () => {
     const r = await api.returnsCreate({
@@ -111,10 +114,13 @@ export default function Returns() {
 
       {!selected ? (
         <div className="erpnext-card">
+          <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+            <ListPager pager={pager} placeholder="Search returns…" />
+          </div>
           <table className="erpnext-table">
             <thead><tr><th>Claim</th><th>Invoice</th><th>Reason</th><th>Status</th><th></th></tr></thead>
             <tbody>
-              {list.map((r: any) => (
+              {pager.pageItems.map((r: any) => (
                 <tr key={r.id}>
                   <td className="font-medium">{r.claim_no}</td>
                   <td>{r.sales_invoice_no || '—'}</td>
@@ -134,7 +140,7 @@ export default function Returns() {
                   </td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No returns</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No returns</td></tr>}
             </tbody>
           </table>
         </div>

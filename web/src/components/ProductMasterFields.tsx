@@ -39,6 +39,7 @@ export function emptyProductForm() {
     has_batch: false,
     has_expiry_date: false,
     shelf_life_in_days: '',
+    requires_qi: false,
   }
 }
 
@@ -76,6 +77,7 @@ export function productPayload(form: Record<string, any>, extra: Record<string, 
     has_batch: !!form.has_batch,
     has_expiry_date: !!form.has_expiry_date,
     shelf_life_in_days: form.shelf_life_in_days === '' ? undefined : +form.shelf_life_in_days,
+    requires_qi: !!form.requires_qi,
     ...extra,
   }
 }
@@ -237,6 +239,10 @@ export default function ProductMasterFields({
           <label className="flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={!!form.has_expiry_date} onChange={e => set('has_expiry_date', e.target.checked)} className="w-4 h-4" />
             <span className="text-sm">Expiry</span>
+          </label>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={!!form.requires_qi} onChange={e => set('requires_qi', e.target.checked)} className="w-4 h-4" />
+            <span className="text-sm">Requires QI</span>
           </label>
         </div>
         {form.has_expiry_date && (

@@ -3,6 +3,7 @@ package qi
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 
 	"goWMS/api/modules/shared"
 
@@ -209,8 +210,8 @@ func createFromTemplate(db *pgxpool.Pool) fiber.Handler {
 				continue
 			}
 			_, _ = db.Exec(c.Context(), `
-				INSERT INTO quality_inspection_readings (inspection_id, specification, status)
-				VALUES ($1,$2,'pending')`, id, spec)
+				INSERT INTO quality_inspection_readings (inspection_id, specification, status, min_value, max_value)
+				VALUES ($1,$2,'pending',$3,$4)`, id, spec, checklistNum(item, "min_value"), checklistNum(item, "max_value"))
 		}
 		return shared.OK(c, fiber.Map{"id": id, "inspection_no": inspNo, "template": tmplName})
 	}
@@ -221,4 +222,31 @@ func nullEmptyQI(s string) any {
 		return nil
 	}
 	return s
+}
+
+func checklistNum(item map[string]any, key string) any {
+	v, ok := item[key]
+	if !ok || v == nil {
+		return nil
+	}
+	switch n := v.(type) {
+	case float64:
+		return n
+	case int:
+		return float64(n)
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return nil
+		}
+		return f
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(n), 64)
+		if err != nil {
+			return nil
+		}
+		return f
+	default:
+		return nil
+	}
 }

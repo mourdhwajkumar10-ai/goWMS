@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Cust {
   id: number
@@ -13,7 +15,6 @@ interface Cust {
 
 export default function Customers() {
   const [list, setList] = useState<Cust[]>([])
-  const [search, setSearch] = useState('')
   const [showNew, setShowNew] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -24,6 +25,7 @@ export default function Customers() {
 
   const loadList = () => api.customerList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
+  const pager = useClientPager(list)
 
   const createCustomer = async () => {
     const r = await api.customerCreate({ name, customer_group: group, gstin, territory })
@@ -89,9 +91,9 @@ export default function Customers() {
       )}
 
       <div className="erpnext-card">
-        <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
+        <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-lg font-semibold">All Customers ({list.length})</h2>
-          <input className="erpnext-input text-sm" style={{ width: 250 }} placeholder="Search customers..." value={search} onChange={e => setSearch(e.target.value)} />
+          <ListPager pager={pager} placeholder="Search customers…" />
         </div>
         <div className="p-4">
           <table className="erpnext-table">
@@ -105,7 +107,7 @@ export default function Customers() {
               </tr>
             </thead>
             <tbody>
-              {list.map(c => (
+              {pager.pageItems.map(c => (
                 <tr key={c.id}>
                   <td className="font-medium" style={{ color: 'var(--accent)' }}>{c.name}</td>
                   <td>{c.customer_group || '—'}</td>
@@ -114,7 +116,7 @@ export default function Customers() {
                   <td>{c.territory || '—'}</td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No customers</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No customers</td></tr>}
             </tbody>
           </table>
         </div>

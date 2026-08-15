@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface LocRow {
   id: number
@@ -59,6 +61,9 @@ export default function Locations() {
     setInventory([])
   }, [warehouseId])
 
+  const locPager = useClientPager(locations)
+  const invPager = useClientPager(inventory)
+
   const openLocation = async (loc: LocRow) => {
     setSelected(loc)
     const r = await api.locationInventory(loc.id)
@@ -87,8 +92,9 @@ export default function Locations() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Bins ({locations.length})</h2>
+            <ListPager pager={locPager} placeholder="Search locations…" />
           </div>
           <div className="p-4 overflow-auto" style={{ maxHeight: '70vh' }}>
             <table className="erpnext-table">
@@ -102,7 +108,7 @@ export default function Locations() {
                 </tr>
               </thead>
               <tbody>
-                {locations.map(l => (
+                {locPager.pageItems.map(l => (
                   <tr
                     key={l.id}
                     onClick={() => openLocation(l)}
@@ -115,7 +121,7 @@ export default function Locations() {
                     <td>{l.item_count}</td>
                   </tr>
                 ))}
-                {locations.length === 0 && (
+                {locPager.total === 0 && (
                   <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No locations — add them under Warehouses</td></tr>
                 )}
               </tbody>
@@ -134,6 +140,10 @@ export default function Locations() {
               <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Pick a bin to see items stored there.</p>
             )}
             {selected && (
+              <>
+                <div className="mb-3">
+                  <ListPager pager={invPager} placeholder="Search inventory…" />
+                </div>
               <table className="erpnext-table">
                 <thead>
                   <tr style={{ background: 'var(--panel-2)' }}>
@@ -146,7 +156,7 @@ export default function Locations() {
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map(row => (
+                  {invPager.pageItems.map(row => (
                     <tr key={row.id}>
                       <td>
                         <div className="font-medium" style={{ color: 'var(--accent)' }}>{row.item_code}</div>
@@ -172,11 +182,12 @@ export default function Locations() {
                       </td>
                     </tr>
                   ))}
-                  {inventory.length === 0 && (
+                  {invPager.total === 0 && (
                     <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>Empty bin</td></tr>
                   )}
                 </tbody>
               </table>
+              </>
             )}
           </div>
         </div>

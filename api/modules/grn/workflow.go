@@ -13,8 +13,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func canonicalStatus(status string) string {
+	s := strings.ToLower(strings.TrimSpace(status))
+	switch s {
+	case "open":
+		return "receiving"
+	case "closed":
+		return "completed"
+	default:
+		return s
+	}
+}
+
+func specStatusLabel(status string) string {
+	s := canonicalStatus(status)
+	if s == "" {
+		return "RECEIVING"
+	}
+	return strings.ToUpper(s)
+}
+
 func sessionWritable(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch canonicalStatus(status) {
 	case "closed", "completed":
 		return false
 	default:
@@ -23,7 +43,7 @@ func sessionWritable(status string) bool {
 }
 
 func sessionAcceptsBoxReceive(status string) bool {
-	switch strings.ToLower(strings.TrimSpace(status)) {
+	switch canonicalStatus(status) {
 	case "open", "draft", "receiving", "box_reconciliation":
 		return true
 	default:
@@ -153,6 +173,7 @@ func registerWorkflowRoutes(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/session/:id/complete-putaway", completePutaway(db))
 	registerVerifyRoutes(r, db)
 	registerCompletionRoutes(r, db)
+	registerEvidenceRoutes(r, db)
 }
 
 func updateSession(db *pgxpool.Pool) fiber.Handler {
@@ -284,44 +305,54 @@ func boxSummary(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
 		rows, err := db.Query(c.Context(), `
-			SELECT id, carton_no, status, COALESCE(is_expected,false), scanned_at::text
-			FROM grn_cartons WHERE grn_session_id=$1 ORDER BY carton_no`, id)
+			SELECT gc.id, gc.carton_no, gc.status, COALESCE(gc.is_expected,false), gc.scanned_at::text, COALESCE(gc.condition,'ok'),
+			       COALESCE((SELECT SUM(COALESCE(expected_qty,0)) FROM grn_lines WHERE grn_carton_id=gc.id),0)
+			FROM grn_cartons gc WHERE gc.grn_session_id=$1 ORDER BY gc.carton_no`, id)
+		if err != nil && strings.Contains(err.Error(), "condition") {
+			rows, err = db.Query(c.Context(), `
+				SELECT id, carton_no, status, COALESCE(is_expected,false), scanned_at::text, 'ok', 0
+				FROM grn_cartons WHERE grn_session_id=$1 ORDER BY carton_no`, id)
+		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
 		type box struct {
-			ID         int     `json:"id"`
-			CartonNo   string  `json:"carton_no"`
-			Status     string  `json:"status"`
-			IsExpected bool    `json:"is_expected"`
-			ScannedAt  *string `json:"scanned_at"`
+			ID          int     `json:"id"`
+			CartonNo    string  `json:"carton_no"`
+			Status      string  `json:"status"`
+			IsExpected  bool    `json:"is_expected"`
+			ScannedAt   *string `json:"scanned_at"`
+			Condition   string  `json:"condition"`
+			ExpectedQty float64 `json:"expected_qty"`
 		}
 		list := []box{}
 		for rows.Next() {
 			var b box
-			if err := rows.Scan(&b.ID, &b.CartonNo, &b.Status, &b.IsExpected, &b.ScannedAt); err != nil {
+			if err := rows.Scan(&b.ID, &b.CartonNo, &b.Status, &b.IsExpected, &b.ScannedAt, &b.Condition, &b.ExpectedQty); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, b)
 		}
-		var expected, received, excess, missing int
+		var expected, received, excess, missing, damaged int
 		for _, b := range list {
 			st := strings.ToLower(b.Status)
+			if b.IsExpected {
+				expected++
+			}
 			switch st {
 			case "excess":
 				excess++
+				received++
 			case "received", "accounted", "verified", "exception":
 				received++
-				expected++
-			case "expected", "pending", "missing":
-				expected++
-				missing++
-			default:
+			case "missing", "expected", "pending":
 				if b.IsExpected {
-					expected++
 					missing++
 				}
+			}
+			if isDamagedCondition(b.Condition) {
+				damaged++
 			}
 		}
 		return shared.OK(c, fiber.Map{
@@ -329,6 +360,7 @@ func boxSummary(db *pgxpool.Pool) fiber.Handler {
 			"received_boxes": received,
 			"excess_boxes":   excess,
 			"missing_boxes":  missing,
+			"damaged_boxes":  damaged,
 			"boxes":          list,
 		})
 	}
@@ -422,12 +454,13 @@ func listExceptions(db *pgxpool.Pool) fiber.Handler {
 		rows, err := db.Query(c.Context(), `
 			SELECT id, exception_type, COALESCE(invoice_no,''), COALESCE(box_no,''), COALESCE(part_no,''),
 			       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text,
-			       COALESCE(device,'')
+			       COALESCE(device,''),
+			       COALESCE((SELECT COUNT(*) FROM attachments a WHERE a.entity_type='grn_exception' AND a.entity_id=grn_exceptions.id),0)
 			FROM grn_exceptions WHERE grn_session_id=$1 ORDER BY id DESC`, id)
 		if err != nil && strings.Contains(err.Error(), "device") {
 			rows, err = db.Query(c.Context(), `
 				SELECT id, exception_type, COALESCE(invoice_no,''), COALESCE(box_no,''), COALESCE(part_no,''),
-				       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text, ''
+				       expected_qty, scanned_qty, variance, status, COALESCE(resolution,''), created_at::text, '', 0
 				FROM grn_exceptions WHERE grn_session_id=$1 ORDER BY id DESC`, id)
 		}
 		if err != nil {
@@ -439,13 +472,14 @@ func listExceptions(db *pgxpool.Pool) fiber.Handler {
 			var eid int
 			var et, inv, box, part, st, res, created, device string
 			var exp, scan, vari *float64
-			if err := rows.Scan(&eid, &et, &inv, &box, &part, &exp, &scan, &vari, &st, &res, &created, &device); err != nil {
+			var evidence int
+			if err := rows.Scan(&eid, &et, &inv, &box, &part, &exp, &scan, &vari, &st, &res, &created, &device, &evidence); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": eid, "exception_type": et, "invoice_no": inv, "box_no": box, "part_no": part,
 				"expected_qty": exp, "scanned_qty": scan, "variance": vari, "status": st,
-				"resolution": res, "created_at": created, "device": device,
+				"resolution": res, "created_at": created, "device": device, "evidence_count": evidence,
 			})
 		}
 		return shared.OK(c, out)

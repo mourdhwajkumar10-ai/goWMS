@@ -247,9 +247,14 @@ func runImportRows(c *fiber.Ctx, db *pgxpool.Pool, sessionID, templateID int, ro
 	_, _ = db.Exec(c.Context(), `
 		INSERT INTO grn_events (grn_session_id, event_type, actor_id, device, payload)
 		VALUES ($1,'PACKING_LIST_IMPORTED',$2,$3,$4::jsonb)`, sessionID, userID(c), eventDevice(c), payload)
+	cmp := afterImportCompare(c, db, sessionID)
+	if cmp.Mismatch {
+		warnings = append(warnings, "packing list quantities do not match the linked PO")
+	}
 	return shared.OK(c, fiber.Map{
 		"grn_session_id": sessionID, "cartons_created": createdCartons,
 		"lines_created": createdLines, "skipped": skipped, "warnings": warnings, "format": "xlsx",
+		"comparison": cmp, "mismatch": cmp.Mismatch,
 	})
 }
 

@@ -4,6 +4,8 @@ import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Sheet {
   id: number
@@ -44,6 +46,7 @@ export default function CycleCount() {
     loadSheets()
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
   }, [])
+  const pager = useClientPager(sheets)
 
   const createSheet = async () => {
     const r = await api.cycleCountCreate({
@@ -173,15 +176,16 @@ export default function CycleCount() {
           )}
 
           <div className="erpnext-card">
-            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Count Sheets</h3>
+              <ListPager pager={pager} placeholder="Search sheets…" />
             </div>
             <table className="erpnext-table">
               <thead>
                 <tr><th>Sheet No</th><th>Tier</th><th>Scheduled</th><th>Status</th><th>Created</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {sheets.map(s => (
+                {pager.pageItems.map(s => (
                   <tr key={s.id}>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openSheet(s.id)}>{s.sheet_no}</td>
                     <td>{s.tier || '—'}</td>
@@ -193,7 +197,7 @@ export default function CycleCount() {
                     </td>
                   </tr>
                 ))}
-                {sheets.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sheets</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sheets</td></tr>}
               </tbody>
             </table>
           </div>

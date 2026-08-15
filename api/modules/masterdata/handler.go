@@ -28,6 +28,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 
 	md.Get("/warehouses", listWarehouses(db))
 	md.Post("/warehouses", createWarehouse(db))
+	md.Patch("/warehouses/:id", updateWarehouse(db))
 	md.Get("/warehouses/:id/locations", listWarehouseLocations(db))
 	md.Post("/warehouses/:id/locations", createLocation(db))
 	md.Post("/warehouses/:id/locations/bulk", bulkCreateLocations(db))
@@ -40,6 +41,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 
 	md.Get("/suppliers", listSuppliers(db))
 	md.Post("/suppliers", createSupplier(db))
+	md.Get("/suppliers/by-barcode/:code", supplierByBarcode(db))
 	md.Get("/suppliers/:id/vehicles", getSupplierVehicles(db))
 	md.Put("/suppliers/:id/vehicles", setSupplierVehicles(db))
 	md.Get("/batches", listBatches(db))
@@ -116,7 +118,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
 			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
-			       COALESCE(standard_rate,0), max_qty_per_bin
+			       COALESCE(standard_rate,0), max_qty_per_bin, COALESCE(requires_qi,false)
 			FROM items ` + where + order + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
 
 		rows, err := db.Query(c.Context(), sql, args...)
@@ -161,6 +163,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			WeightPerUnit   float64  `json:"weight_per_unit"`
 			StandardRate    float64  `json:"standard_rate"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
+			RequiresQI      bool     `json:"requires_qi"`
 		}
 		list := []item{}
 		for rows.Next() {
@@ -172,7 +175,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 				&i.CartonQty, &i.ShelfLifeDays,
 				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.ProductGroup, &i.Category,
 				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
-				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin); err != nil {
+				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin, &i.RequiresQI); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			i.ItemGroup = groupID
@@ -218,6 +221,7 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			MinOrderQty     float64  `json:"min_order_qty"`
 			WeightPerUnit   float64  `json:"weight_per_unit"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
+			RequiresQI      bool     `json:"requires_qi"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -275,6 +279,7 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, body.RequiresQI)
 		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.create", "item", id, nil, fiber.Map{
 			"code": body.Code, "name": body.Name, "master_complete": complete,
 		})
@@ -320,6 +325,7 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			MinOrderQty     *float64 `json:"min_order_qty"`
 			WeightPerUnit   *float64 `json:"weight_per_unit"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
+			RequiresQI      *bool    `json:"requires_qi"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -421,6 +427,9 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		if body.RequiresQI != nil {
+			_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, *body.RequiresQI)
+		}
 		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.update", "item", id, nil, fiber.Map{
 			"name": name, "master_complete": complete,
 		})
@@ -461,6 +470,7 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 			MinOrderQty     float64  `json:"min_order_qty"`
 			WeightPerUnit   float64  `json:"weight_per_unit"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
+			RequiresQI      bool     `json:"requires_qi"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -540,6 +550,7 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, body.RequiresQI)
 		return shared.OK(c, fiber.Map{"id": id, "code": body.Code, "master_complete": true})
 	}
 }
@@ -551,11 +562,24 @@ func checkItem(db *pgxpool.Pool) fiber.Handler {
 		var name string
 		var complete bool
 		var packType, controlMode string
+		var requiresQI, hasExpiry, hasBatch, hasSerial bool
+		var shelfLife *int
 		err := db.QueryRow(c.Context(), `
 			SELECT id, name, COALESCE(master_complete,false),
-			       COALESCE(pack_type,'loose'), COALESCE(control_mode,'item_controlled')
+			       COALESCE(pack_type,'loose'), COALESCE(control_mode,'item_controlled'),
+			       COALESCE(requires_qi,false), COALESCE(has_expiry_date,false),
+			       COALESCE(has_batch,false), COALESCE(has_serial,false), shelf_life_in_days
 			FROM items WHERE code=$1 AND disabled=false`, code).
-			Scan(&id, &name, &complete, &packType, &controlMode)
+			Scan(&id, &name, &complete, &packType, &controlMode, &requiresQI, &hasExpiry, &hasBatch, &hasSerial, &shelfLife)
+		if err != nil && strings.Contains(err.Error(), "requires_qi") {
+			err = db.QueryRow(c.Context(), `
+				SELECT id, name, COALESCE(master_complete,false),
+				       COALESCE(pack_type,'loose'), COALESCE(control_mode,'item_controlled'),
+				       COALESCE(has_expiry_date,false), COALESCE(has_batch,false),
+				       COALESCE(has_serial,false), shelf_life_in_days
+				FROM items WHERE code=$1 AND disabled=false`, code).
+				Scan(&id, &name, &complete, &packType, &controlMode, &hasExpiry, &hasBatch, &hasSerial, &shelfLife)
+		}
 		if err == pgx.ErrNoRows {
 			return shared.OK(c, fiber.Map{
 				"exists": false, "master_complete": false, "code": code,
@@ -567,6 +591,8 @@ func checkItem(db *pgxpool.Pool) fiber.Handler {
 		return shared.OK(c, fiber.Map{
 			"exists": true, "id": id, "code": code, "name": name,
 			"master_complete": complete, "pack_type": packType, "control_mode": controlMode,
+			"requires_qi": requiresQI, "has_expiry_date": hasExpiry, "has_batch": hasBatch,
+			"has_serial": hasSerial, "shelf_life_in_days": shelfLife,
 		})
 	}
 }
@@ -615,6 +641,9 @@ func createWarehouse(db *pgxpool.Pool) fiber.Handler {
 			Name          string `json:"name"`
 			WarehouseType string `json:"warehouse_type"`
 			PickingMode   string `json:"picking_mode"`
+			ReceivingOpen string `json:"receiving_open"`
+			ReceivingClose string `json:"receiving_close"`
+			ReceivingDays string `json:"receiving_days"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -675,7 +704,62 @@ func createWarehouse(db *pgxpool.Pool) fiber.Handler {
 				ON CONFLICT (warehouse_id, code) DO NOTHING`, loc.code, id, loc.zone, loc.typ)
 		}
 
+		stampWarehouseHours(c, db, id, body.ReceivingOpen, body.ReceivingClose, body.ReceivingDays)
 		return shared.OK(c, fiber.Map{"id": id, "code": body.Code, "name": body.Name})
+	}
+}
+
+func stampWarehouseHours(c *fiber.Ctx, db *pgxpool.Pool, id int, open, close, days string) {
+	open = strings.TrimSpace(open)
+	close = strings.TrimSpace(close)
+	days = strings.TrimSpace(days)
+	if open == "" && close == "" && days == "" {
+		return
+	}
+	if open == "" {
+		open = "06:00"
+	}
+	if close == "" {
+		close = "18:00"
+	}
+	if days == "" {
+		days = "1,2,3,4,5"
+	}
+	_, _ = db.Exec(c.Context(), `
+		UPDATE warehouses SET receiving_open=$2::time, receiving_close=$3::time, receiving_days=$4 WHERE id=$1`,
+		id, open, close, days)
+}
+
+func updateWarehouse(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Name           *string `json:"name"`
+			ReceivingOpen  *string `json:"receiving_open"`
+			ReceivingClose *string `json:"receiving_close"`
+			ReceivingDays  *string `json:"receiving_days"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.Name != nil {
+			_, _ = db.Exec(c.Context(), `UPDATE warehouses SET name=$2 WHERE id=$1`, id, strings.TrimSpace(*body.Name))
+		}
+		open, close, days := "", "", ""
+		if body.ReceivingOpen != nil {
+			open = *body.ReceivingOpen
+		}
+		if body.ReceivingClose != nil {
+			close = *body.ReceivingClose
+		}
+		if body.ReceivingDays != nil {
+			days = *body.ReceivingDays
+		}
+		stampWarehouseHours(c, db, id, open, close, days)
+		return shared.OK(c, fiber.Map{"id": id})
 	}
 }
 
@@ -1284,6 +1368,7 @@ func createSupplier(db *pgxpool.Pool) fiber.Handler {
 			ContactEmail        string `json:"contact_email"`
 			VehicleFleet        string `json:"vehicle_fleet"`
 			DefaultServiceLevel string `json:"default_service_level"`
+			Barcode             string `json:"barcode"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -1306,6 +1391,9 @@ func createSupplier(db *pgxpool.Pool) fiber.Handler {
 		).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if strings.TrimSpace(body.Barcode) != "" {
+			_, _ = db.Exec(c.Context(), `UPDATE suppliers SET barcode=$2 WHERE id=$1`, id, strings.TrimSpace(body.Barcode))
 		}
 		return shared.OK(c, fiber.Map{"id": id, "name": body.Name, "is_transporter": body.IsTransporter})
 	}
@@ -1517,8 +1605,19 @@ func listWarehouses(db *pgxpool.Pool) fiber.Handler {
 			       parent_id, account, is_rejected_warehouse, customer,
 			       default_in_transit_warehouse, email_id, phone_no, mobile_no,
 			       address_line_1, address_line_2, city, state, pin,
-			       (SELECT COUNT(*) FROM warehouse_locations wl WHERE wl.warehouse_id = warehouses.id) AS location_count
+			       (SELECT COUNT(*) FROM warehouse_locations wl WHERE wl.warehouse_id = warehouses.id) AS location_count,
+			       COALESCE(receiving_open::text,''), COALESCE(receiving_close::text,''), COALESCE(receiving_days,'')
 			FROM warehouses ORDER BY name`)
+		if err != nil && strings.Contains(err.Error(), "receiving_open") {
+			rows, err = db.Query(c.Context(), `
+				SELECT id, name, code, warehouse_type, picking_mode, disabled, is_group,
+				       parent_id, account, is_rejected_warehouse, customer,
+				       default_in_transit_warehouse, email_id, phone_no, mobile_no,
+				       address_line_1, address_line_2, city, state, pin,
+				       (SELECT COUNT(*) FROM warehouse_locations wl WHERE wl.warehouse_id = warehouses.id) AS location_count,
+				       '', '', ''
+				FROM warehouses ORDER BY name`)
+		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -1546,6 +1645,9 @@ func listWarehouses(db *pgxpool.Pool) fiber.Handler {
 			State            *string `json:"state"`
 			Pin              *string `json:"pin"`
 			LocationCount    int     `json:"location_count"`
+			ReceivingOpen    string  `json:"receiving_open"`
+			ReceivingClose   string  `json:"receiving_close"`
+			ReceivingDays    string  `json:"receiving_days"`
 		}
 		list := []wh{}
 		for rows.Next() {
@@ -1553,7 +1655,8 @@ func listWarehouses(db *pgxpool.Pool) fiber.Handler {
 			if err := rows.Scan(&w.ID, &w.Name, &w.Code, &w.WarehouseType, &w.PickingMode,
 				&w.Disabled, &w.IsGroup, &w.ParentID, &w.Account, &w.IsRejected, &w.Customer,
 				&w.DefaultInTransit, &w.EmailID, &w.PhoneNo, &w.MobileNo,
-				&w.AddressLine1, &w.AddressLine2, &w.City, &w.State, &w.Pin, &w.LocationCount); err != nil {
+				&w.AddressLine1, &w.AddressLine2, &w.City, &w.State, &w.Pin, &w.LocationCount,
+				&w.ReceivingOpen, &w.ReceivingClose, &w.ReceivingDays); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, w)
@@ -1567,8 +1670,15 @@ func listSuppliers(db *pgxpool.Pool) fiber.Handler {
 		rows, err := db.Query(c.Context(), `
 			SELECT id, name, supplier_group, gstin, disabled,
 			       COALESCE(is_transporter,false), carrier_code, contact_phone, contact_email,
-			       vehicle_fleet, default_service_level
+			       vehicle_fleet, default_service_level, COALESCE(barcode,'')
 			FROM suppliers WHERE disabled=false ORDER BY name`)
+		if err != nil && strings.Contains(err.Error(), "barcode") {
+			rows, err = db.Query(c.Context(), `
+				SELECT id, name, supplier_group, gstin, disabled,
+				       COALESCE(is_transporter,false), carrier_code, contact_phone, contact_email,
+				       vehicle_fleet, default_service_level, ''
+				FROM suppliers WHERE disabled=false ORDER BY name`)
+		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -1586,18 +1696,42 @@ func listSuppliers(db *pgxpool.Pool) fiber.Handler {
 			ContactEmail        *string `json:"contact_email"`
 			VehicleFleet        *string `json:"vehicle_fleet"`
 			DefaultServiceLevel *string `json:"default_service_level"`
+			Barcode             string  `json:"barcode"`
 		}
 		list := []sup{}
 		for rows.Next() {
 			var s sup
 			if err := rows.Scan(&s.ID, &s.Name, &s.SupplierGroup, &s.GSTIN, &s.Disabled,
 				&s.IsTransporter, &s.CarrierCode, &s.ContactPhone, &s.ContactEmail,
-				&s.VehicleFleet, &s.DefaultServiceLevel); err != nil {
+				&s.VehicleFleet, &s.DefaultServiceLevel, &s.Barcode); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, s)
 		}
 		return shared.OK(c, list)
+	}
+}
+
+func supplierByBarcode(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		code := strings.TrimSpace(c.Params("code"))
+		if code == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "barcode required")
+		}
+		var id int
+		var name, gstin, barcode string
+		err := db.QueryRow(c.Context(), `
+			SELECT id, name, COALESCE(gstin,''), COALESCE(barcode,'')
+			FROM suppliers
+			WHERE disabled=false AND (
+				lower(btrim(barcode))=lower(btrim($1))
+				OR lower(btrim(COALESCE(gstin,'')))=lower(btrim($1))
+			)
+			ORDER BY id LIMIT 1`, code).Scan(&id, &name, &gstin, &barcode)
+		if err != nil {
+			return shared.OK(c, fiber.Map{"found": false, "barcode": code})
+		}
+		return shared.OK(c, fiber.Map{"found": true, "id": id, "name": name, "gstin": gstin, "barcode": barcode})
 	}
 }
 

@@ -305,6 +305,10 @@ func importIntoGRN(db *pgxpool.Pool) fiber.Handler {
 				"cartons_created": createdCartons, "lines_created": createdLines, "skipped": skipped,
 			}))
 
+		cmp := afterImportCompare(c, db, body.GRNSessionID)
+		if cmp.Mismatch {
+			warnings = append(warnings, "packing list quantities do not match the linked PO")
+		}
 		return shared.OK(c, fiber.Map{
 			"grn_session_id":  body.GRNSessionID,
 			"cartons_created": createdCartons,
@@ -312,6 +316,8 @@ func importIntoGRN(db *pgxpool.Pool) fiber.Handler {
 			"skipped":         skipped,
 			"warnings":        warnings,
 			"imported_at":     time.Now(),
+			"comparison":      cmp,
+			"mismatch":        cmp.Mismatch,
 		})
 	}
 }

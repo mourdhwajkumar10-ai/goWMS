@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Def {
   id: number
@@ -39,6 +41,8 @@ export default function Workflow() {
     api.get<Inst[]>('/workflow/instances').then(r => { if (r.ok) setInsts(r.data ?? []) })
   }
   useEffect(() => { load() }, [])
+  const defPager = useClientPager(defs)
+  const instPager = useClientPager(insts)
 
   const createDef = async () => {
     const parsedStates = states.split(',').map(s => s.trim()).filter(Boolean).map(s => ({ name: s }))
@@ -148,8 +152,9 @@ export default function Workflow() {
       {/* Definitions Tab */}
       {activeTab === 'defs' && (
         <div className="erpnext-card">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Workflow Definitions</h2>
+            <ListPager pager={defPager} placeholder="Search definitions…" />
           </div>
           <div className="p-4">
             <table className="erpnext-table">
@@ -162,7 +167,7 @@ export default function Workflow() {
                 </tr>
               </thead>
               <tbody>
-                {defs.map(d => (
+                {defPager.pageItems.map(d => (
                   <tr key={d.id}>
                     <td className="font-medium">{d.name}</td>
                     <td>{d.entity_type}</td>
@@ -174,7 +179,7 @@ export default function Workflow() {
                     </td>
                   </tr>
                 ))}
-                {defs.length === 0 && <tr><td colSpan={4} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No workflow definitions</td></tr>}
+                {defPager.total === 0 && <tr><td colSpan={4} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No workflow definitions</td></tr>}
               </tbody>
             </table>
           </div>
@@ -206,8 +211,9 @@ export default function Workflow() {
           </div>
 
           <div className="erpnext-card">
-            <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+            <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
               <h2 className="text-lg font-semibold">Workflow Instances</h2>
+              <ListPager pager={instPager} placeholder="Search instances…" />
             </div>
             <div className="p-4">
               <table className="erpnext-table">
@@ -221,7 +227,7 @@ export default function Workflow() {
                   </tr>
                 </thead>
                 <tbody>
-                  {insts.map(i => (
+                  {instPager.pageItems.map(i => (
                     <tr key={i.id}>
                       <td className="font-medium">{i.id}</td>
                       <td>{i.workflow_name}</td>
@@ -230,7 +236,7 @@ export default function Workflow() {
                       <td><span className="erpnext-badge erpnext-badge-blue">{i.current_state}</span></td>
                     </tr>
                   ))}
-                  {insts.length === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No instances</td></tr>}
+                  {instPager.total === 0 && <tr><td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No instances</td></tr>}
                 </tbody>
               </table>
             </div>

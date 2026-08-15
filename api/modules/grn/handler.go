@@ -55,6 +55,9 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			InvoiceNos           string `json:"invoice_nos"`
 			AsDraft              bool   `json:"as_draft"`
 			ArrivalAttachmentID  int    `json:"arrival_attachment_id"`
+			DocumentsToFollow    bool   `json:"documents_to_follow"`
+			ExpectedDeliveryAt   string `json:"expected_delivery_at"`
+			SupplierBarcode      string `json:"supplier_barcode"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -162,6 +165,8 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 		if mode == "invoice_only" {
 			autoSeedInvoiceExpected(c, db, id, body.PurchaseOrderID, body.InvoiceNos)
 		}
+		arrivalFlags := autoArrivalChecks(c, db, id, body.DocumentsToFollow, body.InvoiceNos, body.ArrivalAt, body.ExpectedDeliveryAt, body.PurchaseReceiptNo, body.WarehouseID, body.SupplierBarcode)
+		shared.UpsertTransport(c.Context(), db, body.TruckNo, body.DriverName, body.DriverPhone)
 		shared.WriteAudit(db, c.Context(), userID(c), "grn.create", "grn", id, nil, fiber.Map{
 			"session_no": sessionNo, "receiving_mode": mode, "status": status,
 		})
@@ -177,6 +182,7 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			"truck_no":               body.TruckNo,
 			"driver_name":            body.DriverName,
 			"driver_phone":           body.DriverPhone,
+			"auto_flags":             arrivalFlags,
 		})
 	}
 }
@@ -233,7 +239,8 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 			}
 			list = append(list, fiber.Map{
 				"id": id, "session_no": sessionNo, "supplier": supplier,
-				"purchase_receipt_no": receipt, "status": status, "created_at": created,
+				"purchase_receipt_no": receipt, "status": canonicalStatus(status),
+				"status_label": specStatusLabel(status), "created_at": created,
 				"receiving_mode": mode, "truck_no": truck,
 				"is_followup": isFollowup, "parent_grn_id": parentID,
 			})
@@ -297,6 +304,12 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 				var parsed any
 				if json.Unmarshal(podSummary, &parsed) == nil {
 					extra["pod_box_summary"] = parsed
+				}
+			}
+			if parentID != nil && *parentID > 0 {
+				var parentNo string
+				if err := db.QueryRow(c.Context(), `SELECT session_no FROM grn_sessions WHERE id=$1`, *parentID).Scan(&parentNo); err == nil {
+					extra["parent_session_no"] = parentNo
 				}
 			}
 		} else {
@@ -363,7 +376,8 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 			"session_no":          sess.SessionNo,
 			"supplier_name":       sess.SupplierName,
 			"purchase_receipt_no": sess.PurchaseReceiptNo,
-			"status":              sess.Status,
+			"status":              canonicalStatus(sess.Status),
+			"status_label":        specStatusLabel(sess.Status),
 			"closed_at":           sess.ClosedAt,
 			"created_at":          sess.CreatedAt,
 			"warehouse_id":        sess.WarehouseID,
@@ -379,8 +393,10 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 func scanCartonBody(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {
-			GRNSessionID int    `json:"grn_session_id"`
-			CartonNo     string `json:"carton_no"`
+			GRNSessionID   int    `json:"grn_session_id"`
+			CartonNo       string `json:"carton_no"`
+			Condition      string `json:"condition"`
+			ParentCartonNo string `json:"parent_carton_no"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -388,7 +404,7 @@ func scanCartonBody(db *pgxpool.Pool) fiber.Handler {
 		if body.GRNSessionID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "grn_session_id required")
 		}
-		return doScanCarton(c, db, body.GRNSessionID, body.CartonNo)
+		return doScanCarton(c, db, body.GRNSessionID, body.CartonNo, body.Condition, body.ParentCartonNo)
 	}
 }
 
@@ -399,19 +415,32 @@ func scanCartonParam(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
 		var body struct {
-			CartonNo string `json:"carton_no"`
+			CartonNo       string `json:"carton_no"`
+			Condition      string `json:"condition"`
+			ParentCartonNo string `json:"parent_carton_no"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		return doScanCarton(c, db, sessionID, body.CartonNo)
+		return doScanCarton(c, db, sessionID, body.CartonNo, body.Condition, body.ParentCartonNo)
 	}
 }
 
-func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo string) error {
+func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo, condition, parentCartonNo string) error {
+	cartonNo = strings.TrimSpace(cartonNo)
 	if cartonNo == "" {
 		return shared.Err(c, fiber.StatusBadRequest, "carton_no required")
 	}
+	if isInvalidBoxBarcode(cartonNo) {
+		writeEvent(db, c, sessionID, "BOX_INVALID_SCANNED", fiber.Map{
+			"box_no": cartonNo, "result": "invalid",
+		})
+		return shared.OK(c, fiber.Map{
+			"invalid": true, "carton_no": cartonNo,
+			"message": "INVALID BARCODE",
+		})
+	}
+	condition = normalizeBoxCondition(condition)
 
 	var status string
 	err := db.QueryRow(c.Context(),
@@ -430,14 +459,15 @@ func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo string
 	var existingStatus string
 	var isExpected bool
 	err = db.QueryRow(c.Context(),
-		`SELECT id, status, COALESCE(is_expected,false) FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
+		`SELECT id, status, COALESCE(is_expected,false) FROM grn_cartons
+		 WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))`,
 		sessionID, cartonNo).Scan(&existingID, &existingStatus, &isExpected)
 	if err == nil {
 		st := strings.ToLower(existingStatus)
 		writeEvent(db, c, sessionID, "BOX_SCANNED", fiber.Map{
 			"box_no": cartonNo, "result": st,
 		})
-		if st == "received" || st == "accounted" || st == "verified" {
+		if isDuplicateBoxStatus(st) {
 			writeEvent(db, c, sessionID, "BOX_DUPLICATE_SCANNED", fiber.Map{
 				"box_no": cartonNo, "result": "duplicate",
 			})
@@ -446,30 +476,49 @@ func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo string
 			})
 			return shared.OK(c, fiber.Map{
 				"id": existingID, "carton_no": cartonNo, "status": existingStatus,
-				"duplicate": true, "message": "BOX ALREADY SCANNED",
+				"duplicate": true, "already_scanned": true,
+				"message": "BOX ALREADY SCANNED",
 			})
 		}
 		_, _ = db.Exec(c.Context(), `
-			UPDATE grn_cartons SET status='received', scanned_at=NOW(), scanned_by=$2 WHERE id=$1`,
-			existingID, userID(c))
+			UPDATE grn_cartons SET status='received', scanned_at=NOW(), scanned_by=$2, condition=$3 WHERE id=$1`,
+			existingID, userID(c), condition)
 		writeEvent(db, c, sessionID, "BOX_RECEIVED", fiber.Map{
 			"box_no": cartonNo, "result": "received",
 		})
-		return shared.OK(c, fiber.Map{
+		out := fiber.Map{
 			"id": existingID, "carton_no": cartonNo, "status": "received",
-			"expected": true, "message": "Expected box received",
-		})
+			"expected": true, "message": "Expected box received", "condition": condition,
+		}
+		if isDamagedCondition(condition) {
+			writeException(db, c, sessionID, "damage", fiber.Map{"box_no": cartonNo})
+			writeEvent(db, c, sessionID, "BOX_DAMAGE_REPORTED", fiber.Map{
+				"box_no": cartonNo, "result": "damage", "reason": condition,
+			})
+			out["damaged"] = true
+			out["message"] = "DAMAGED BOX — exception created"
+		}
+		attachNestedBox(c, db, sessionID, cartonNo, parentCartonNo, out)
+		return shared.OK(c, out)
 	}
 
-	// Unexpected / excess box
+	var hasExpectedList bool
+	var expectedBoxes, alreadyReceived int
+	_ = db.QueryRow(c.Context(), `
+		SELECT
+			EXISTS(SELECT 1 FROM grn_cartons WHERE grn_session_id=$1 AND COALESCE(is_expected,false)=true),
+			COALESCE((SELECT expected_boxes FROM grn_sessions WHERE id=$1),0),
+			(SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1 AND status IN ('received','accounted','verified','exception','excess'))
+	`, sessionID).Scan(&hasExpectedList, &expectedBoxes, &alreadyReceived)
+
+	newStatus, excess := classifyNewBox(hasExpectedList, expectedBoxes, alreadyReceived)
 	var id int
 	err = db.QueryRow(c.Context(),
-		`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by,is_expected)
-		 VALUES ($1,$2,'excess',NOW(),$3,false) RETURNING id`,
-		sessionID, cartonNo, userID(c)).Scan(&id)
+		`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by,is_expected,condition)
+		 VALUES ($1,$2,$3,NOW(),$4,false,$5) RETURNING id`,
+		sessionID, cartonNo, newStatus, userID(c), condition).Scan(&id)
 	if err != nil {
-		// Pre-018 fallback
-		if strings.Contains(err.Error(), "is_expected") || strings.Contains(err.Error(), "excess") {
+		if strings.Contains(err.Error(), "is_expected") || strings.Contains(err.Error(), "condition") || strings.Contains(err.Error(), "excess") {
 			err = db.QueryRow(c.Context(),
 				`INSERT INTO grn_cartons (grn_session_id,carton_no,status,scanned_at,scanned_by) VALUES ($1,$2,'accounted',NOW(),$3) RETURNING id`,
 				sessionID, cartonNo, userID(c)).Scan(&id)
@@ -480,18 +529,41 @@ func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo string
 		return shared.OK(c, fiber.Map{"id": id, "carton_no": cartonNo, "status": "accounted"})
 	}
 	writeEvent(db, c, sessionID, "BOX_SCANNED", fiber.Map{
-		"box_no": cartonNo, "result": "excess",
+		"box_no": cartonNo, "result": newStatus,
 	})
-	writeEvent(db, c, sessionID, "BOX_EXCESS_DETECTED", fiber.Map{
-		"box_no": cartonNo, "result": "excess",
-	})
-	writeException(db, c, sessionID, "excess_box", fiber.Map{
-		"box_no": cartonNo,
-	})
-	return shared.OK(c, fiber.Map{
-		"id": id, "carton_no": cartonNo, "status": "excess",
-		"excess": true, "message": "EXCESS BOX",
-	})
+	out := fiber.Map{
+		"id": id, "carton_no": cartonNo, "status": newStatus, "condition": condition,
+		"excess": excess, "message": "Box received",
+	}
+	if excess {
+		writeEvent(db, c, sessionID, "BOX_EXCESS_DETECTED", fiber.Map{
+			"box_no": cartonNo, "result": "excess",
+		})
+		writeException(db, c, sessionID, "excess_box", fiber.Map{"box_no": cartonNo})
+		if hasExpectedList {
+			writeException(db, c, sessionID, "unknown_box", fiber.Map{"box_no": cartonNo})
+			writeEvent(db, c, sessionID, "UNKNOWN_BOX", fiber.Map{"box_no": cartonNo, "result": "unknown_box"})
+			out["unknown_box"] = true
+			out["message"] = "UNKNOWN BOX — not on packing list or any PO"
+		} else {
+			out["message"] = "EXCESS BOX — not on packing list / over expected count"
+		}
+	} else {
+		writeEvent(db, c, sessionID, "BOX_RECEIVED", fiber.Map{
+			"box_no": cartonNo, "result": "received",
+		})
+		out["message"] = "Box accepted"
+	}
+	if isDamagedCondition(condition) {
+		writeException(db, c, sessionID, "damage", fiber.Map{"box_no": cartonNo})
+		writeEvent(db, c, sessionID, "BOX_DAMAGE_REPORTED", fiber.Map{
+			"box_no": cartonNo, "result": "damage", "reason": condition,
+		})
+		out["damaged"] = true
+		out["message"] = "DAMAGED BOX — exception created"
+	}
+	attachNestedBox(c, db, sessionID, cartonNo, parentCartonNo, out)
+	return shared.OK(c, out)
 }
 
 func listCartons(db *pgxpool.Pool) fiber.Handler {

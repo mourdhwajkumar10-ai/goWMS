@@ -19,9 +19,10 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/list", list(db))
 	r.Get("/:id", get(db))
 	r.Post("/:id/reading", addReading(db))
+	r.Post("/:id/readings", saveReadings(db))
 	r.Post("/:id/submit", submit(db))
-	r.Post("/:id/accept", accept(db))   // alias → submit status=accepted
-	r.Post("/:id/reject", reject(db))   // alias → submit status=rejected
+	r.Post("/:id/accept", accept(db)) // alias → submit status=accepted
+	r.Post("/:id/reject", reject(db)) // alias → submit status=rejected
 }
 
 func create(db *pgxpool.Pool) fiber.Handler {
@@ -136,7 +137,35 @@ func get(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
 		}
-		return shared.OK(c, q)
+		readings := []fiber.Map{}
+		rrows, rerr := db.Query(c.Context(), `
+			SELECT id, COALESCE(specification,''), COALESCE(value,''), COALESCE(status,'pending'),
+			       COALESCE(notes,''), min_value, max_value, COALESCE("numeric",true)
+			FROM quality_inspection_readings WHERE inspection_id=$1 ORDER BY id`, id)
+		if rerr == nil {
+			defer rrows.Close()
+			for rrows.Next() {
+				var rid int
+				var spec, val, st, notes string
+				var minV, maxV *float64
+				var numeric bool
+				if err := rrows.Scan(&rid, &spec, &val, &st, &notes, &minV, &maxV, &numeric); err != nil {
+					continue
+				}
+				status := readingStatus(val, st, minV, maxV, numeric)
+				readings = append(readings, fiber.Map{
+					"id": rid, "specification": spec, "value": val, "status": status,
+					"notes": notes, "min_value": minV, "max_value": maxV, "numeric": numeric,
+					"expected": expectedRange(minV, maxV),
+				})
+			}
+		}
+		return shared.OK(c, fiber.Map{
+			"id": q.ID, "inspection_no": q.InspectionNo, "reference_type": q.ReferenceType,
+			"reference_name": q.ReferenceName, "item_code": q.ItemCode, "sample_size": q.SampleSize,
+			"status": q.Status, "inspected_at": q.InspectedAt, "warehouse_id": q.WarehouseID,
+			"location_id": q.LocationID, "qty": q.Qty, "batch_no": q.BatchNo, "readings": readings,
+		})
 	}
 }
 
@@ -167,6 +196,115 @@ func addReading(db *pgxpool.Pool) fiber.Handler {
 		}
 		return shared.OK(c, fiber.Map{"id": readingID, "inspection_id": id})
 	}
+}
+
+func saveReadings(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+		var body struct {
+			Readings []struct {
+				ID            int    `json:"id"`
+				Specification string `json:"specification"`
+				Value         string `json:"value"`
+				Status        string `json:"status"`
+				Notes         string `json:"notes"`
+			} `json:"readings"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		saved := 0
+		failed := 0
+		for _, rd := range body.Readings {
+			var minV, maxV *float64
+			var numeric bool
+			var spec string
+			if rd.ID > 0 {
+				_ = db.QueryRow(c.Context(), `
+					SELECT COALESCE(specification,''), min_value, max_value, COALESCE("numeric",true)
+					FROM quality_inspection_readings WHERE id=$1 AND inspection_id=$2`, rd.ID, id).
+					Scan(&spec, &minV, &maxV, &numeric)
+			}
+			st := readingStatus(rd.Value, rd.Status, minV, maxV, numeric)
+			if st == "fail" {
+				failed++
+			}
+			if rd.ID > 0 {
+				_, err = db.Exec(c.Context(), `
+					UPDATE quality_inspection_readings SET value=$2, status=$3, notes=COALESCE(NULLIF($4,''), notes)
+					WHERE id=$1 AND inspection_id=$5`, rd.ID, rd.Value, st, rd.Notes, id)
+			} else {
+				spec = strings.TrimSpace(rd.Specification)
+				if spec == "" {
+					continue
+				}
+				_, err = db.Exec(c.Context(), `
+					INSERT INTO quality_inspection_readings (inspection_id, specification, value, status, notes)
+					VALUES ($1,$2,$3,$4,$5)`, id, spec, rd.Value, st, rd.Notes)
+			}
+			if err == nil {
+				saved++
+			}
+		}
+		return shared.OK(c, fiber.Map{"inspection_id": id, "saved": saved, "failed": failed})
+	}
+}
+
+func expectedRange(minV, maxV *float64) string {
+	if minV != nil && maxV != nil {
+		return strconv.FormatFloat(*minV, 'f', -1, 64) + " – " + strconv.FormatFloat(*maxV, 'f', -1, 64)
+	}
+	if minV != nil {
+		return "≥ " + strconv.FormatFloat(*minV, 'f', -1, 64)
+	}
+	if maxV != nil {
+		return "≤ " + strconv.FormatFloat(*maxV, 'f', -1, 64)
+	}
+	return ""
+}
+
+func readingStatus(value, requested string, minV, maxV *float64, numeric bool) string {
+	req := strings.ToLower(strings.TrimSpace(requested))
+	if req == "fail" || req == "failed" || req == "pass" || req == "ok" {
+		if req == "ok" {
+			return "pass"
+		}
+		if req == "failed" {
+			return "fail"
+		}
+		return req
+	}
+	v := strings.TrimSpace(value)
+	if v == "" {
+		if req != "" {
+			return req
+		}
+		return "pending"
+	}
+	if numeric && (minV != nil || maxV != nil) {
+		n, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return "fail"
+		}
+		if minV != nil && n < *minV {
+			return "fail"
+		}
+		if maxV != nil && n > *maxV {
+			return "fail"
+		}
+		return "pass"
+	}
+	low := strings.ToLower(v)
+	if low == "fail" || low == "ng" || low == "no" || low == "reject" {
+		return "fail"
+	}
+	if low == "pass" || low == "ok" || low == "yes" {
+		return "pass"
+	}
+	return "pending"
 }
 
 func submit(db *pgxpool.Pool) fiber.Handler {

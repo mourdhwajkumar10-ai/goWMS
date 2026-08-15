@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Rule {
   id: number
@@ -94,6 +96,8 @@ export default function Putaway() {
   const loadRules = () => api.putawayRules().then(r => { if (r.ok) setRules(r.data ?? []) })
   const loadQueue = () => api.putawayQueue().then(r => { if (r.ok) setQueue(r.data ?? []) })
   useEffect(() => { loadRules(); loadQueue() }, [])
+  const queuePager = useClientPager(queue)
+  const rulesPager = useClientPager(rules)
 
   const loadBins = async (warehouseId: number) => {
     const r = await api.warehouseLocations(warehouseId)
@@ -539,13 +543,14 @@ export default function Putaway() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="erpnext-card lg:col-span-1">
-          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Pending queue ({queue.length})</h3>
-            <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>Click a line to fill the form and suggest a bin</p>
+            <p className="text-xs" style={{ color: 'var(--text-dim)' }}>Click a line to fill the form and suggest a bin</p>
+            <ListPager pager={queuePager} placeholder="Search queue…" />
           </div>
           <div className="p-3 overflow-auto" style={{ maxHeight: 480 }}>
-            {queue.length === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No incoming stock waiting.</p>}
-            {queue.map(q => {
+            {queuePager.total === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No incoming stock waiting.</p>}
+            {queuePager.pageItems.map(q => {
               const selected = selectedQueueId === q.id
               return (
                 <button
@@ -767,12 +772,13 @@ export default function Putaway() {
         </div>
 
         <div className="erpnext-card">
-          <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
             <h3 className="font-semibold">Active Rules</h3>
+            <ListPager pager={rulesPager} placeholder="Search rules…" />
           </div>
           <div className="p-3 overflow-auto" style={{ maxHeight: 220 }}>
-            {rules.length === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No rules</p>}
-            {rules.map(r => (
+            {rulesPager.total === 0 && <p className="text-sm p-2" style={{ color: 'var(--text-dim)' }}>No rules</p>}
+            {rulesPager.pageItems.map(r => (
               <div key={r.id} className="text-sm p-2 mb-1 rounded" style={{ background: 'var(--panel-2)' }}>
                 {r.item_code} · {r.warehouse || 'any'} · P{r.priority} · cap {r.stock_capacity}
               </div>

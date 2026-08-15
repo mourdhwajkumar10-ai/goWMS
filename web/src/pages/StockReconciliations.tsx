@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Sr {
   id: number
@@ -13,6 +15,7 @@ export default function StockReconciliations() {
 
   const loadList = () => api.stockReconList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
+  const pager = useClientPager(list)
 
   const statusBadge = (status: string) => {
     const cls = status === 'completed' ? 'erpnext-badge-green' :
@@ -31,8 +34,9 @@ export default function StockReconciliations() {
       </div>
 
       <div className="erpnext-card">
-        <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+        <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
           <h2 className="text-lg font-semibold">All Reconciliations ({list.length})</h2>
+          <ListPager pager={pager} placeholder="Search reconciliations…" />
         </div>
         <div className="p-4">
           <table className="erpnext-table">
@@ -44,14 +48,14 @@ export default function StockReconciliations() {
               </tr>
             </thead>
             <tbody>
-              {list.map(s => (
+              {pager.pageItems.map(s => (
                 <tr key={s.id}>
                   <td className="font-medium" style={{ color: 'var(--accent)' }}>{s.name}</td>
                   <td>{statusBadge(s.status || 'draft')}</td>
                   <td>{s.posting_date ? new Date(s.posting_date).toLocaleDateString() : '—'}</td>
                 </tr>
               ))}
-              {list.length === 0 && <tr><td colSpan={3} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No reconciliations</td></tr>}
+              {pager.total === 0 && <tr><td colSpan={3} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No reconciliations</td></tr>}
             </tbody>
           </table>
         </div>

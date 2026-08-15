@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import TruckAutocomplete from '../components/TruckAutocomplete'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Trip {
   id: number
@@ -42,6 +46,7 @@ export default function Dispatch() {
     loadTrips()
     api.carriersList().then(r => { if (r.ok) setCarriers(r.data ?? []) })
   }, [])
+  const pager = useClientPager(trips)
 
   const createTrip = async () => {
     const r = await api.dispatchCreate({
@@ -170,12 +175,23 @@ export default function Dispatch() {
           <div className="erpnext-card">
             <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Create Trip</h3>
+              <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
+                Same Transport master as inbound GRN — <Link to="/transports" style={{ color: 'var(--accent)' }}>manage trucks</Link>
+              </p>
             </div>
             <div className="p-4">
               <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                 <div>
                   <label className="erpnext-label">Vehicle No *</label>
-                  <input className="erpnext-input" value={vehicle} onChange={e => setVehicle(e.target.value)} placeholder="MH-12-AB-1234" />
+                  <TruckAutocomplete
+                    value={vehicle}
+                    onChangeText={setVehicle}
+                    onSelect={row => {
+                      setVehicle(row.truck_no)
+                      if (row.driver_name && !driverName) setDriverName(row.driver_name)
+                    }}
+                    placeholder="Type truck no or name"
+                  />
                 </div>
                 <div>
                   <label className="erpnext-label">Driver Name</label>
@@ -204,15 +220,16 @@ export default function Dispatch() {
           )}
 
           <div className="erpnext-card">
-            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Trips</h3>
+              <ListPager pager={pager} placeholder="Search trips…" />
             </div>
             <table className="erpnext-table">
               <thead>
                 <tr><th>Trip No</th><th>Vehicle</th><th>Driver</th><th>Status</th><th>Created</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {trips.map(t => (
+                {pager.pageItems.map(t => (
                   <tr key={t.id}>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openTrip(t.id)}>{t.trip_no}</td>
                     <td>{t.vehicle_no || '—'}</td>
@@ -232,7 +249,7 @@ export default function Dispatch() {
                     </td>
                   </tr>
                 ))}
-                {trips.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No trips</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No trips</td></tr>}
               </tbody>
             </table>
           </div>

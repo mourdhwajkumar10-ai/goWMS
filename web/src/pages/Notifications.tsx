@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Notif {
   id: number
@@ -35,6 +37,7 @@ export default function Notifications() {
   }
 
   const filtered = filter === 'unread' ? list.filter(n => !n.is_read) : list
+  const pager = useClientPager(filtered)
 
   const typeIcon = (type: string) => {
     switch (type) {
@@ -85,8 +88,11 @@ export default function Notifications() {
       </div>
 
       <div className="erpnext-card">
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <ListPager pager={pager} placeholder="Search notifications…" />
+        </div>
         <div className="p-4 space-y-2">
-          {filtered.map(n => (
+          {pager.pageItems.map(n => (
             <div
               key={n.id}
               className="flex items-start gap-4 p-4 rounded-lg transition-colors"
@@ -110,7 +116,7 @@ export default function Notifications() {
               )}
             </div>
           ))}
-          {filtered.length === 0 && (
+          {pager.total === 0 && (
             <div className="text-center py-12" style={{ color: 'var(--text-dim)' }}>
               {filter === 'unread' ? 'No unread notifications' : 'No notifications'}
             </div>

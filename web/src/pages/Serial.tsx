@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface SerialNo {
   id: number
@@ -16,7 +18,6 @@ interface SerialNo {
 
 export default function Serial() {
   const [list, setList] = useState<SerialNo[]>([])
-  const [search, setSearch] = useState('')
   const [showScanner, setShowScanner] = useState(false)
   const [msg, setMsg] = useState('')
 
@@ -30,12 +31,7 @@ export default function Serial() {
 
   const loadList = () => api.serialList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => { loadList() }, [])
-
-  const handleSearch = async () => {
-    if (!search.trim()) { loadList(); return }
-    const r = await api.serialList(search)
-    if (r.ok) setList(r.data ?? [])
-  }
+  const pager = useClientPager(list)
 
   const createSerial = async () => {
     const r = await api.post('/serial/', {
@@ -144,19 +140,16 @@ export default function Serial() {
       )}
 
       <div className="erpnext-card">
-        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+        <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
           <h3 className="font-semibold">Serial Numbers ({list.length})</h3>
-          <div className="flex gap-2">
-            <input className="erpnext-input text-sm" placeholder="Search serial..." value={search} onChange={e => setSearch(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleSearch()} />
-            <button onClick={handleSearch} className="erpnext-btn-secondary text-sm">Search</button>
-          </div>
+          <ListPager pager={pager} placeholder="Search serial…" />
         </div>
         <table className="erpnext-table">
           <thead>
             <tr><th>Serial No</th><th>Item</th><th>Batch</th><th>Warehouse</th><th>Status</th><th>Created</th></tr>
           </thead>
           <tbody>
-            {list.map(s => (
+            {pager.pageItems.map(s => (
               <tr key={s.id}>
                 <td className="font-medium">{s.serial_no}</td>
                 <td>{s.item_code}</td>
@@ -166,7 +159,7 @@ export default function Serial() {
                 <td>{new Date(s.created_at).toLocaleDateString()}</td>
               </tr>
             ))}
-            {list.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No serial numbers</td></tr>}
+            {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No serial numbers</td></tr>}
           </tbody>
         </table>
       </div>

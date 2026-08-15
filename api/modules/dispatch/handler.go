@@ -64,6 +64,7 @@ func createTrip(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		shared.UpsertTransport(c.Context(), db, body.VehicleNo, body.DriverName, "")
 		return shared.OK(c, fiber.Map{"id": id, "trip_no": tripNo, "status": "scheduled", "carrier_id": body.CarrierID})
 	}
 }

@@ -183,6 +183,9 @@ export const api = {
   carrierCreate: (data: any) => post<any>("/masterdata/carriers", data),
   supplierGet: (id: number) => get<any>(`/masterdata/suppliers/${id}`),
   supplierUpdate: (id: number, data: any) => put<any>(`/masterdata/suppliers/${id}`, data),
+  transportsList: (q?: string) => get<any[]>(`/masterdata/transports${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  transportCreate: (data: any) => post<any>("/masterdata/transports", data),
+  transportUpdate: (id: number, data: any) => put<any>(`/masterdata/transports/${id}`, data),
 
   // PO
   poList: () => get<any[]>("/po/list"),
@@ -209,11 +212,18 @@ export const api = {
   grnOpenBox: (id: number, data: { carton_no?: string; carton_id?: number }) =>
     post<any>(`/grn/session/${id}/open-box`, data),
   grnActiveBox: (id: number) => get<any>(`/grn/session/${id}/active-box`),
-  grnVerifyItem: (id: number, data: { item_code: string; qty?: number; carton_id?: number }) =>
+  grnVerifyItem: (id: number, data: {
+    item_code: string; qty?: number; carton_id?: number
+    variant?: string; expected_variant?: string
+    revision?: string; expected_revision?: string
+    serial_no?: string; substitute?: boolean
+  }) =>
     post<any>(`/grn/session/${id}/verify-item`, data),
+  grnReportDiscrepancy: (id: number, data: Record<string, unknown>) =>
+    post<any>(`/grn/session/${id}/discrepancy`, data),
   grnCloseBox: (id: number, data: { carton_id: number; reason?: string }) =>
     post<any>(`/grn/session/${id}/close-box`, data),
-  grnResolveException: (exceptionId: number, data: { resolution: string; status?: string }) =>
+  grnResolveException: (exceptionId: number, data: { resolution: string; status?: string; create_followup?: boolean }) =>
     post<any>(`/grn/exceptions/${exceptionId}/resolve`, data),
   grnStartAudit: (id: number, sampleSize?: number) =>
     post<any>(`/grn/session/${id}/audit/start`, { sample_size: sampleSize ?? 5 }),
@@ -228,12 +238,22 @@ export const api = {
     post<any>(`/grn/session/${id}/invoice-expected`, { lines }),
   grnInvoiceExpected: (id: number) => get<any[]>(`/grn/session/${id}/invoice-expected`),
   grnItemSummary: (id: number) => get<any>(`/grn/session/${id}/item-summary`),
+  grnDocCompare: (id: number) => get<any>(`/grn/session/${id}/doc-compare`),
+  grnAttachCOA: (id: number, attachmentId: number) =>
+    post<any>(`/grn/session/${id}/coa`, { attachment_id: attachmentId }),
+  grnAttachEvidence: (exceptionId: number, attachmentId: number) =>
+    post<any>(`/grn/exceptions/${exceptionId}/evidence`, { attachment_id: attachmentId }),
+  grnScanSupplier: (id: number, barcode: string) =>
+    post<any>(`/grn/session/${id}/supplier-scan`, { barcode }),
   grnCompleteVerification: (id: number) => post<any>(`/grn/session/${id}/complete-verification`, {}),
   grnFinalize: (id: number, force?: boolean) =>
     post<any>(`/grn/session/${id}/finalize`, { force: !!force }),
   grnAllExceptions: (status = 'open') =>
     get<any[]>(`/grn/exceptions?status=${encodeURIComponent(status)}`),
   grnAllFollowUps: () => get<any[]>('/grn/follow-ups'),
+  grnAllAudits: () => get<any[]>('/grn/audits'),
+  grnPresence: (id: number) => post<any>(`/grn/session/${id}/presence`, {}),
+  grnListPresence: (id: number) => get<any>(`/grn/session/${id}/presence`),
   grnScanCarton: (data: any) => post<any>("/grn/carton", data),
   grnScanLine: (data: any) => post<any>("/grn/line", data),
   grnClose: (data: any) => post<any>("/grn/close", data),
@@ -296,6 +316,7 @@ export const api = {
   // Quality
   qiList: () => get<any[]>("/qi/list"),
   qiCreate: (data: any) => post<any>("/qi/", data),
+  qiSaveReadings: (id: number, readings: any[]) => post<any>(`/qi/${id}/readings`, { readings }),
 
   // Serial
   serialList: (itemCode?: string) => get<any[]>(`/serial/list${itemCode ? `?item_code=${encodeURIComponent(itemCode)}` : ''}`),
@@ -351,10 +372,12 @@ export const api = {
   // Suppliers
   supplierList: () => get<any[]>("/masterdata/suppliers"),
   supplierCreate: (data: any) => post<any>("/masterdata/suppliers", data),
+  supplierByBarcode: (code: string) => get<any>(`/masterdata/suppliers/by-barcode/${encodeURIComponent(code)}`),
 
   // Warehouses
   warehouseList: () => get<any[]>("/masterdata/warehouses"),
   warehouseCreate: (data: any) => post<any>("/masterdata/warehouses", data),
+  warehouseUpdate: (id: number, data: any) => patch<any>(`/masterdata/warehouses/${id}`, data),
   warehouseLocations: (id: number) => get<any[]>(`/masterdata/warehouses/${id}/locations`),
   locationCreate: (warehouseId: number, data: any) => post<any>(`/masterdata/warehouses/${warehouseId}/locations`, data),
   locationBulk: (warehouseId: number, data: any) => post<any>(`/masterdata/warehouses/${warehouseId}/locations/bulk`, data),

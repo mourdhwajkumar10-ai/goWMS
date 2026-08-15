@@ -3,6 +3,8 @@ import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import CSVImport from '../components/CSVTools'
 import ProductMasterFields, { emptyProductForm, productPayload, type LocOpt } from '../components/ProductMasterFields'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Item {
   id: number
@@ -11,6 +13,7 @@ interface Item {
   has_serial: boolean
   has_batch: boolean
   has_expiry_date?: boolean
+  requires_qi?: boolean
   safety_stock: number | null
   brand: string | null
   item_group: string | null
@@ -66,6 +69,7 @@ export default function Items() {
   const [showNew, setShowNew] = useState(false)
   const [selected, setSelected] = useState<Item | null>(null)
   const [inventory, setInventory] = useState<InvRow[]>([])
+  const invPager = useClientPager(inventory)
   const [locations, setLocations] = useState<LocOpt[]>([])
   const [msg, setMsg] = useState('')
 
@@ -144,6 +148,7 @@ export default function Items() {
       has_batch: !!item.has_batch,
       has_expiry_date: !!item.has_expiry_date,
       shelf_life_in_days: item.shelf_life_in_days != null ? String(item.shelf_life_in_days) : '',
+      requires_qi: !!item.requires_qi,
     })
     setShowEdit(true)
     const ar = await api.attachmentList('item', item.id)
@@ -345,7 +350,7 @@ export default function Items() {
           </table>
         </div>
         <div className="items-pager">
-          <span>{total === 0 ? '0 items' : `${from}–${to} of ${total}`}</span>
+          <span>{total === 0 ? '0' : `${from}–${to}`} of {total} · 50 / page</span>
           <div className="flex gap-2 items-center">
             <button className="erpnext-btn-secondary text-sm" disabled={page <= 1} onClick={() => goToPage(page - 1)}>Prev</button>
             <span>Page {page} / {pageCount}</span>
@@ -385,6 +390,7 @@ export default function Items() {
                 <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
                 <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>
               </div>
+              <ListPager pager={invPager} placeholder="Search stock locations…" />
               <table className="erpnext-table">
                 <thead>
                   <tr>
@@ -397,7 +403,7 @@ export default function Items() {
                   </tr>
                 </thead>
                 <tbody>
-                  {inventory.map(row => (
+                  {invPager.pageItems.map(row => (
                     <tr key={row.id}>
                       <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
                       <td>{row.warehouse_code}</td>
@@ -421,7 +427,7 @@ export default function Items() {
                       </td>
                     </tr>
                   ))}
-                  {inventory.length === 0 && (
+                  {invPager.total === 0 && (
                     <tr>
                       <td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No stock at locations</td>
                     </tr>

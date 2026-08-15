@@ -1,5 +1,7 @@
 import { useEffect, useState, Fragment } from 'react'
 import { api } from '../services/api'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 export default function AuditLogs() {
   const [rows, setRows] = useState<any[]>([])
@@ -13,7 +15,7 @@ export default function AuditLogs() {
   const load = async () => {
     setLoading(true)
     const params = new URLSearchParams()
-    params.set('limit', '150')
+    params.set('limit', '500')
     if (q.trim()) params.set('q', q.trim())
     if (entityType.trim()) params.set('entity_type', entityType.trim())
     if (from) params.set('from', from)
@@ -24,6 +26,7 @@ export default function AuditLogs() {
   }
 
   useEffect(() => { load() }, [])
+  const pager = useClientPager(rows)
 
   return (
     <div className="space-y-6">
@@ -59,6 +62,9 @@ export default function AuditLogs() {
       </div>
 
       <div className="erpnext-card overflow-x-auto">
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <ListPager pager={pager} placeholder="Search loaded logs…" />
+        </div>
         <table className="erpnext-table">
           <thead>
             <tr style={{ background: 'var(--panel-2)' }}>
@@ -70,7 +76,7 @@ export default function AuditLogs() {
             </tr>
           </thead>
           <tbody>
-            {rows.map(row => (
+            {pager.pageItems.map(row => (
               <Fragment key={row.id}>
                 <tr>
                   <td className="text-sm whitespace-nowrap">{row.created_at?.replace('T', ' ').slice(0, 19)}</td>
@@ -97,7 +103,7 @@ export default function AuditLogs() {
                 )}
               </Fragment>
             ))}
-            {rows.length === 0 && (
+            {pager.total === 0 && (
               <tr><td colSpan={5} className="text-center py-10" style={{ color: 'var(--text-dim)' }}>No audit events yet</td></tr>
             )}
           </tbody>

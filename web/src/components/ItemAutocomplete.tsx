@@ -38,18 +38,22 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
     return () => document.removeEventListener('mousedown', handler)
   }, [])
 
-  const search = useCallback((q: string) => {
+  const search = useCallback((q: string, immediate = false) => {
     if (timer.current) clearTimeout(timer.current)
-    if (!q.trim()) { setResults([]); setOpen(false); return }
-    setLoading(true)
-    timer.current = setTimeout(async () => {
-      const r = await api.itemList(q)
+    const run = async () => {
+      setLoading(true)
+      const r = await api.itemList(q.trim() || undefined, { limit: 12 })
       if (r.ok && r.data) {
         setResults(r.data)
         setOpen(true)
       }
       setLoading(false)
-    }, 200)
+    }
+    if (immediate) {
+      void run()
+      return
+    }
+    timer.current = setTimeout(run, 120)
   }, [])
 
   const handleChange = (val: string) => {
@@ -70,7 +74,8 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
         className={className || 'erpnext-input text-sm w-full'}
         value={query}
         onChange={e => handleChange(e.target.value)}
-        onFocus={() => query.trim() && results.length > 0 && setOpen(true)}
+        onFocus={() => search(query, true)}
+        onClick={() => search(query, true)}
         placeholder={placeholder || 'Scan barcode or type...'}
         autoComplete="off"
         onKeyDown={onKeyDown}
@@ -98,6 +103,14 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
               <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{item.brand || ''}</span>
             </button>
           ))}
+        </div>
+      )}
+      {open && !loading && results.length === 0 && (
+        <div
+          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg border px-3 py-2 text-xs"
+          style={{ background: 'var(--panel)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
+        >
+          No matching items — keep typing or scan
         </div>
       )}
     </div>

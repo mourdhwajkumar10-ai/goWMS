@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import { printLocationLabels } from '../components/LocationQRPrint'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface Wh {
   id: number
@@ -11,6 +13,9 @@ interface Wh {
   picking_mode: string | null
   disabled: boolean
   location_count?: number
+  receiving_open?: string
+  receiving_close?: string
+  receiving_days?: string
 }
 
 interface Loc {
@@ -53,6 +58,41 @@ const LOC_TYPES = [
   { value: 'returns', label: 'Returns' },
 ]
 
+const WEEKDAYS = [
+  { id: '1', label: 'Mon' },
+  { id: '2', label: 'Tue' },
+  { id: '3', label: 'Wed' },
+  { id: '4', label: 'Thu' },
+  { id: '5', label: 'Fri' },
+  { id: '6', label: 'Sat' },
+  { id: '7', label: 'Sun' },
+]
+
+function toggleRecvDay(days: string, id: string) {
+  const set = new Set(days.split(',').map(s => s.trim()).filter(Boolean))
+  if (set.has(id)) set.delete(id)
+  else set.add(id)
+  return WEEKDAYS.map(d => d.id).filter(d => set.has(d)).join(',')
+}
+
+function RecvDayToggles({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const selected = new Set(value.split(',').map(s => s.trim()))
+  return (
+    <div className="flex flex-wrap gap-1">
+      {WEEKDAYS.map(d => (
+        <button
+          key={d.id}
+          type="button"
+          className={selected.has(d.id) ? 'erpnext-btn-primary text-xs' : 'erpnext-btn-secondary text-xs'}
+          onClick={() => onChange(toggleRecvDay(value, d.id))}
+        >
+          {d.label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function Warehouses() {
   const [list, setList] = useState<Wh[]>([])
   const [showNew, setShowNew] = useState(false)
@@ -65,6 +105,9 @@ export default function Warehouses() {
   const [name, setName] = useState('')
   const [whType, setWhType] = useState('storage')
   const [pickingMode, setPickingMode] = useState('scan')
+  const [recvOpen, setRecvOpen] = useState('06:00')
+  const [recvClose, setRecvClose] = useState('18:00')
+  const [recvDays, setRecvDays] = useState('1,2,3,4,5')
 
   const [aisle, setAisle] = useState('A')
   const [bay, setBay] = useState('01')
@@ -101,6 +144,9 @@ export default function Warehouses() {
 
   const openWarehouse = async (w: Wh) => {
     setSelected(w)
+    setRecvOpen((w.receiving_open || '06:00').slice(0, 5))
+    setRecvClose((w.receiving_close || '18:00').slice(0, 5))
+    setRecvDays(w.receiving_days || '1,2,3,4,5')
     setEditingId(null)
     setFilterAisle('')
     setSelectedIds([])
@@ -123,8 +169,14 @@ export default function Warehouses() {
     return locations.filter(l => (l.aisle || '').toUpperCase() === a)
   }, [locations, filterAisle])
 
+  const whPager = useClientPager(list)
+  const locPager = useClientPager(filtered)
+
   const createWarehouse = async () => {
-    const r = await api.warehouseCreate({ code, name, warehouse_type: whType, picking_mode: pickingMode })
+    const r = await api.warehouseCreate({
+      code, name, warehouse_type: whType, picking_mode: pickingMode,
+      receiving_open: recvOpen, receiving_close: recvClose, receiving_days: recvDays,
+    })
     if (r.ok) {
       setCode(''); setName('')
       setShowNew(false)
@@ -323,6 +375,20 @@ export default function Warehouses() {
               </select>
             </div>
           </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="erpnext-label">Receiving opens</label>
+              <input className="erpnext-input" type="time" value={recvOpen} onChange={e => setRecvOpen(e.target.value)} />
+            </div>
+            <div>
+              <label className="erpnext-label">Receiving closes</label>
+              <input className="erpnext-input" type="time" value={recvClose} onChange={e => setRecvClose(e.target.value)} />
+            </div>
+            <div>
+              <label className="erpnext-label">Days</label>
+              <RecvDayToggles value={recvDays} onChange={setRecvDays} />
+            </div>
+          </div>
           <div className="flex justify-end gap-3">
             <button onClick={() => setShowNew(false)} className="erpnext-btn-secondary">Cancel</button>
             <button onClick={createWarehouse} className="erpnext-btn-primary">Create Warehouse</button>
@@ -332,8 +398,9 @@ export default function Warehouses() {
 
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div className="erpnext-card xl:col-span-1">
-          <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
+          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
             <h2 className="text-lg font-semibold">Warehouses ({list.length})</h2>
+            <ListPager pager={whPager} placeholder="Search warehouses…" />
           </div>
           <table className="erpnext-table">
             <thead>
@@ -344,7 +411,7 @@ export default function Warehouses() {
               </tr>
             </thead>
             <tbody>
-              {list.map(w => (
+              {whPager.pageItems.map(w => (
                 <tr
                   key={w.id}
                   onClick={() => openWarehouse(w)}
@@ -355,7 +422,7 @@ export default function Warehouses() {
                   <td>{w.location_count ?? '—'}</td>
                 </tr>
               ))}
-              {list.length === 0 && (
+              {whPager.total === 0 && (
                 <tr><td colSpan={3} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No warehouses</td></tr>
               )}
             </tbody>
@@ -394,6 +461,42 @@ export default function Warehouses() {
 
           {selected && (
             <div className="p-4 space-y-4">
+              <div className="rounded-lg p-4 space-y-3" style={{ border: '1px solid var(--border)' }}>
+                <div className="text-sm font-medium">Receiving hours</div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-end">
+                  <div>
+                    <label className="erpnext-label">Opens</label>
+                    <input className="erpnext-input" type="time" value={recvOpen} onChange={e => setRecvOpen(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Closes</label>
+                    <input className="erpnext-input" type="time" value={recvClose} onChange={e => setRecvClose(e.target.value)} />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label className="erpnext-label">Days</label>
+                    <RecvDayToggles value={recvDays} onChange={setRecvDays} />
+                  </div>
+                  <button
+                    className="erpnext-btn-primary text-sm"
+                    onClick={async () => {
+                      const r = await api.warehouseUpdate(selected.id, {
+                        receiving_open: recvOpen, receiving_close: recvClose, receiving_days: recvDays,
+                      })
+                      if (r.ok) {
+                        notify({ type: 'success', title: 'Receiving hours saved', message: `${recvOpen}–${recvClose}` })
+                        loadList()
+                      } else {
+                        notify({ type: 'error', title: 'Save failed', message: r.error || '' })
+                      }
+                    }}
+                  >
+                    Save hours
+                  </button>
+                </div>
+                <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                  Default Mon–Fri 06:00–18:00. Arrivals outside this window auto-flag OUTSIDE HOURS on GRN create.
+                </p>
+              </div>
               <div className="rounded-lg p-4 space-y-3" style={{ background: 'var(--panel-2)' }}>
                 <div className="text-sm font-medium">Create any location</div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -573,11 +676,12 @@ export default function Warehouses() {
                 </div>
               )}
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 <label className="erpnext-label mb-0">Filter aisle</label>
                 <input className="erpnext-input" style={{ maxWidth: 120 }} value={filterAisle} onChange={e => setFilterAisle(e.target.value)} placeholder="A" />
                 <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{filtered.length} locations</span>
               </div>
+              <ListPager pager={locPager} placeholder="Search locations…" />
 
               <div className="overflow-x-auto">
                 <table className="erpnext-table">
@@ -596,7 +700,7 @@ export default function Warehouses() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map(l => (
+                    {locPager.pageItems.map(l => (
                       <tr key={l.id} style={{ opacity: l.disabled ? 0.5 : 1 }}>
                         <td>
                           <input
@@ -619,7 +723,7 @@ export default function Warehouses() {
                         </td>
                       </tr>
                     ))}
-                    {filtered.length === 0 && (
+                    {locPager.total === 0 && (
                       <tr><td colSpan={10} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No locations yet</td></tr>
                     )}
                   </tbody>

@@ -3,6 +3,8 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 interface QiInspection {
   id: number
@@ -33,12 +35,15 @@ export default function Qi() {
   const [tmplSpec, setTmplSpec] = useState('Visual,Quantity')
 
   const [rejectReason, setRejectReason] = useState('')
+  const [readings, setReadings] = useState<any[]>([])
+  const [readingsBusy, setReadingsBusy] = useState(false)
 
   const loadList = () => api.qiList().then(r => { if (r.ok) setList(r.data ?? []) })
   useEffect(() => {
     loadList()
     api.qiTemplates().then(r => { if (r.ok) setTemplates(r.data ?? []) })
   }, [])
+  const pager = useClientPager(list)
 
   const createInspection = async () => {
     if (templateId) {
@@ -83,8 +88,34 @@ export default function Qi() {
   }
 
   const openInspection = async (id: number) => {
-    const r = await api.get(`/qi/${id}`)
-    if (r.ok) setSelected(r.data)
+    const r = await api.get<any>(`/qi/${id}`)
+    if (r.ok) {
+      setSelected(r.data)
+      const rows = r.data?.readings?.length ? r.data.readings : [{ specification: 'Visual', value: '', status: 'pending', expected: '' }]
+      setReadings(rows)
+    }
+  }
+
+  const updateReading = (idx: number, field: string, value: string) => {
+    const next = [...readings]
+    next[idx] = { ...next[idx], [field]: value }
+    setReadings(next)
+  }
+
+  const saveReadings = async () => {
+    if (!selected) return
+    setReadingsBusy(true)
+    const r = await api.qiSaveReadings(selected.id, readings.map((rd: any) => ({
+      id: rd.id, specification: rd.specification, value: rd.value, status: rd.status, notes: rd.notes,
+    })))
+    setReadingsBusy(false)
+    if (r.ok) {
+      notify({ type: r.data.failed ? 'warning' : 'success', title: 'Readings saved', message: r.data.failed ? `${r.data.failed} failed spec(s)` : `${r.data.saved} reading(s)` })
+      await openInspection(selected.id)
+    } else {
+      notify({ type: 'error', title: 'Save failed', message: r.error || '' })
+    }
+    return r.ok
   }
 
   const handleScan = (code: string) => {
@@ -94,6 +125,7 @@ export default function Qi() {
 
   const acceptInspection = async () => {
     if (!selected) return
+    await saveReadings()
     const r = await api.post<{ moved_to?: string }>(`/qi/${selected.id}/submit`, { status: 'accepted' })
     if (r.ok) {
       notify({
@@ -110,6 +142,7 @@ export default function Qi() {
 
   const rejectInspection = async () => {
     if (!selected) return
+    await saveReadings()
     const r = await api.post<{ moved_to?: string }>(`/qi/${selected.id}/submit`, { status: 'rejected', reason: rejectReason })
     if (r.ok) {
       notify({
@@ -201,15 +234,16 @@ export default function Qi() {
           )}
 
           <div className="erpnext-card">
-            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
+            <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
               <h3 className="font-semibold">Inspections</h3>
+              <ListPager pager={pager} placeholder="Search inspections…" />
             </div>
             <table className="erpnext-table">
               <thead>
                 <tr><th>Inspection No</th><th>Item</th><th>Reference</th><th>Sample</th><th>Status</th><th>Created</th><th>Action</th></tr>
               </thead>
               <tbody>
-                {list.map(q => (
+                {pager.pageItems.map(q => (
                   <tr key={q.id}>
                     <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openInspection(q.id)}>{q.inspection_no}</td>
                     <td>{q.item_code}</td>
@@ -222,7 +256,7 @@ export default function Qi() {
                     </td>
                   </tr>
                 ))}
-                {list.length === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections</td></tr>}
+                {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections</td></tr>}
               </tbody>
             </table>
           </div>
@@ -244,7 +278,45 @@ export default function Qi() {
               <div><span style={{ color: 'var(--text-dim)' }}>Item: </span><strong>{selected.item_code}</strong></div>
               <div><span style={{ color: 'var(--text-dim)' }}>Sample Size: </span>{selected.sample_size}</div>
               <div><span style={{ color: 'var(--text-dim)' }}>Status: </span>{statusBadge(selected.status || 'pending')}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Created: </span>{new Date(selected.created_at).toLocaleString()}</div>
+              <div><span style={{ color: 'var(--text-dim)' }}>Created: </span>{new Date(selected.created_at || Date.now()).toLocaleString()}</div>
+            </div>
+
+            <div className="mb-6">
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="font-medium text-sm">Checklist readings</h4>
+                <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => setReadings([...readings, { specification: '', value: '', status: 'pending' }])}>+ Spec</button>
+              </div>
+              <table className="erpnext-table text-sm">
+                <thead>
+                  <tr>
+                    <th>Specification</th>
+                    <th>Expected</th>
+                    <th>Actual</th>
+                    <th>Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {readings.map((rd: any, idx: number) => (
+                    <tr key={rd.id || idx}>
+                      <td>
+                        {rd.id ? rd.specification : (
+                          <input className="erpnext-input" value={rd.specification || ''} onChange={e => updateReading(idx, 'specification', e.target.value)} placeholder="Spec name" />
+                        )}
+                      </td>
+                      <td style={{ color: 'var(--text-dim)' }}>{rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} – ${rd.max_value ?? '—'}` : '—')}</td>
+                      <td>
+                        <input className="erpnext-input" value={rd.value || ''} onChange={e => updateReading(idx, 'value', e.target.value)} placeholder="Reading" disabled={selected.status !== 'pending'} />
+                      </td>
+                      <td>{statusBadge(rd.status || 'pending')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {selected.status === 'pending' && (
+                <button className="erpnext-btn-secondary text-xs mt-2" disabled={readingsBusy} onClick={() => { void saveReadings() }}>
+                  {readingsBusy ? 'Saving…' : 'Save readings'}
+                </button>
+              )}
             </div>
 
             {selected.status === 'pending' && (

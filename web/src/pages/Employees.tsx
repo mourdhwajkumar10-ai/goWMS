@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { api, getRole } from '../services/api'
 import { notify } from '../components/Notifications'
 import CSVImport from '../components/CSVTools'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
 
 export default function Employees() {
   const myRole = (getRole() || '').toLowerCase()
@@ -33,6 +35,8 @@ export default function Employees() {
     }
   }
   useEffect(() => { load() }, [])
+
+  const pager = useClientPager(list)
 
   useEffect(() => {
     if (!firstName && !lastName) {
@@ -191,10 +195,13 @@ export default function Employees() {
       )}
 
       <div className="erpnext-card">
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <ListPager pager={pager} placeholder="Search employees…" />
+        </div>
         <table className="erpnext-table">
           <thead><tr><th>Name</th><th>No</th><th>Badge</th><th>Role</th><th>PIN</th><th></th></tr></thead>
           <tbody>
-            {list.map((e: any) => (
+            {pager.pageItems.map((e: any) => (
               <tr key={e.id}>
                 <td className="font-medium">{e.employee_name}</td>
                 <td>{e.employee_number || '—'}</td>
@@ -218,7 +225,7 @@ export default function Employees() {
                 <td><button className="erpnext-btn-secondary text-xs" onClick={() => setEmpPin(e.id)}>Set PIN</button></td>
               </tr>
             ))}
-            {list.length === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No employees</td></tr>}
+            {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No employees</td></tr>}
           </tbody>
         </table>
       </div>
