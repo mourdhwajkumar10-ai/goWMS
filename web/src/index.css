@@ -568,6 +568,89 @@ h2 { font-size: var(--text-lg); font-weight: 600; margin-bottom: 8px; color: var
   .toast { min-width: 0; max-width: calc(100vw - 24px); }
 
   .min-w-\[220px\] { min-width: 0; width: 100%; }
+
+  .grn-arrival-grid,
+  .grn-secondary-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .grn-arrival-grid > div:nth-child(6) {
+    grid-column: auto;
+  }
+
+  /* Purchase-order item lines become readable cards instead of a clipped
+     11-column table. Desktop keeps the dense spreadsheet layout. */
+  .po-items-wrap {
+    overflow: visible;
+    border: 0 !important;
+  }
+
+  .po-items-table,
+  .po-items-table tbody,
+  .po-items-table tr,
+  .po-items-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .po-items-table thead {
+    display: none;
+  }
+
+  .po-items-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 12px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+  }
+
+  .po-items-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .po-items-table td {
+    display: grid;
+    grid-template-columns: 62px minmax(0, 1fr);
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    min-width: 0;
+  }
+
+  .po-items-table td::before {
+    content: attr(data-label);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+  }
+
+  .po-items-table td[data-label="Item code"],
+  .po-items-table td[data-label="Item name"] {
+    grid-column: 1 / -1;
+  }
+
+  .po-items-table td[data-label=""] {
+    display: flex;
+    justify-content: flex-end;
+    grid-column: 1 / -1;
+  }
+
+  .po-items-table td[data-label=""]::before {
+    display: none;
+  }
+
+  .po-items-table input,
+  .po-items-table select {
+    min-width: 0;
+    width: 100%;
+  }
 }
 
 .card, .erpnext-card, .widget {
@@ -637,6 +720,83 @@ td, .erpnext-table td {
 
 tr:last-child td { border-bottom: none; }
 tr:hover td, .erpnext-table tr:hover td { background: var(--fg-hover-color); }
+
+.items-table-scroll,
+.po-items-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.items-table-scroll .erpnext-table {
+  min-width: 760px;
+}
+
+.grn-help {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+.grn-help summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  list-style-position: inside;
+}
+
+.grn-help-body {
+  padding: 0 12px 12px;
+  color: var(--text-dim);
+  font-size: var(--text-xs);
+}
+
+.grn-help-body p {
+  margin: 0 0 10px;
+  max-width: 70ch;
+}
+
+.grn-start-card {
+  padding: 22px 24px !important;
+}
+
+.grn-start-card > .text-sm.font-medium {
+  font-size: 15px;
+  margin-top: 4px;
+}
+
+.grn-start-card .erpnext-label {
+  margin-bottom: 6px;
+}
+
+.grn-start-card .erpnext-input {
+  min-height: 36px;
+}
+
+.grn-arrival-grid,
+.grn-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px 20px;
+}
+
+.grn-arrival-grid > div:nth-child(6) {
+  grid-column: span 2;
+}
+
+.grn-more-fields {
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+}
+
+.grn-more-fields summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: 2px 0 12px;
+}
 
 /* Status indicator — ERPNext style (dot + pill) */
 .indicator-pill,

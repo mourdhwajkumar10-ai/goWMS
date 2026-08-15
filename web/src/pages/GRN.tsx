@@ -479,23 +479,23 @@ export default function GRN() {
     }
   }
 
-  // Item/case labels are {item}-{qty}_{amount}, e.g. JL401403-1_759 (amount = qty × unit price).
-  // Item codes may contain hyphens (KIT-CHAIN-5_6770), so qty and amount are read from the right.
+  // Item/case labels are {item}-{qty}_{unit price}, e.g. JL401403-1_759.
+  // Item codes may contain hyphens, so qty and price are read from the right.
   const parsePackedQR = (raw: string) => {
     const s = (raw || '').trim().replace(/[\s\n\r\t]/g, '')
     const us = s.lastIndexOf('_')
     if (us <= 0) return null
-    const amountText = s.slice(us + 1).replace(/,/g, '')
-    if (!amountText || Number.isNaN(+amountText)) return null
-    const amount = +amountText
-    if (amount < 0) return null
+    const priceText = s.slice(us + 1).replace(/,/g, '')
+    if (!priceText || Number.isNaN(+priceText)) return null
+    const unitPrice = +priceText
+    if (unitPrice < 0) return null
     const left = s.slice(0, us)
     const hy = left.lastIndexOf('-')
     if (hy <= 0) return null
     const item = left.slice(0, hy)
     const qty = +left.slice(hy + 1)
     if (!item || !(qty > 0)) return null
-    const unitPrice = Math.round((amount / qty) * 100) / 100
+    const amount = Math.round(qty * unitPrice * 100) / 100
     return { item, qty, amount, unitPrice }
   }
 
@@ -1751,22 +1751,25 @@ export default function GRN() {
       </div>
 
       {!session && (
-        <div className="erpnext-card p-4 space-y-4">
-          <div>
-            <div className="text-sm font-medium mb-2">Receiving workflow (spec states)</div>
-            <div className="flex flex-wrap gap-2 items-center" aria-label="GRN workflow progress">
-              {STEPS.map((st, i) => (
-                <div key={st.key} className="flex items-center gap-2 text-xs">
-                  <span className="erpnext-badge" style={{ background: 'var(--panel-2)', color: 'var(--text-dim)' }}>
-                    {i + 1}. {st.label}
-                  </span>
-                  {i < STEPS.length - 1 && <span style={{ color: 'var(--text-dim)' }}>→</span>}
-                </div>
-              ))}
+        <div className="erpnext-card grn-start-card p-4 space-y-4">
+          <details className="grn-help">
+            <summary>How receiving works</summary>
+            <div className="grn-help-body">
+              <p>Start with the arrival details below. After saving, scan boxes and verify the items before completing the receipt.</p>
+              <div className="flex flex-wrap gap-2 items-center" aria-label="GRN workflow progress">
+                {STEPS.map((st, i) => (
+                  <div key={st.key} className="flex items-center gap-2 text-xs">
+                    <span className="erpnext-badge" style={{ background: 'var(--panel-2)', color: 'var(--text-dim)' }}>
+                      {i + 1}. {st.label}
+                    </span>
+                    {i < STEPS.length - 1 && <span style={{ color: 'var(--text-dim)' }}>→</span>}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
+          </details>
           <div className="text-sm font-medium">Truck arrival / receiving options</div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+          <div className="grn-arrival-grid">
             <div>
               <label className="erpnext-label" htmlFor="grn-receiving-mode">Receiving mode</label>
               <select
@@ -1813,10 +1816,6 @@ export default function GRN() {
             <div>
               <label className="erpnext-label">Driver</label>
               <input className="erpnext-input" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Driver name" />
-            </div>
-            <div>
-              <label className="erpnext-label">Driver phone</label>
-              <input className="erpnext-input" value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="Phone" />
             </div>
             <div>
               <label className="erpnext-label" htmlFor="grn-arrival">Arrival</label>
@@ -1875,40 +1874,47 @@ export default function GRN() {
                 Documents to follow (driver has no papers)
               </label>
             </div>
-            <div>
-              <label className="erpnext-label">PO scheduled delivery</label>
-              <input className="erpnext-input" type="datetime-local" value={expectedDeliveryAt} onChange={e => setExpectedDeliveryAt(e.target.value)} aria-label="PO scheduled delivery" />
-            </div>
-            <div>
-              <label className="erpnext-label">Supplier barcode</label>
-              <div className="flex gap-2">
-                <input
-                  className="erpnext-input flex-1"
-                  value={supplierBarcode}
-                  onChange={e => setSupplierBarcode(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void scanSupplierCode(supplierBarcode) } }}
-                  placeholder="Scan from delivery docs"
-                  aria-label="Supplier barcode"
-                />
-                <button
-                  type="button"
-                  className="erpnext-btn-secondary text-xs"
-                  onClick={() => { setScanTarget('supplier'); setShowScanner(true) }}
-                  aria-label="Scan supplier barcode"
-                >
-                  📷
-                </button>
+          </div>
+          <details className="grn-more-fields">
+            <summary>More receiving details</summary>
+            <div className="grn-secondary-grid">
+              <div>
+                <label className="erpnext-label">Driver phone</label>
+                <input className="erpnext-input" value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="Phone" />
               </div>
-            </div>
-            <div className="flex items-end">
-              <label className="flex items-center gap-2 text-sm pb-2">
+              <div>
+                <label className="erpnext-label">PO scheduled delivery</label>
+                <input className="erpnext-input" type="datetime-local" value={expectedDeliveryAt} onChange={e => setExpectedDeliveryAt(e.target.value)} aria-label="PO scheduled delivery" />
+              </div>
+              <div>
+                <label className="erpnext-label">Supplier barcode</label>
+                <div className="flex gap-2">
+                  <input
+                    className="erpnext-input flex-1"
+                    value={supplierBarcode}
+                    onChange={e => setSupplierBarcode(e.target.value)}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void scanSupplierCode(supplierBarcode) } }}
+                    placeholder="Scan from delivery docs"
+                    aria-label="Supplier barcode"
+                  />
+                  <button
+                    type="button"
+                    className="erpnext-btn-secondary text-xs"
+                    onClick={() => { setScanTarget('supplier'); setShowScanner(true) }}
+                    aria-label="Scan supplier barcode"
+                  >
+                    📷
+                  </button>
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" onChange={e => {
                   if (e.target.checked) setExpectedDeliveryAt('')
                 }} />
                 Unscheduled delivery
               </label>
             </div>
-          </div>
+          </details>
         </div>
       )}
 

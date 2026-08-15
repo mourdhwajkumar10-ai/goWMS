@@ -39,6 +39,23 @@ const poItemFilled = (i: POItem) => !!i.item_code.trim()
 
 const UOM_OPTIONS = ['Nos', 'PCS', 'Kg', 'Box', 'Pair', 'Litre', 'Meter']
 
+function parsePackedItemQR(raw: string) {
+  const value = (raw || '').trim().replace(/[\s\n\r\t]/g, '')
+  const separator = value.lastIndexOf('_')
+  if (separator <= 0 || separator >= value.length - 1) return null
+
+  const left = value.slice(0, separator)
+  const itemSeparator = left.lastIndexOf('-')
+  if (itemSeparator <= 0 || itemSeparator >= left.length - 1) return null
+
+  const itemCode = left.slice(0, itemSeparator)
+  const qty = Number(left.slice(itemSeparator + 1))
+  const rate = Number(value.slice(separator + 1).replace(/,/g, ''))
+  if (!itemCode || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(rate) || rate < 0) return null
+
+  return { itemCode, qty, rate }
+}
+
 
 export default function PurchaseOrders() {
   const [pos, setPOs] = useState<any[]>([])
@@ -127,16 +144,52 @@ export default function PurchaseOrders() {
       const idx = scanRowIdx
       setScanRowIdx(null)
       ;(async () => {
-        const r = await api.itemList(code)
+        const packed = parsePackedItemQR(code)
+        const lookupCode = packed?.itemCode || code.trim()
+        const r = packed
+          ? await api.itemSuggest(lookupCode, 12)
+          : await api.itemList(lookupCode)
         if (r.ok && r.data?.length) {
-          const found = r.data.find((i: any) => i.code === code) || r.data[0]
+          const found = r.data.find((i: any) => String(i.code).toUpperCase() === lookupCode.toUpperCase()) || r.data[0]
           populateItem(idx, found)
-          notify({ type: 'success', title: 'Item found', message: `${found.code} - ${found.name}` })
+          if (packed) {
+            const updated = [...items]
+            updated[idx] = {
+              ...updated[idx],
+              item_code: found.code || packed.itemCode,
+              item_name: found.name || '',
+              qty: packed.qty,
+              rate: packed.rate,
+              amount: packed.qty * packed.rate,
+            }
+            setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
+              ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+            })))
+            notify({
+              type: 'success',
+              title: 'QR item found',
+              message: `${found.code} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}`,
+            })
+          } else {
+            notify({ type: 'success', title: 'Item found', message: `${found.code} - ${found.name}` })
+          }
         } else {
           const updated = [...items]
-          updated[idx].item_code = code
-          setItems(updated)
-          notify({ type: 'warning', title: 'Item not found', message: code })
+          updated[idx] = {
+            ...updated[idx],
+            item_code: packed?.itemCode || code,
+            ...(packed ? { qty: packed.qty, rate: packed.rate, amount: packed.qty * packed.rate } : {}),
+          }
+          setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
+            ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+          })))
+          notify({
+            type: 'warning',
+            title: packed ? 'Item code not found' : 'Item not found',
+            message: packed
+              ? `${packed.itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}`
+              : code,
+          })
         }
       })()
     } else {
@@ -386,8 +439,8 @@ export default function PurchaseOrders() {
               <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>
                 Type to search items — a new row appears automatically when you fill the last one.
               </p>
-              <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
-                  <table className="erpnext-table text-sm w-full">
+              <div className="po-items-wrap rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
+                  <table className="erpnext-table po-items-table text-sm w-full">
                     <thead>
                       <tr style={{ background: 'var(--gray-50)' }}>
                         <th className="w-10">#</th>
@@ -406,8 +459,8 @@ export default function PurchaseOrders() {
                     <tbody>
                       {items.map((item, idx) => (
                         <tr key={idx}>
-                          <td className="text-center" style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
-                          <td className="text-center">
+                          <td data-label="#" className="text-center" style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
+                          <td data-label="Scan" className="text-center">
                             <button
                               type="button"
                               onClick={() => { setScanRowIdx(idx); setShowScanner(true) }}
@@ -415,7 +468,7 @@ export default function PurchaseOrders() {
                               title="Scan barcode"
                             >Scan</button>
                           </td>
-                          <td>
+                          <td data-label="Item code">
                             <ItemAutocomplete
                               value={item.item_code}
                               onSelect={(found) => populateItem(idx, found)}
@@ -423,7 +476,7 @@ export default function PurchaseOrders() {
                               placeholder="Scan or type..."
                             />
                           </td>
-                          <td>
+                          <td data-label="Item name">
                             <ItemAutocomplete
                               display="name"
                               value={item.item_name}
@@ -432,27 +485,27 @@ export default function PurchaseOrders() {
                               placeholder="Search item name..."
                             />
                           </td>
-                          <td>
+                          <td data-label="Qty">
                             <input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} />
                           </td>
-                          <td>
+                          <td data-label="Rate">
                             <input className="erpnext-input text-sm w-full" type="number" value={item.rate} onChange={e => updateItem(idx, 'rate', +e.target.value)} />
                           </td>
-                          <td>
+                          <td data-label="Batch">
                             <input className="erpnext-input text-sm w-full" value={item.batch_no} onChange={e => updateItem(idx, 'batch_no', e.target.value)} placeholder="LOT-001" />
                           </td>
-                          <td>
+                          <td data-label="UOM">
                             <select className="erpnext-input text-sm w-full" value={item.uom} onChange={e => updateItem(idx, 'uom', e.target.value)}>
                               {UOM_OPTIONS.map(u => <option key={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td>
+                          <td data-label="Disc %">
                             <input className="erpnext-input text-sm w-full" type="number" value={item.discount_percentage} onChange={e => updateItem(idx, 'discount_percentage', +e.target.value)} />
                           </td>
-                          <td className="text-right font-medium">
+                          <td data-label="Amount" className="text-right font-medium">
                             {(item.qty * item.rate).toFixed(2)}
                           </td>
-                          <td className="text-center">
+                          <td data-label="" className="text-center">
                             <button type="button" onClick={() => removeItem(idx)} className="link-btn" style={{ color: 'var(--red)' }}>✕</button>
                           </td>
                         </tr>

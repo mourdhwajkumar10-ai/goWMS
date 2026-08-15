@@ -328,6 +328,7 @@ export default function Items() {
                 <th>Control</th>
                 <th className="text-right">MRP</th>
                 <th className="text-right">CP</th>
+                <th className="text-right">Selling price</th>
                 <th className="text-right">MOQ</th>
                 <th>Master</th>
               </tr>
@@ -341,6 +342,7 @@ export default function Items() {
                   <td>{i.control_mode === 'bin_controlled' ? 'bin' : 'item'}</td>
                   <td className="text-right">{Number(i.mrp || 0).toFixed(2)}</td>
                   <td className="text-right">{Number(i.valuation_rate || 0).toFixed(2)}</td>
+                  <td className="text-right">{Number(i.standard_rate || 0).toFixed(2)}</td>
                   <td className="text-right">{Number(i.min_order_qty || 0)}</td>
                   <td>
                     <span className={`erpnext-badge ${i.master_complete ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
@@ -351,7 +353,7 @@ export default function Items() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
+                  <td colSpan={9} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
                 </tr>
               )}
             </tbody>
