@@ -5,6 +5,7 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { parsePackedItemQR } from '../utils/parsePackedQR'
 
 type Mode = 'auto' | 'item' | 'location'
 
@@ -42,6 +43,13 @@ export default function StockScan() {
 
   const onScan = (scanned: string) => {
     setShowScanner(false)
+    // Only item scans carry the packed "itemcode-qty_price" label; location
+    // scans (A-01-01-03) must be looked up verbatim, so only strip the label
+    // when the mode is explicitly item.
+    if (mode === 'item') {
+      const packed = parsePackedItemQR(scanned)
+      if (packed) { lookup(packed.itemCode); return }
+    }
     lookup(scanned)
   }
 
@@ -96,7 +104,10 @@ export default function StockScan() {
               <ItemAutocomplete
                 value={code}
                 onSelect={(found) => { setCode(found.code); lookup(found.code) }}
-                onChangeText={setCode}
+                onChangeText={(t) => {
+                  const packed = parsePackedItemQR(t)
+                  setCode(packed ? packed.itemCode : t)
+                }}
                 placeholder="ITEM-001"
                 className="erpnext-input"
               />

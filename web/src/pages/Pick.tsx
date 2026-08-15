@@ -7,6 +7,7 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { parsePackedItemQR } from '../utils/parsePackedQR'
 
 interface PickList {
   id: number
@@ -98,6 +99,23 @@ export default function Pick() {
     const updated = [...items]
     ;(updated[idx] as any)[field] = value
     setPickLines(updated)
+  }
+
+  // A hardware scanner dumps the whole case-label QR (e.g. "DK151094-1_210")
+  // into the Item Code field. Split it so item_code and qty are populated
+  // correctly. Location scans (no underscore) don't match and fall through
+  // to plain text entry.
+  const applyPickPackedQR = (idx: number, packed: { itemCode: string; qty: number; rate: number }) => {
+    setPickLines(items.map((row, i) => i === idx ? { ...row, item_code: packed.itemCode, qty: packed.qty } : row))
+    void (async () => {
+      const r = await api.itemSuggest(packed.itemCode, 12)
+      if (r.ok && r.data?.length) {
+        const found = r.data.find((i: any) => String(i.code).toUpperCase() === packed.itemCode.toUpperCase()) || r.data[0]
+        notify({ type: 'success', title: 'QR item found', message: `${found.code} · qty ${packed.qty}` })
+      } else {
+        notify({ type: 'warning', title: 'Item code not found', message: `${packed.itemCode} · qty ${packed.qty}` })
+      }
+    })()
   }
 
   const removeItem = (idx: number) => {
@@ -303,7 +321,11 @@ export default function Pick() {
                             u[idx] = { ...u[idx], item_code: found.code }
                             setPickLines(u)
                           }}
-                          onChangeText={(t) => updateItem(idx, 'item_code', t)}
+                          onChangeText={(t) => {
+                            const packed = parsePackedItemQR(t)
+                            if (packed) applyPickPackedQR(idx, packed)
+                            else updateItem(idx, 'item_code', t)
+                          }}
                         />
                       </td>
                       <td><input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} /></td>

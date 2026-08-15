@@ -6,6 +6,7 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { parsePackedItemQR } from '../utils/parsePackedQR'
 
 interface Sheet {
   id: number
@@ -72,7 +73,11 @@ export default function CycleCount() {
 
   const handleScan = (code: string) => {
     setShowScanner(false)
-    setAddItemCode(code)
+    // Case-label QRs arrive as "itemcode-qty_price"; pull just the item code
+    // so the count line is keyed correctly. Location codes (no underscore)
+    // don't match and are kept as-is.
+    const packed = parsePackedItemQR(code)
+    setAddItemCode(packed ? packed.itemCode : code)
   }
 
   const addLine = async () => {
@@ -223,7 +228,10 @@ export default function CycleCount() {
               <ItemAutocomplete
                 value={addItemCode}
                 onSelect={(found) => setAddItemCode(found.code)}
-                onChangeText={setAddItemCode}
+                onChangeText={(t) => {
+                  const packed = parsePackedItemQR(t)
+                  setAddItemCode(packed ? packed.itemCode : t)
+                }}
                 placeholder="Item code"
                 className="erpnext-input"
               />

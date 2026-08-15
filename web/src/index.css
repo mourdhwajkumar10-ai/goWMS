@@ -575,12 +575,25 @@ h2 { font-size: var(--text-lg); font-weight: 600; margin-bottom: 8px; color: var
     gap: 12px;
   }
 
-  .grn-arrival-grid > div:nth-child(6) {
+  .grn-arrival-grid > .grn-full-row,
+  .grn-secondary-grid > .grn-full-row {
     grid-column: auto;
   }
+}
 
-  /* Purchase-order item lines become readable cards instead of a clipped
-     11-column table. Desktop keeps the dense spreadsheet layout. */
+/* Tablet / small desktop: GRN arrival grids drop to 2 columns so fields keep
+   breathing room instead of crowding at the 3-column desktop layout. */
+@media (max-width: 900px) and (min-width: 641px) {
+  .grn-arrival-grid,
+  .grn-secondary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Purchase-order item lines become readable cards instead of a clipped
+   11-column table. Triggers at 900px so landscape phones and small tablets
+   get the card layout too — at 640px-only the columns were still squeezed. */
+@media (max-width: 900px) {
   .po-items-wrap {
     overflow: visible;
     border: 0 !important;
@@ -649,6 +662,83 @@ h2 { font-size: var(--text-lg); font-weight: 600; margin-bottom: 8px; color: var
   .po-items-table input,
   .po-items-table select {
     min-width: 0;
+    width: 100%;
+  }
+}
+
+/* "Select PO to Receive" table becomes a stack of cards on phones so the
+   7 columns don't squeeze into a narrow screen. */
+@media (max-width: 640px) {
+  .grn-po-table,
+  .grn-po-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .grn-po-table thead {
+    display: none;
+  }
+
+  .grn-po-table tr {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+  }
+
+  .grn-po-table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  .grn-po-table td {
+    border: 0;
+    padding: 0;
+    white-space: normal;
+  }
+
+  .grn-po-table td[data-label="PO No"] {
+    grid-column: 2;
+    font-weight: 600;
+  }
+
+  .grn-po-table td[data-label="Status"] {
+    grid-column: 3;
+    text-align: right;
+  }
+
+  .grn-po-table td[data-label="Supplier"],
+  .grn-po-table td[data-label="Items"],
+  .grn-po-table td[data-label="Total"],
+  .grn-po-table td[data-label="Action"] {
+    grid-column: 1 / -1;
+  }
+
+  .grn-po-table td[data-label="Supplier"]::before,
+  .grn-po-table td[data-label="Items"]::before,
+  .grn-po-table td[data-label="Total"]::before {
+    content: attr(data-label) ": ";
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
+  .grn-po-table td[data-label="Items"],
+  .grn-po-table td[data-label="Total"] {
+    display: flex;
+    align-items: center;
+  }
+
+  .grn-po-table td[data-label="Action"] {
+    margin-top: 4px;
+  }
+
+  .grn-po-table td[data-label="Action"] .erpnext-btn-primary {
     width: 100%;
   }
 }
@@ -763,7 +853,9 @@ tr:hover td, .erpnext-table tr:hover td { background: var(--fg-hover-color); }
 
 .grn-start-card > .text-sm.font-medium {
   font-size: 15px;
-  margin-top: 4px;
+  font-weight: 600;
+  margin-top: 6px;
+  padding-bottom: 2px;
 }
 
 .grn-start-card .erpnext-label {
@@ -778,11 +870,14 @@ tr:hover td, .erpnext-table tr:hover td { background: var(--fg-hover-color); }
 .grn-secondary-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px 20px;
+  gap: 16px 20px;
 }
 
-.grn-arrival-grid > div:nth-child(6) {
-  grid-column: span 2;
+/* Full-row cell (invoice numbers, etc.) spans every column without leaving
+   a trailing gap. */
+.grn-arrival-grid > .grn-full-row,
+.grn-secondary-grid > .grn-full-row {
+  grid-column: 1 / -1;
 }
 
 .grn-more-fields {

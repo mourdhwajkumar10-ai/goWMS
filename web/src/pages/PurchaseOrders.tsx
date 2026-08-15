@@ -7,6 +7,7 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { parsePackedItemQR } from '../utils/parsePackedQR'
 
 interface POItem {
   item_code: string
@@ -38,23 +39,6 @@ const emptyPOItem = (): POItem => ({
 const poItemFilled = (i: POItem) => !!i.item_code.trim()
 
 const UOM_OPTIONS = ['Nos', 'PCS', 'Kg', 'Box', 'Pair', 'Litre', 'Meter']
-
-function parsePackedItemQR(raw: string) {
-  const value = (raw || '').trim().replace(/[\s\n\r\t]/g, '')
-  const separator = value.lastIndexOf('_')
-  if (separator <= 0 || separator >= value.length - 1) return null
-
-  const left = value.slice(0, separator)
-  const itemSeparator = left.lastIndexOf('-')
-  if (itemSeparator <= 0 || itemSeparator >= left.length - 1) return null
-
-  const itemCode = left.slice(0, itemSeparator)
-  const qty = Number(left.slice(itemSeparator + 1))
-  const rate = Number(value.slice(separator + 1).replace(/,/g, ''))
-  if (!itemCode || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(rate) || rate < 0) return null
-
-  return { itemCode, qty, rate }
-}
 
 
 export default function PurchaseOrders() {
@@ -138,6 +122,84 @@ export default function PurchaseOrders() {
     setItems(next.length ? next : [emptyPOItem()])
   }
 
+  // Scanning the same item twice should add to the existing line's qty
+  // instead of creating a duplicate row. If another row already holds this
+  // item_code, increment its qty (and amount) and drop the current row.
+  // Returns whether a merge happened and the resulting qty.
+  const mergeScannedItem = (
+    idx: number,
+    itemCode: string,
+    qtyToAdd: number,
+    rate?: number,
+  ): { merged: boolean; newQty: number } => {
+    const makeEmpty = () => ({
+      ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+    })
+    const code = itemCode.trim().toUpperCase()
+    const dupIdx = items.findIndex((r, i) => i !== idx && r.item_code.trim().toUpperCase() === code)
+    if (dupIdx >= 0) {
+      const existing = items[dupIdx]
+      const newRate = existing.rate || rate || 0
+      const newQty = existing.qty + qtyToAdd
+      const nextItems = items
+        .map((r, i) => i === dupIdx ? { ...r, qty: newQty, rate: newRate, amount: newQty * newRate } : r)
+        .filter((_, i) => i !== idx)
+      setItems(withTrailingEmptyRow(nextItems, poItemFilled, makeEmpty))
+      return { merged: true, newQty }
+    }
+    const nextItems = items.map((r, i) => i === idx ? {
+      ...r,
+      item_code: itemCode,
+      qty: qtyToAdd,
+      rate: rate ?? r.rate,
+      amount: qtyToAdd * (rate ?? r.rate),
+    } : r)
+    setItems(withTrailingEmptyRow(nextItems, poItemFilled, makeEmpty))
+    return { merged: false, newQty: qtyToAdd }
+  }
+
+  // A hardware scanner dumps the whole case-label QR (e.g. "DK151094-1_210")
+  // into the Item Code field as if it were typed. Split it into item_code /
+  // qty / rate. If the item is already on another line, merge into it
+  // (increase qty) instead of creating a duplicate row.
+  const applyPackedQR = (idx: number, packed: { itemCode: string; qty: number; rate: number }) => {
+    const { merged, newQty } = mergeScannedItem(idx, packed.itemCode, packed.qty, packed.rate)
+    if (merged) {
+      notify({ type: 'success', title: 'Qty increased', message: `${packed.itemCode} · qty now ${newQty}` })
+    }
+    void (async () => {
+      const r = await api.itemSuggest(packed.itemCode, 12)
+      if (r.ok && r.data?.length) {
+        const found = r.data.find((i: any) => String(i.code).toUpperCase() === packed.itemCode.toUpperCase()) || r.data[0]
+        setItems(prev => {
+          const tIdx = prev.findIndex(r => r.item_code.trim().toUpperCase() === packed.itemCode.toUpperCase())
+          if (tIdx < 0) return prev
+          const updated = [...prev]
+          updated[tIdx] = {
+            ...updated[tIdx],
+            item_name: found.name || updated[tIdx].item_name,
+            description: found.description || updated[tIdx].description,
+            brand: found.brand || updated[tIdx].brand,
+            item_group: found.abc_tier || updated[tIdx].item_group,
+            uom: UOM_OPTIONS.includes(found.uom) ? found.uom : updated[tIdx].uom,
+          }
+          return updated
+        })
+        if (!merged) {
+          notify({ type: 'success', title: 'QR item found', message: `${found.code} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` })
+        }
+      } else if (!merged) {
+        notify({ type: 'warning', title: 'Item code not found', message: `${packed.itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` })
+      }
+    })()
+  }
+
+  const handleItemCodeChange = (idx: number, text: string) => {
+    const packed = parsePackedItemQR(text)
+    if (packed) applyPackedQR(idx, packed)
+    else updateItem(idx, 'item_code', text)
+  }
+
   const handleBarcodeScan = (code: string) => {
     setShowScanner(false)
     if (scanRowIdx !== null) {
@@ -151,44 +213,41 @@ export default function PurchaseOrders() {
           : await api.itemList(lookupCode)
         if (r.ok && r.data?.length) {
           const found = r.data.find((i: any) => String(i.code).toUpperCase() === lookupCode.toUpperCase()) || r.data[0]
-          populateItem(idx, found)
-          if (packed) {
-            const updated = [...items]
-            updated[idx] = {
-              ...updated[idx],
-              item_code: found.code || packed.itemCode,
-              item_name: found.name || '',
-              qty: packed.qty,
-              rate: packed.rate,
-              amount: packed.qty * packed.rate,
+          const itemCode = found.code || packed?.itemCode || code
+          const qtyToAdd = packed ? packed.qty : 1
+          const rate = packed ? packed.rate : (+found.standard_rate || +found.mrp || 0)
+          const { merged, newQty } = mergeScannedItem(idx, itemCode, qtyToAdd, rate)
+          // fill name/brand/uom on the (possibly merged) target row
+          setItems(prev => {
+            const tIdx = prev.findIndex(r => r.item_code.trim().toUpperCase() === itemCode.toUpperCase())
+            if (tIdx < 0) return prev
+            const updated = [...prev]
+            updated[tIdx] = {
+              ...updated[tIdx],
+              item_name: found.name || updated[tIdx].item_name,
+              description: found.description || updated[tIdx].description,
+              brand: found.brand || updated[tIdx].brand,
+              item_group: found.abc_tier || updated[tIdx].item_group,
+              uom: UOM_OPTIONS.includes(found.uom) ? found.uom : updated[tIdx].uom,
             }
-            setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
-              ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
-            })))
-            notify({
-              type: 'success',
-              title: 'QR item found',
-              message: `${found.code} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}`,
-            })
+            return updated
+          })
+          if (merged) {
+            notify({ type: 'success', title: 'Qty increased', message: `${itemCode} · qty now ${newQty}` })
+          } else if (packed) {
+            notify({ type: 'success', title: 'QR item found', message: `${itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` })
           } else {
             notify({ type: 'success', title: 'Item found', message: `${found.code} - ${found.name}` })
           }
         } else {
-          const updated = [...items]
-          updated[idx] = {
-            ...updated[idx],
-            item_code: packed?.itemCode || code,
-            ...(packed ? { qty: packed.qty, rate: packed.rate, amount: packed.qty * packed.rate } : {}),
-          }
-          setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
-            ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
-          })))
+          const itemCode = packed?.itemCode || code
+          const { merged, newQty } = mergeScannedItem(idx, itemCode, packed?.qty ?? 1, packed?.rate)
           notify({
-            type: 'warning',
-            title: packed ? 'Item code not found' : 'Item not found',
-            message: packed
-              ? `${packed.itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}`
-              : code,
+            type: merged ? 'success' : 'warning',
+            title: merged ? 'Qty increased' : (packed ? 'Item code not found' : 'Item not found'),
+            message: merged
+              ? `${itemCode} · qty now ${newQty}`
+              : (packed ? `${itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` : code),
           })
         }
       })()
@@ -472,7 +531,7 @@ export default function PurchaseOrders() {
                             <ItemAutocomplete
                               value={item.item_code}
                               onSelect={(found) => populateItem(idx, found)}
-                              onChangeText={(text) => updateItem(idx, 'item_code', text)}
+                              onChangeText={(text) => handleItemCodeChange(idx, text)}
                               placeholder="Scan or type..."
                             />
                           </td>

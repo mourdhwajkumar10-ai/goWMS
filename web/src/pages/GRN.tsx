@@ -1832,7 +1832,7 @@ export default function GRN() {
               <label className="erpnext-label">Expected boxes</label>
               <input className="erpnext-input" type="number" min={0} value={expectedBoxes} onChange={e => setExpectedBoxes(e.target.value)} placeholder="0" aria-label="Expected boxes" />
             </div>
-            <div className="md:col-span-2">
+            <div className="grn-full-row">
               <label className="erpnext-label">Invoice numbers</label>
               <div className="space-y-2">
                 {invoiceRows.map((row, idx) => (
@@ -1862,17 +1862,19 @@ export default function GRN() {
                   + Add invoice
                 </button>
               </div>
-              <label className="flex items-center gap-2 text-sm mt-2">
-                <input type="checkbox" checked={invoiceToFollow} onChange={e => {
-                  setInvoiceToFollow(e.target.checked)
-                  if (e.target.checked && !joinedInvoices()) setInvoiceRows(['INVOICE-TO-FOLLOW'])
-                }} />
-                Invoice to follow
-              </label>
-              <label className="flex items-center gap-2 text-sm mt-2">
-                <input type="checkbox" checked={documentsToFollow} onChange={e => setDocumentsToFollow(e.target.checked)} />
-                Documents to follow (driver has no papers)
-              </label>
+              <div className="flex flex-wrap items-center gap-x-6 gap-y-2 mt-3">
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={invoiceToFollow} onChange={e => {
+                    setInvoiceToFollow(e.target.checked)
+                    if (e.target.checked && !joinedInvoices()) setInvoiceRows(['INVOICE-TO-FOLLOW'])
+                  }} />
+                  Invoice to follow
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={documentsToFollow} onChange={e => setDocumentsToFollow(e.target.checked)} />
+                  Documents to follow (driver has no papers)
+                </label>
+              </div>
             </div>
           </div>
           <details className="grn-more-fields">
@@ -1951,18 +1953,22 @@ export default function GRN() {
                 )}
               </div>
               <div className="p-4 space-y-3">
-                <ListPager pager={poPager} placeholder="Search PO, supplier…" />
-                <table className="erpnext-table text-sm">
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <ListPager pager={poPager} placeholder="Search PO, supplier…" />
+                  <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-dim)' }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Select all POs"
+                      checked={pos.length > 0 && pickedPOIds.length === pos.length}
+                      onChange={e => setPickedPOIds(e.target.checked ? pos.map((p: any) => p.id) : [])}
+                    />
+                    Select all
+                  </label>
+                </div>
+                <table className="erpnext-table text-sm grn-po-table">
                   <thead>
                     <tr style={{ background: 'var(--panel-2)' }}>
-                      <th>
-                        <input
-                          type="checkbox"
-                          aria-label="Select all POs"
-                          checked={pos.length > 0 && pickedPOIds.length === pos.length}
-                          onChange={e => setPickedPOIds(e.target.checked ? pos.map((p: any) => p.id) : [])}
-                        />
-                      </th>
+                      <th></th>
                       <th>PO No</th>
                       <th>Supplier</th>
                       <th>Status</th>
@@ -1974,7 +1980,7 @@ export default function GRN() {
                   <tbody>
                     {poPager.pageItems.map((po: any) => (
                       <tr key={po.id} className="hover:opacity-90">
-                        <td>
+                        <td data-label="">
                           <input
                             type="checkbox"
                             aria-label={`Select ${po.name}`}
@@ -1982,12 +1988,12 @@ export default function GRN() {
                             onChange={e => setPickedPOIds(ids => e.target.checked ? [...ids, po.id] : ids.filter(id => id !== po.id))}
                           />
                         </td>
-                        <td className="font-medium" style={{ color: 'var(--accent)' }}>{po.name}</td>
-                        <td>{po.supplier_name}</td>
-                        <td>{statusBadge(po.status, 'po')}</td>
-                        <td className="text-right">{po.item_count ?? po.total_qty ?? 0}</td>
-                        <td className="text-right font-medium">{Number(po.grand_total || 0).toFixed(2)}</td>
-                        <td>
+                        <td data-label="PO No" className="font-medium" style={{ color: 'var(--accent)' }}>{po.name}</td>
+                        <td data-label="Supplier">{po.supplier_name}</td>
+                        <td data-label="Status">{statusBadge(po.status, 'po')}</td>
+                        <td data-label="Items" className="text-right">{po.item_count ?? po.total_qty ?? 0}</td>
+                        <td data-label="Total" className="text-right font-medium">{Number(po.grand_total || 0).toFixed(2)}</td>
+                        <td data-label="Action">
                           <button onClick={() => createSessionFromPO(po)} disabled={loading} className="erpnext-btn-primary text-xs">
                             {loading ? '...' : 'Start Receiving'}
                           </button>

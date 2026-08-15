@@ -7,6 +7,7 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { parsePackedItemQR } from '../utils/parsePackedQR'
 
 interface SORow {
   id: number
@@ -68,6 +69,41 @@ export default function SalesOrders() {
       rate: +found.standard_rate || +found.mrp || u[idx].rate,
     }
     setSOLines(u)
+  }
+
+  // A hardware scanner dumps the whole case-label QR (e.g. "DK151094-1_210")
+  // into the Item field as if typed. Split it into item_code / qty / rate so
+  // the line is populated correctly instead of dumping everything into the
+  // item code box. Location scans (no underscore) don't match and fall
+  // through to plain text entry.
+  const applySoPackedQR = (idx: number, packed: { itemCode: string; qty: number; rate: number }) => {
+    setSOLines(items.map((row, i) => i === idx ? {
+      ...row,
+      item_code: packed.itemCode,
+      qty: packed.qty,
+      rate: packed.rate,
+    } : row))
+    void (async () => {
+      const r = await api.itemSuggest(packed.itemCode, 12)
+      if (r.ok && r.data?.length) {
+        const found = r.data.find((i: any) => String(i.code).toUpperCase() === packed.itemCode.toUpperCase()) || r.data[0]
+        setItems(prev => {
+          const u = [...prev]
+          if (!u[idx]) return u
+          u[idx] = {
+            ...u[idx],
+            item_name: found.name || u[idx].item_name,
+            // keep the qty / rate scanned off the label
+            qty: packed.qty,
+            rate: packed.rate,
+          }
+          return u
+        })
+        notify({ type: 'success', title: 'QR item found', message: `${found.code} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` })
+      } else {
+        notify({ type: 'warning', title: 'Item code not found', message: `${packed.itemCode} · qty ${packed.qty} · rate ₹${packed.rate.toFixed(2)}` })
+      }
+    })()
   }
 
   const [prioOverride, setPrioOverride] = useState('')
@@ -266,9 +302,13 @@ export default function SalesOrders() {
                           value={it.item_code}
                           onSelect={(found) => pickSOItem(idx, found)}
                           onChangeText={(t) => {
-                            const u = [...items]
-                            u[idx].item_code = t
-                            setItems(u)
+                            const packed = parsePackedItemQR(t)
+                            if (packed) applySoPackedQR(idx, packed)
+                            else {
+                              const u = [...items]
+                              u[idx].item_code = t
+                              setItems(u)
+                            }
                           }}
                         />
                       </td>
