@@ -98,17 +98,11 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			status = "draft"
 		}
 
-		var warehouseID any
-		if body.WarehouseID != 0 {
-			warehouseID = body.WarehouseID
-		}
-		var arrivalAttach any
-		if body.ArrivalAttachmentID > 0 {
-			arrivalAttach = body.ArrivalAttachmentID
-		}
-		arrivalAt := any(nil)
-		if strings.TrimSpace(body.ArrivalAt) != "" {
-			arrivalAt = body.ArrivalAt
+		// Do not reuse $5 in SQL: Postgres 42P08 fires when the same placeholder
+		// is deduced as both varchar (status) and text/timestamptz (draft check).
+		arrivalStr := strings.TrimSpace(body.ArrivalAt)
+		if arrivalStr == "" && status != "draft" {
+			arrivalStr = time.Now().Format(time.RFC3339)
 		}
 
 		var id int
@@ -121,19 +115,21 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 				arrival_at, packing_list_available, arrival_attachment_id
 			) VALUES (
 				'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-				COALESCE($15::timestamptz, CASE WHEN $5::text='draft' THEN NULL ELSE NOW() END),
-				$16,$17
+				NULLIF($1, 0)::int, $2::text, $3::text, NULLIF($4, 0)::int, $5::text, $6::text,
+				NULLIF($7, '')::text, NULLIF($8, '')::text, NULLIF($9, '')::text,
+				$10::int, NULLIF($11, '')::text, NULLIF($12, '')::text, NULLIF($13, '')::text,
+				NULLIF($14, '')::text, NULLIF($15, '')::timestamptz, $16::boolean, NULLIF($17, 0)::int
 			) RETURNING id, session_no`,
-			warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c), status,
-			mode, nullEmpty(body.TruckNo), nullEmpty(body.DriverName), nullEmpty(body.DriverPhone),
-			body.ExpectedBoxes, nullEmpty(body.Notes), nullEmpty(body.Plant), nullEmpty(body.Dock),
-			nullEmpty(body.InvoiceNos), arrivalAt, plAvail, arrivalAttach,
+			body.WarehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c), status,
+			mode, body.TruckNo, body.DriverName, body.DriverPhone,
+			body.ExpectedBoxes, body.Notes, body.Plant, body.Dock,
+			body.InvoiceNos, arrivalStr, plAvail, body.ArrivalAttachmentID,
 		).Scan(&id, &sessionNo)
 		if err != nil {
 			// Fallback for DBs before migration 018/022
 			if strings.Contains(err.Error(), "receiving_mode") || strings.Contains(err.Error(), "truck_no") ||
-				strings.Contains(err.Error(), "packing_list_available") || strings.Contains(err.Error(), "arrival_attachment") {
+				strings.Contains(err.Error(), "packing_list_available") || strings.Contains(err.Error(), "arrival_attachment") ||
+				strings.Contains(err.Error(), "42P08") || strings.Contains(err.Error(), "inconsistent types") {
 				err = db.QueryRow(c.Context(),
 					`INSERT INTO grn_sessions (
 						session_no, warehouse_id, purchase_receipt_no, supplier_name, created_by,
@@ -141,12 +137,15 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 						expected_boxes, notes, plant, dock, invoice_nos, arrival_at
 					) VALUES (
 						'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
-						$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW()
+						NULLIF($1, 0)::int, $2::text, $3::text, NULLIF($4, 0)::int, $5::text, $6::text,
+						NULLIF($7, '')::text, NULLIF($8, '')::text, NULLIF($9, '')::text,
+						$10::int, NULLIF($11, '')::text, NULLIF($12, '')::text, NULLIF($13, '')::text,
+						NULLIF($14, '')::text, NOW()
 					) RETURNING id, session_no`,
-					warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c), status,
-					mode, nullEmpty(body.TruckNo), nullEmpty(body.DriverName), nullEmpty(body.DriverPhone),
-					body.ExpectedBoxes, nullEmpty(body.Notes), nullEmpty(body.Plant), nullEmpty(body.Dock),
-					nullEmpty(body.InvoiceNos)).Scan(&id, &sessionNo)
+					body.WarehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c), status,
+					mode, body.TruckNo, body.DriverName, body.DriverPhone,
+					body.ExpectedBoxes, body.Notes, body.Plant, body.Dock,
+					body.InvoiceNos).Scan(&id, &sessionNo)
 			}
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
