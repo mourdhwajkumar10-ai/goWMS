@@ -26,3 +26,34 @@ func TestParsePackedItemQR(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePackedItemQRDetails(t *testing.T) {
+	tests := []struct {
+		in     string
+		item   string
+		qty    float64
+		amount float64
+		unit   float64
+	}{
+		{"JL401403-1_759", "JL401403", 1, 759, 759},
+		{"36DH4013-10_13540.00", "36DH4013", 10, 13540, 1354},
+		{"36DH4013-10_13,540.00", "36DH4013", 10, 13540, 1354},
+		{"KIT-CHAIN-5_6770", "KIT-CHAIN", 5, 6770, 1354},
+		{"AB-3_100", "AB", 3, 100, 33.33},
+	}
+	for _, tt := range tests {
+		got, ok := ParsePackedItemQRDetails(tt.in)
+		if !ok {
+			t.Fatalf("ParsePackedItemQRDetails(%q) not ok", tt.in)
+		}
+		if got.Item != tt.item || got.Qty != tt.qty || got.Amount != tt.amount || got.UnitPrice != tt.unit {
+			t.Errorf("ParsePackedItemQRDetails(%q)=%+v want item=%q qty=%v amount=%v unit=%v",
+				tt.in, got, tt.item, tt.qty, tt.amount, tt.unit)
+		}
+	}
+	for _, bad := range []string{"JL401403", "BOX-001", "", "36DH4013-10", "AB-0_100"} {
+		if _, ok := ParsePackedItemQRDetails(bad); ok {
+			t.Errorf("ParsePackedItemQRDetails(%q) should not parse", bad)
+		}
+	}
+}

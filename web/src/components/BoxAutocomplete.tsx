@@ -1,4 +1,6 @@
 import { useMemo, useState, useEffect, useRef, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { useAnchoredMenu } from './useAnchoredMenu'
 
 export type BoxSuggestion = {
   carton_no: string
@@ -22,14 +24,7 @@ export default function BoxAutocomplete({
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  const menuRef = useRef<HTMLDivElement>(null)
 
   const filtered = useMemo(() => {
     const q = value.trim().toLowerCase()
@@ -48,15 +43,68 @@ export default function BoxAutocomplete({
     return out
   }, [suggestions, value])
 
+  const { anchorRef, rect } = useAnchoredMenu(open, [filtered.length])
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (ref.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
   const handleSelect = (row: BoxSuggestion) => {
     onChangeText(row.carton_no)
     setOpen(false)
     onSelect?.(row)
   }
 
+  const menu = open && rect ? createPortal(
+    <div
+      ref={menuRef}
+      className="rounded-lg shadow-lg overflow-y-auto border"
+      style={{
+        position: 'fixed',
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: 240,
+        zIndex: 2000,
+        background: 'var(--panel)',
+        borderColor: 'var(--border)',
+      }}
+    >
+      {filtered.length > 0 ? (
+        filtered.map((row) => (
+          <button
+            key={row.carton_no}
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
+            style={{ borderColor: 'var(--border)' }}
+            onMouseDown={() => handleSelect(row)}
+          >
+            <span className="font-medium">{row.carton_no}</span>
+            <span className="ml-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+              {[row.is_expected ? 'expected' : null, row.status].filter(Boolean).join(' · ')}
+            </span>
+          </button>
+        ))
+      ) : (
+        <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+          No saved boxes yet — scan or type a new ID
+        </div>
+      )}
+    </div>,
+    document.body,
+  ) : null
+
   return (
     <div ref={ref} className="relative flex-1">
       <input
+        ref={anchorRef as React.RefObject<HTMLInputElement>}
         className={className || 'erpnext-input w-full'}
         value={value}
         onChange={e => {
@@ -73,35 +121,7 @@ export default function BoxAutocomplete({
           onKeyDown?.(e)
         }}
       />
-      {open && filtered.length > 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg max-h-60 overflow-y-auto border"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)' }}
-        >
-          {filtered.map((row) => (
-            <button
-              key={row.carton_no}
-              type="button"
-              className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
-              style={{ borderColor: 'var(--border)' }}
-              onMouseDown={() => handleSelect(row)}
-            >
-              <span className="font-medium">{row.carton_no}</span>
-              <span className="ml-2 text-xs" style={{ color: 'var(--text-dim)' }}>
-                {[row.is_expected ? 'expected' : null, row.status].filter(Boolean).join(' · ')}
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && filtered.length === 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg border px-3 py-2 text-xs"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-        >
-          No saved boxes yet — scan or type a new ID
-        </div>
-      )}
+      {menu}
     </div>
   )
 }

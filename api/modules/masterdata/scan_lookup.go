@@ -21,10 +21,12 @@ func scanLookup(db *pgxpool.Pool) fiber.Handler {
 		if code == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "code required")
 		}
-		packQty := 0.0
-		if item, qty, ok := shared.ParsePackedItemQR(code); ok {
-			code = item
-			packQty = qty
+		packQty, packUnitPrice, packAmount := 0.0, 0.0, 0.0
+		if label, ok := shared.ParsePackedItemQRDetails(code); ok {
+			code = label.Item
+			packQty = label.Qty
+			packUnitPrice = label.UnitPrice
+			packAmount = label.Amount
 		}
 		mode := strings.ToLower(strings.TrimSpace(c.Query("mode", "auto"))) // auto | item | location
 
@@ -65,6 +67,10 @@ func scanLookup(db *pgxpool.Pool) fiber.Handler {
 				}
 				if packQty > 0 {
 					out["pack_qty"] = packQty
+				}
+				if packAmount > 0 {
+					out["pack_unit_price"] = packUnitPrice
+					out["pack_amount"] = packAmount
 				}
 				return shared.OK(c, out)
 			}

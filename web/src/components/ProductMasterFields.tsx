@@ -15,6 +15,8 @@ export function emptyProductForm() {
     brand: '',
     description: '',
     mrp: 0,
+    standard_rate: 0,
+    valuation_rate: 0,
     product_group: '',
     category: '',
     vech: '',
@@ -51,6 +53,8 @@ export function productPayload(form: Record<string, any>, extra: Record<string, 
     brand: form.brand,
     description: form.description,
     mrp: +form.mrp || 0,
+    standard_rate: +form.standard_rate || 0,
+    valuation_rate: +form.valuation_rate || 0,
     product_group: form.product_group,
     category: form.category,
     vech: form.vech,
@@ -113,8 +117,42 @@ export default function ProductMasterFields({
           <input className="erpnext-input" value={form.brand || ''} onChange={e => set('brand', e.target.value)} placeholder="HERO" />
         </div>
         <div>
-          <label className="erpnext-label">Mrp *</label>
-          <input className="erpnext-input" type="number" value={form.mrp ?? 0} onChange={e => set('mrp', e.target.value)} />
+          <label className="erpnext-label">MRP (per unit) *</label>
+          <input
+            className="erpnext-input"
+            type="number"
+            min={0}
+            step="0.01"
+            value={form.mrp ?? 0}
+            onChange={e => set('mrp', e.target.value)}
+            inputMode="decimal"
+          />
+        </div>
+        <div>
+          <label className="erpnext-label">Cost price (CP)</label>
+          <input
+            className="erpnext-input"
+            type="number"
+            min={0}
+            step="0.01"
+            value={form.valuation_rate ?? 0}
+            onChange={e => set('valuation_rate', e.target.value)}
+            inputMode="decimal"
+            placeholder="Basic price / CP"
+          />
+        </div>
+        <div>
+          <label className="erpnext-label">Unit selling price</label>
+          <input
+            className="erpnext-input"
+            type="number"
+            min={0}
+            step="0.01"
+            value={form.standard_rate ?? 0}
+            onChange={e => set('standard_rate', e.target.value)}
+            inputMode="decimal"
+            placeholder="Optional — not Basic Price"
+          />
         </div>
         <div>
           <label className="erpnext-label">Product GROUP *</label>
@@ -137,8 +175,8 @@ export default function ProductMasterFields({
           <input className="erpnext-input" value={form.uom || 'PCS'} onChange={e => set('uom', e.target.value)} />
         </div>
         <div>
-          <label className="erpnext-label">MOQ</label>
-          <input className="erpnext-input" type="number" value={form.min_order_qty ?? 1} onChange={e => set('min_order_qty', e.target.value)} />
+          <label className="erpnext-label">MOQ (VEH_DLR Set Qty)</label>
+          <input className="erpnext-input" type="number" min={0} value={form.min_order_qty ?? 1} onChange={e => set('min_order_qty', e.target.value)} />
         </div>
         <div>
           <label className="erpnext-label">HSN_No *</label>

@@ -37,6 +37,8 @@ const emptyPOItem = (): POItem => ({
 
 const poItemFilled = (i: POItem) => !!i.item_code.trim()
 
+const UOM_OPTIONS = ['Nos', 'PCS', 'Kg', 'Box', 'Pair', 'Litre', 'Meter']
+
 
 export default function PurchaseOrders() {
   const [pos, setPOs] = useState<any[]>([])
@@ -90,8 +92,8 @@ export default function PurchaseOrders() {
       description: item.description || '',
       brand: item.brand || '',
       item_group: item.abc_tier || '',
-      rate: item.standard_rate || item.valuation_rate || 0,
-      uom: 'Nos',
+      rate: +item.standard_rate || +item.mrp || 0,
+      uom: UOM_OPTIONS.includes(item.uom) ? item.uom : 'Nos',
     }
     updated[idx].amount = updated[idx].qty * updated[idx].rate
     setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
@@ -417,11 +419,18 @@ export default function PurchaseOrders() {
                             <ItemAutocomplete
                               value={item.item_code}
                               onSelect={(found) => populateItem(idx, found)}
+                              onChangeText={(text) => updateItem(idx, 'item_code', text)}
                               placeholder="Scan or type..."
                             />
                           </td>
                           <td>
-                            <input className="erpnext-input text-sm w-full" value={item.item_name} onChange={e => updateItem(idx, 'item_name', e.target.value)} placeholder="Item name" />
+                            <ItemAutocomplete
+                              display="name"
+                              value={item.item_name}
+                              onSelect={(found) => populateItem(idx, found)}
+                              onChangeText={(text) => updateItem(idx, 'item_name', text)}
+                              placeholder="Search item name..."
+                            />
                           </td>
                           <td>
                             <input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} />
@@ -434,7 +443,7 @@ export default function PurchaseOrders() {
                           </td>
                           <td>
                             <select className="erpnext-input text-sm w-full" value={item.uom} onChange={e => updateItem(idx, 'uom', e.target.value)}>
-                              <option>Nos</option><option>Kg</option><option>Box</option><option>Pair</option><option>Litre</option><option>Meter</option>
+                              {UOM_OPTIONS.map(u => <option key={u}>{u}</option>)}
                             </select>
                           </td>
                           <td>

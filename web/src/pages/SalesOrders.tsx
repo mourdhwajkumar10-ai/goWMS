@@ -59,6 +59,17 @@ export default function SalesOrders() {
     setItems(withTrailingEmptyRow(next, soFilled, emptySOLine))
   }
 
+  const pickSOItem = (idx: number, found: any) => {
+    const u = [...items]
+    u[idx] = {
+      ...u[idx],
+      item_code: found.code,
+      item_name: found.name || u[idx].item_name,
+      rate: +found.standard_rate || +found.mrp || u[idx].rate,
+    }
+    setSOLines(u)
+  }
+
   const [prioOverride, setPrioOverride] = useState('')
   const [prioReason, setPrioReason] = useState('')
 
@@ -253,16 +264,7 @@ export default function SalesOrders() {
                       <td>
                         <ItemAutocomplete
                           value={it.item_code}
-                          onSelect={(found) => {
-                            const u = [...items]
-                            u[idx] = {
-                              ...u[idx],
-                              item_code: found.code,
-                              item_name: found.name || u[idx].item_name,
-                              rate: found.standard_rate || found.valuation_rate || u[idx].rate,
-                            }
-                            setSOLines(u)
-                          }}
+                          onSelect={(found) => pickSOItem(idx, found)}
                           onChangeText={(t) => {
                             const u = [...items]
                             u[idx].item_code = t
@@ -270,7 +272,19 @@ export default function SalesOrders() {
                           }}
                         />
                       </td>
-                      <td><input className="erpnext-input text-sm" value={it.item_name} onChange={e => { const u=[...items]; u[idx].item_name=e.target.value; setItems(u) }} /></td>
+                      <td>
+                        <ItemAutocomplete
+                          display="name"
+                          value={it.item_name}
+                          onSelect={(found) => pickSOItem(idx, found)}
+                          onChangeText={(t) => {
+                            const u = [...items]
+                            u[idx].item_name = t
+                            setItems(u)
+                          }}
+                          placeholder="Search item name..."
+                        />
+                      </td>
                       <td><input className="erpnext-input text-sm" type="number" value={it.qty} onChange={e => { const u=[...items]; u[idx].qty=+e.target.value; setSOLines(u) }} /></td>
                       <td><input className="erpnext-input text-sm" type="number" value={it.rate} onChange={e => { const u=[...items]; u[idx].rate=+e.target.value; setItems(u) }} /></td>
                       <td><button type="button" onClick={() => {

@@ -97,6 +97,14 @@ function shelfLifeThreshold(days?: number | null) {
   return 30
 }
 
+const moneyFmt = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function money(value?: number | string | null) {
+  const n = typeof value === 'string' ? +value : value
+  if (n == null || !Number.isFinite(n) || n === 0) return '—'
+  return moneyFmt.format(n)
+}
+
 function poItemBatch(po: any, itemCode: string) {
   const want = (itemCode || '').trim().toUpperCase()
   const hit = (po?.items || []).find((p: any) => String(p.item_code || '').toUpperCase() === want)
@@ -168,6 +176,8 @@ export default function GRN() {
     cartonDuplicate?: boolean
     itemName?: string
     condition?: string
+    unitPrice?: number
+    amount?: number
   }>(null)
   const [scanConfirmBusy, setScanConfirmBusy] = useState(false)
   const [rescanAfterConfirm, setRescanAfterConfirm] = useState(false)
@@ -469,19 +479,24 @@ export default function GRN() {
     }
   }
 
+  // Item/case labels are {item}-{qty}_{amount}, e.g. JL401403-1_759 (amount = qty × unit price).
+  // Item codes may contain hyphens (KIT-CHAIN-5_6770), so qty and amount are read from the right.
   const parsePackedQR = (raw: string) => {
     const s = (raw || '').trim().replace(/[\s\n\r\t]/g, '')
     const us = s.lastIndexOf('_')
     if (us <= 0) return null
-    const amount = s.slice(us + 1).replace(/,/g, '')
-    if (!amount || Number.isNaN(+amount)) return null
+    const amountText = s.slice(us + 1).replace(/,/g, '')
+    if (!amountText || Number.isNaN(+amountText)) return null
+    const amount = +amountText
+    if (amount < 0) return null
     const left = s.slice(0, us)
     const hy = left.lastIndexOf('-')
     if (hy <= 0) return null
     const item = left.slice(0, hy)
     const qty = +left.slice(hy + 1)
     if (!item || !(qty > 0)) return null
-    return { item, qty }
+    const unitPrice = Math.round((amount / qty) * 100) / 100
+    return { item, qty, amount, unitPrice }
   }
 
   const applyPackedScan = (raw: string, target: 'carton' | 'item' | 'verify') => {
@@ -623,6 +638,8 @@ export default function GRN() {
       notOnBox: !invoiceOnly && hasList && !line,
       overscan: remaining != null && remainingAfter != null && remainingAfter < 0,
       itemName,
+      unitPrice: packed?.unitPrice,
+      amount: packed?.amount,
     })
     if (!itemName) void fillItemNameInBackground(itemCode)
     void loadScanItemMeta(itemCode, batch, expDate)
@@ -707,6 +724,8 @@ export default function GRN() {
       expected_revision: discExpectedRevision || undefined,
       serial_no: discSerial || undefined,
       substitute: acceptSubstitute || undefined,
+      unit_price: scanConfirm.unitPrice ?? packed?.unitPrice,
+      amount: scanConfirm.amount ?? packed?.amount,
     })
     setScanConfirmBusy(false)
     if (!r.ok) {
@@ -1492,6 +1511,18 @@ export default function GRN() {
                     {scanConfirm.isCasePack ? 'Case pack' : 'Item'} · qty {scanConfirm.qty}
                   </span>
                 </div>
+                {(scanConfirm.amount ?? 0) > 0 && (
+                  <>
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: 'var(--text-dim)' }}>Unit price</span>
+                      <span className="font-medium text-right">{money(scanConfirm.unitPrice)}</span>
+                    </div>
+                    <div className="flex justify-between gap-3">
+                      <span style={{ color: 'var(--text-dim)' }}>Label amount</span>
+                      <span className="text-right">{money(scanConfirm.amount)}</span>
+                    </div>
+                  </>
+                )}
                 {scanConfirm.expected != null && (
                   <>
                     <div className="flex justify-between gap-3">
@@ -1667,15 +1698,15 @@ export default function GRN() {
       )}
 
       {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="page-head">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>GRN (Inward)</h1>
           <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
             Home › Inward › GRN{session?.session_no ? ` › ${session.session_no}` : ''}
           </p>
         </div>
-        <div className="flex gap-3 items-end">
-          <div style={{ minWidth: 180 }}>
+        <div className="page-actions">
+          <div className="page-actions-field">
             <label className="erpnext-label">Warehouse</label>
             <select className="erpnext-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
               {warehouses.map((w: any) => (
@@ -2382,8 +2413,8 @@ export default function GRN() {
                           {ex.status === 'open' || ex.status === 'pending' ? (
                             <div className="flex gap-1 items-center">
                               <input
-                                className="erpnext-input text-xs"
-                                style={{ minWidth: 120 }}
+                                className="erpnext-input text-xs min-w-0"
+                                style={{ width: 120, maxWidth: '40vw' }}
                                 placeholder="Resolution…"
                                 value={resolveText[ex.id] || ''}
                                 onChange={e => setResolveText(prev => ({ ...prev, [ex.id]: e.target.value }))}
@@ -3092,7 +3123,7 @@ export default function GRN() {
                   </p>
                   <div className="space-y-2">
                     {invExpectLines.map((ln, idx) => (
-                      <div key={idx} className="grid grid-cols-3 gap-2">
+                      <div key={idx} className="grid grid-cols-1 md:grid-cols-3 gap-2">
                         <input className="erpnext-input" placeholder="Invoice" value={ln.invoice_no}
                           onChange={e => setInvExpectLines(rows => rows.map((r, i) => i === idx ? { ...r, invoice_no: e.target.value } : r))} />
                         <input className="erpnext-input" placeholder="Part no" value={ln.part_no}
@@ -3250,6 +3281,7 @@ export default function GRN() {
                       </button>
                     </div>
                     {(activeBox.lines?.length ?? 0) > 0 && (
+                      <div className="overflow-x-auto">
                       <table className="erpnext-table text-sm">
                         <thead>
                           <tr>
@@ -3258,6 +3290,8 @@ export default function GRN() {
                             <th className="text-right">Expected</th>
                             <th className="text-right">Scanned</th>
                             <th className="text-right">Left</th>
+                            <th className="text-right">Unit price</th>
+                            <th className="text-right">Amount</th>
                             <th>Status</th>
                           </tr>
                         </thead>
@@ -3269,11 +3303,14 @@ export default function GRN() {
                               <td className="text-right">{l.expected_qty}</td>
                               <td className="text-right">{l.scanned_qty}</td>
                               <td className="text-right">{l.remaining ?? (l.expected_qty - l.scanned_qty)}</td>
+                              <td className="text-right">{money(l.unit_price)}</td>
+                              <td className="text-right">{money(l.line_amount ?? (+l.unit_price || 0) * (+l.scanned_qty || 0))}</td>
                               <td>{l.status}</td>
                             </tr>
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     )}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                       <div className="md:col-span-2">

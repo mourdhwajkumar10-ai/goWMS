@@ -144,7 +144,8 @@ func loadBoxContents(db *pgxpool.Pool, c *fiber.Ctx, cartonID int) ([]fiber.Map,
 	rows, err := db.Query(c.Context(), `
 		SELECT gl.id, gl.item_code, COALESCE(i.name,''),
 		       COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0), COALESCE(gl.damaged_qty,0), gl.status,
-		       COALESCE(gl.invoice_no,'')
+		       COALESCE(gl.invoice_no,''),
+		       COALESCE(gl.unit_price,0), COALESCE(gl.line_amount,0)
 		FROM grn_lines gl
 		LEFT JOIN items i ON UPPER(i.code) = UPPER(gl.item_code) AND COALESCE(i.disabled,false)=false
 		WHERE gl.grn_carton_id=$1
@@ -157,14 +158,18 @@ func loadBoxContents(db *pgxpool.Pool, c *fiber.Ctx, cartonID int) ([]fiber.Map,
 	for rows.Next() {
 		var id int
 		var code, name, st, inv string
-		var exp, scan, dmg float64
-		if err := rows.Scan(&id, &code, &name, &exp, &scan, &dmg, &st, &inv); err != nil {
+		var exp, scan, dmg, unitPrice, lineAmount float64
+		if err := rows.Scan(&id, &code, &name, &exp, &scan, &dmg, &st, &inv, &unitPrice, &lineAmount); err != nil {
 			return nil, err
+		}
+		if lineAmount == 0 && unitPrice > 0 {
+			lineAmount = unitPrice * scan
 		}
 		out = append(out, fiber.Map{
 			"id": id, "item_code": code, "item_name": name, "expected_qty": exp, "scanned_qty": scan,
 			"damaged_qty": dmg, "status": st, "invoice_no": inv,
 			"remaining": exp - scan,
+			"unit_price": unitPrice, "line_amount": lineAmount,
 		})
 	}
 	return out, nil
@@ -180,6 +185,23 @@ type itemScanExtras struct {
 	ExpectedRevision string  `json:"expected_revision"`
 	SerialNo         string  `json:"serial_no"`
 	Substitute       bool    `json:"substitute"`
+	UnitPrice        float64 `json:"unit_price"`
+	Amount           float64 `json:"amount"`
+}
+
+// savePriceFromLabel stores the price decoded from an item QR on the line.
+// Nothing is written when the label carried no price, so a manual re-scan can
+// never blank out a price that was already captured.
+func savePriceFromLabel(c *fiber.Ctx, db *pgxpool.Pool, lineID int, extra itemScanExtras) {
+	if lineID < 1 || (extra.UnitPrice <= 0 && extra.Amount <= 0) {
+		return
+	}
+	unit, amount := extra.UnitPrice, extra.Amount
+	_, _ = db.Exec(c.Context(), `
+		UPDATE grn_lines
+		SET unit_price = COALESCE(NULLIF($2,0), unit_price),
+		    line_amount = COALESCE(NULLIF($3,0), line_amount)
+		WHERE id=$1`, lineID, unit, amount)
 }
 
 // verifyItemScan increments scans against the active box (packing-list) or session lines (invoice-only).
@@ -198,10 +220,15 @@ func verifyItemScan(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 		}
 		packQty := 0.0
-		if parsedItem, parsedQty, ok := shared.ParsePackedItemQR(itemCode); ok {
-			itemCode = parsedItem
-			packQty = parsedQty
-			body.Qty = parsedQty
+		if label, ok := shared.ParsePackedItemQRDetails(itemCode); ok {
+			itemCode = label.Item
+			packQty = label.Qty
+			body.Qty = label.Qty
+			// The label is authoritative for pricing when it carries an amount.
+			if label.Amount > 0 {
+				body.Amount = label.Amount
+				body.UnitPrice = label.UnitPrice
+			}
 		} else if body.Qty <= 0 {
 			body.Qty = 1
 		}
@@ -392,6 +419,8 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		}
 	}
 
+	savePriceFromLabel(c, db, lineID, extra)
+
 	writeEvent(db, c, sessionID, "ITEM_SCANNED", fiber.Map{
 		"box_no": boxNo, "part_no": itemCode, "quantity": qty, "result": newStatus,
 	})
@@ -405,6 +434,7 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		"box_message": closeMsg, "lines": contents, "box_no": boxNo,
 		"pack_qty": packQty, "scan_qty": qty, "excess": newStatus == "excess",
 		"shortage": newStatus == "shortage",
+		"unit_price": extra.UnitPrice, "amount": extra.Amount,
 	}
 	for k, v := range applyScanExtras(c, db, sessionID, boxNo, itemCode, extra) {
 		out[k] = v
@@ -544,13 +574,15 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 		}
+		savePriceFromLabel(c, db, lineID, extra)
 		writeException(db, c, sessionID, "excess", fiber.Map{
 			"part_no": itemCode, "expected_qty": 0, "scanned_qty": qty, "variance": qty,
 		})
 		writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
 			"part_no": itemCode, "quantity": qty, "result": "excess",
 		})
-		out := fiber.Map{"ok": true, "status": "excess", "item_code": itemCode, "scanned_qty": qty, "pack_qty": packQty, "scan_qty": qty, "excess": true}
+		out := fiber.Map{"ok": true, "status": "excess", "item_code": itemCode, "scanned_qty": qty, "pack_qty": packQty, "scan_qty": qty, "excess": true,
+			"unit_price": extra.UnitPrice, "amount": extra.Amount}
 		for k, v := range applyScanExtras(c, db, sessionID, "", itemCode, extra) {
 			out[k] = v
 		}
@@ -581,6 +613,7 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 		})
 	}
 	_, _ = db.Exec(c.Context(), `UPDATE grn_lines SET scanned_qty=$2, status=$3 WHERE id=$1`, lineID, newScanned, st)
+	savePriceFromLabel(c, db, lineID, extra)
 	writeEvent(db, c, sessionID, "ITEM_SCANNED", fiber.Map{
 		"part_no": itemCode, "quantity": qty, "result": st,
 	})
@@ -589,6 +622,7 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 		"ok": true, "line_id": lineID, "item_code": itemCode, "scanned_qty": newScanned,
 		"expected_qty": expected, "status": st, "pack_qty": packQty, "scan_qty": qty,
 		"excess": st == "excess", "shortage": st == "shortage",
+		"unit_price": extra.UnitPrice, "amount": extra.Amount,
 	}
 	for k, v := range applyScanExtras(c, db, sessionID, "", itemCode, extra) {
 		out[k] = v

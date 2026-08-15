@@ -128,6 +128,13 @@ export const api = {
     const qs = p.toString()
     return get<any[]>(`/masterdata/items${qs ? `?${qs}` : ""}`)
   },
+  /** Lean typeahead — no COUNT(*), prefix-first code match, few columns. */
+  itemSuggest: (q: string, limit = 12) => {
+    const p = new URLSearchParams()
+    p.set("q", q)
+    p.set("limit", String(limit))
+    return get<any[]>(`/masterdata/items/suggest?${p}`)
+  },
   itemCreate: (data: any) => post<any>("/masterdata/items", data),
   itemUpdate: (id: number, data: any) => patch<any>(`/masterdata/items/${id}`, data),
   itemImport: (data: any) => post<any>("/masterdata/items/import", data),
@@ -217,6 +224,7 @@ export const api = {
     variant?: string; expected_variant?: string
     revision?: string; expected_revision?: string
     serial_no?: string; substitute?: boolean
+    unit_price?: number; amount?: number
   }) =>
     post<any>(`/grn/session/${id}/verify-item`, data),
   grnReportDiscrepancy: (id: number, data: Record<string, unknown>) =>

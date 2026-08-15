@@ -124,6 +124,8 @@ export default function Items() {
       brand: item.brand || '',
       description: item.description || '',
       mrp: item.mrp ?? 0,
+      standard_rate: item.standard_rate ?? 0,
+      valuation_rate: item.valuation_rate ?? 0,
       hsn_no: item.hsn_no || '',
       gst_percentage: item.gst_percentage ?? 18,
       vech: item.vech || '',
@@ -324,6 +326,9 @@ export default function Items() {
                 <th>Name</th>
                 <th>Pack</th>
                 <th>Control</th>
+                <th className="text-right">MRP</th>
+                <th className="text-right">CP</th>
+                <th className="text-right">MOQ</th>
                 <th>Master</th>
               </tr>
             </thead>
@@ -334,6 +339,9 @@ export default function Items() {
                   <td>{i.name}</td>
                   <td>{i.pack_type || 'loose'}</td>
                   <td>{i.control_mode === 'bin_controlled' ? 'bin' : 'item'}</td>
+                  <td className="text-right">{Number(i.mrp || 0).toFixed(2)}</td>
+                  <td className="text-right">{Number(i.valuation_rate || 0).toFixed(2)}</td>
+                  <td className="text-right">{Number(i.min_order_qty || 0)}</td>
                   <td>
                     <span className={`erpnext-badge ${i.master_complete ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
                       {i.master_complete ? 'ok' : 'incomplete'}
@@ -343,7 +351,7 @@ export default function Items() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
+                  <td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
                 </tr>
               )}
             </tbody>
@@ -377,9 +385,11 @@ export default function Items() {
                 <div>Category: {selected.category || '—'}</div>
                 <div>VECH: {selected.vech || '—'}</div>
                 <div>MAKE: {selected.make || '—'}</div>
-                <div>MRP: {selected.mrp ?? 0}</div>
+                <div>MRP / unit: {Number(selected.mrp || 0).toFixed(2)}</div>
+                <div>Cost price (CP): {Number(selected.valuation_rate || 0).toFixed(2)}</div>
+                <div>Unit selling price: {Number(selected.standard_rate || 0).toFixed(2)}</div>
                 <div>UOM: {selected.uom || 'PCS'}</div>
-                <div>MOQ: {selected.min_order_qty ?? 0}</div>
+                <div>MOQ (VEH_DLR Set Qty): {selected.min_order_qty ?? 0}</div>
                 <div>HSN: {selected.hsn_no || '—'}</div>
                 <div>GST: {selected.gst_percentage ?? 0}%</div>
                 <div>Weight: {selected.weight_per_unit ?? 0}</div>

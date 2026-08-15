@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../services/api'
+import { useAnchoredMenu } from './useAnchoredMenu'
 
 export type ItemSuggestion = {
   id?: number
@@ -17,22 +19,30 @@ type Props = {
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   placeholder?: string
   className?: string
+  /** Which field the input itself shows/echoes. Suggestions match code, barcode and name either way. */
+  display?: 'code' | 'name'
 }
 
 /** Debounced item typeahead against GET /masterdata/items?q= */
-export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyDown, placeholder, className }: Props) {
+export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyDown, placeholder, className, display = 'code' }: Props) {
   const [query, setQuery] = useState(value)
   const [results, setResults] = useState<ItemSuggestion[]>([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const reqSeq = useRef(0)
+  const { anchorRef, rect } = useAnchoredMenu(open, [results.length])
 
   useEffect(() => { setQuery(value) }, [value])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (ref.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -40,9 +50,20 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
 
   const search = useCallback((q: string, immediate = false) => {
     if (timer.current) clearTimeout(timer.current)
+    const trimmed = q.trim()
+    // Empty focus used to hit the full items list + COUNT(*) — that felt "stuck".
+    if (!trimmed) {
+      setResults([])
+      setOpen(false)
+      setLoading(false)
+      return
+    }
     const run = async () => {
+      const seq = ++reqSeq.current
       setLoading(true)
-      const r = await api.itemList(q.trim() || undefined, { limit: 12 })
+      const r = await api.itemSuggest(trimmed, 12)
+      // Ignore stale responses when the user typed ahead of the previous request.
+      if (seq !== reqSeq.current) return
       if (r.ok && r.data) {
         setResults(r.data)
         setOpen(true)
@@ -53,7 +74,8 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
       void run()
       return
     }
-    timer.current = setTimeout(run, 120)
+    // Slightly longer debounce for 1-char queries (they match the most rows).
+    timer.current = setTimeout(run, trimmed.length < 2 ? 220 : 120)
   }, [])
 
   const handleChange = (val: string) => {
@@ -63,14 +85,59 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
   }
 
   const handleSelect = (item: ItemSuggestion) => {
-    setQuery(item.code)
+    setQuery(display === 'name' ? (item.name || item.code) : item.code)
     setOpen(false)
     onSelect(item)
   }
 
+  const menu = open && rect ? createPortal(
+    <div
+      ref={menuRef}
+      className="rounded-lg shadow-lg overflow-y-auto border"
+      style={{
+        position: 'fixed',
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: 240,
+        zIndex: 2000,
+        background: 'var(--panel)',
+        borderColor: 'var(--border)',
+      }}
+    >
+      {results.length > 0 ? (
+        results.slice(0, 10).map((item) => (
+          <button
+            key={item.id ?? item.code}
+            type="button"
+            className="w-full text-left px-3 py-2 flex justify-between items-center gap-2 text-sm border-b last:border-0"
+            style={{ borderColor: 'var(--border)' }}
+            onMouseDown={() => handleSelect(item)}
+          >
+            <div className="min-w-0">
+              <span className="font-medium">{display === 'name' ? (item.name || item.code) : item.code}</span>
+              <span className="ml-2" style={{ color: 'var(--text-dim)' }}>
+                {display === 'name' ? item.code : item.name}
+              </span>
+            </div>
+            <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{item.brand || ''}</span>
+          </button>
+        ))
+      ) : (
+        !loading && (
+          <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+            No matching items — keep typing or scan
+          </div>
+        )
+      )}
+    </div>,
+    document.body,
+  ) : null
+
   return (
     <div ref={ref} className="relative">
       <input
+        ref={anchorRef as React.RefObject<HTMLInputElement>}
         className={className || 'erpnext-input text-sm w-full'}
         value={query}
         onChange={e => handleChange(e.target.value)}
@@ -83,36 +150,7 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
       {loading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--text-dim)' }}>...</div>
       )}
-      {open && results.length > 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg max-h-60 overflow-y-auto border"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)' }}
-        >
-          {results.slice(0, 10).map((item) => (
-            <button
-              key={item.id ?? item.code}
-              type="button"
-              className="w-full text-left px-3 py-2 flex justify-between items-center text-sm border-b last:border-0"
-              style={{ borderColor: 'var(--border)' }}
-              onMouseDown={() => handleSelect(item)}
-            >
-              <div>
-                <span className="font-medium">{item.code}</span>
-                <span className="ml-2" style={{ color: 'var(--text-dim)' }}>{item.name}</span>
-              </div>
-              <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{item.brand || ''}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && !loading && results.length === 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg border px-3 py-2 text-xs"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-        >
-          No matching items — keep typing or scan
-        </div>
-      )}
+      {menu}
     </div>
   )
 }

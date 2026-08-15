@@ -1,5 +1,7 @@
 import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { api } from '../services/api'
+import { useAnchoredMenu } from './useAnchoredMenu'
 
 export type TransportSuggestion = {
   id?: number
@@ -28,11 +30,16 @@ export default function TruckAutocomplete({
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { anchorRef, rect } = useAnchoredMenu(open, [results.length])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (ref.current?.contains(target)) return
+      if (menuRef.current?.contains(target)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -67,10 +74,52 @@ export default function TruckAutocomplete({
     onSelect?.(row)
   }
 
+  const menu = open && rect ? createPortal(
+    <div
+      ref={menuRef}
+      className="rounded-lg shadow-lg overflow-y-auto border"
+      style={{
+        position: 'fixed',
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        maxHeight: 240,
+        zIndex: 2000,
+        background: 'var(--panel)',
+        borderColor: 'var(--border)',
+      }}
+    >
+      {results.length > 0 ? (
+        results.slice(0, 12).map((row) => (
+          <button
+            key={row.id ?? row.truck_no}
+            type="button"
+            className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
+            style={{ borderColor: 'var(--border)' }}
+            onMouseDown={() => handleSelect(row)}
+          >
+            <div className="font-medium">{row.truck_no}</div>
+            <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
+              {[row.name, row.transporter, row.driver_name].filter(Boolean).join(' · ') || 'Saved truck'}
+            </div>
+          </button>
+        ))
+      ) : (
+        !loading && (
+          <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+            No saved trucks yet — type a number or add one under Masters → Transport
+          </div>
+        )
+      )}
+    </div>,
+    document.body,
+  ) : null
+
   return (
     <div ref={ref} className="relative">
       <input
         id={id}
+        ref={anchorRef as React.RefObject<HTMLInputElement>}
         className={className || 'erpnext-input'}
         value={value}
         onChange={e => handleChange(e.target.value)}
@@ -86,35 +135,7 @@ export default function TruckAutocomplete({
       {loading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--text-dim)' }}>...</div>
       )}
-      {open && results.length > 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg max-h-60 overflow-y-auto border"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)' }}
-        >
-          {results.slice(0, 12).map((row) => (
-            <button
-              key={row.id ?? row.truck_no}
-              type="button"
-              className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
-              style={{ borderColor: 'var(--border)' }}
-              onMouseDown={() => handleSelect(row)}
-            >
-              <div className="font-medium">{row.truck_no}</div>
-              <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
-                {[row.name, row.transporter, row.driver_name].filter(Boolean).join(' · ') || 'Saved truck'}
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-      {open && !loading && results.length === 0 && (
-        <div
-          className="absolute z-50 mt-1 w-full rounded-lg shadow-lg border px-3 py-2 text-xs"
-          style={{ background: 'var(--panel)', borderColor: 'var(--border)', color: 'var(--text-dim)' }}
-        >
-          No saved trucks yet — type a number or add one under Masters → Transport
-        </div>
-      )}
+      {menu}
     </div>
   )
 }

@@ -177,7 +177,16 @@ func importItemRows(ctx context.Context, db *pgxpool.Pool, rows []map[string]str
 				shelf = &v
 			}
 		}
-		mrp := parseFloatKey(row, "mrp", "MRP", "Mrp", "MRP - per unit", "Basic Price - per unit")
+		// Sheet mapping (Bajaj spare parts price list):
+		//   MRP - per unit      → mrp
+		//   Basic Price - per   → valuation_rate (cost price / CP) — never selling price
+		//   VEH_DLR Set Qty     → min_order_qty (MOQ)
+		//   Distributor Set Qty → carton_qty
+		mrp := parseFloatKey(row, "mrp", "MRP", "Mrp", "MRP - per unit")
+		costPrice := parseFloatKey(row,
+			"valuation_rate", "cost_price", "cp", "CP", "Basic Price", "Basic Price - per unit", "Basic Price - per")
+		standardRate := parseFloatKey(row,
+			"standard_rate", "unit_selling_price", "Unit Selling Price", "Selling Price", "Standard Rate")
 		hsn := firstKey(row, "hsn_no", "hsn", "HSN_No", "HSN", "HSN Code")
 		gst := parseFloatKey(row, "gst_percentage", "gst", "GST_Percentage", "GST", "GST %")
 		vech := firstKey(row, "vech", "VECH")
@@ -207,15 +216,15 @@ func importItemRows(ctx context.Context, db *pgxpool.Pool, rows []map[string]str
 				INSERT INTO items (
 					code, name, brand, has_serial, has_batch, has_expiry_date,
 					pack_type, control_mode, barcode, carton_qty, shelf_life_in_days,
-					safety_stock, master_complete,
-					mrp, hsn_no, gst_percentage, vech, make, uom, product_group, category,
+					safety_stock, master_complete, valuation_rate,
+					mrp, standard_rate, hsn_no, gst_percentage, vech, make, uom, product_group, category,
 					parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
 					description, min_order_qty, weight_per_unit
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
-				          $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)`,
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
+				          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
 			code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
-			packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete,
-			mrp, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
+			packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete, costPrice,
+			mrp, standardRate, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
 			nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
 			threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
 		if ierr != nil {

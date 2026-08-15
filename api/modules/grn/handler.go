@@ -613,6 +613,8 @@ func scanLineBody(db *pgxpool.Pool) fiber.Handler {
 			Notes       string  `json:"notes"`
 			RequiresQI  bool    `json:"requires_qi"`
 			Status      string  `json:"status"`
+			UnitPrice   float64 `json:"unit_price"`
+			Amount      float64 `json:"amount"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -625,6 +627,7 @@ func scanLineBody(db *pgxpool.Pool) fiber.Handler {
 			ExpQty: body.ExpQty, ScanQty: body.ScanQty, DamagedQty: body.DamagedQty,
 			Batch: body.Batch, ExpiryDate: body.ExpiryDate, Notes: body.Notes,
 			RequiresQI: body.RequiresQI, Status: body.Status,
+			UnitPrice: body.UnitPrice, Amount: body.Amount,
 		})
 	}
 }
@@ -645,6 +648,8 @@ func scanLineParam(db *pgxpool.Pool) fiber.Handler {
 			Notes      string  `json:"notes"`
 			RequiresQI bool    `json:"requires_qi"`
 			Status     string  `json:"status"`
+			UnitPrice  float64 `json:"unit_price"`
+			Amount     float64 `json:"amount"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -654,6 +659,7 @@ func scanLineParam(db *pgxpool.Pool) fiber.Handler {
 			ExpQty: body.ExpQty, ScanQty: body.ScanQty, DamagedQty: body.DamagedQty,
 			Batch: body.Batch, ExpiryDate: body.ExpiryDate, Notes: body.Notes,
 			RequiresQI: body.RequiresQI, Status: body.Status,
+			UnitPrice: body.UnitPrice, Amount: body.Amount,
 		})
 	}
 }
@@ -669,6 +675,8 @@ type scanLineInput struct {
 	Notes      string
 	RequiresQI bool
 	Status     string
+	UnitPrice  float64
+	Amount     float64
 }
 
 func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
@@ -676,11 +684,15 @@ func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
 	if itemCode == "" {
 		return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 	}
-	if parsedItem, parsedQty, ok := shared.ParsePackedItemQR(itemCode); ok {
-		itemCode = parsedItem
-		in.ScanQty = parsedQty
+	if label, ok := shared.ParsePackedItemQRDetails(itemCode); ok {
+		itemCode = label.Item
+		in.ScanQty = label.Qty
 		if in.ExpQty <= 0 {
-			in.ExpQty = parsedQty
+			in.ExpQty = label.Qty
+		}
+		if label.Amount > 0 {
+			in.UnitPrice = label.UnitPrice
+			in.Amount = label.Amount
 		}
 	}
 	if in.ScanQty <= 0 {
@@ -738,11 +750,21 @@ func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
 		expiry = in.ExpiryDate
 	}
 
+	var unitPrice, lineAmount any
+	if in.UnitPrice > 0 {
+		unitPrice = in.UnitPrice
+	}
+	if in.Amount > 0 {
+		lineAmount = in.Amount
+	} else if in.UnitPrice > 0 {
+		lineAmount = in.UnitPrice * in.ScanQty
+	}
+
 	var id int
 	err = db.QueryRow(c.Context(),
-		`INSERT INTO grn_lines (grn_carton_id,item_code,expected_qty,scanned_qty,damaged_qty,status,batch_no,expiry_date,notes,requires_qi)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		in.CartonID, itemCode, in.ExpQty, in.ScanQty, in.DamagedQty, status, in.Batch, expiry, nullStr(in.Notes), in.RequiresQI).Scan(&id)
+		`INSERT INTO grn_lines (grn_carton_id,item_code,expected_qty,scanned_qty,damaged_qty,status,batch_no,expiry_date,notes,requires_qi,unit_price,line_amount)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING id`,
+		in.CartonID, itemCode, in.ExpQty, in.ScanQty, in.DamagedQty, status, in.Batch, expiry, nullStr(in.Notes), in.RequiresQI, unitPrice, lineAmount).Scan(&id)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
