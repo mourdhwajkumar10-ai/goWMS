@@ -122,7 +122,7 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			) VALUES (
 				'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
 				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-				COALESCE($15::timestamptz, CASE WHEN $5='draft' THEN NULL ELSE NOW() END),
+				COALESCE($15::timestamptz, CASE WHEN $5::text='draft' THEN NULL ELSE NOW() END),
 				$16,$17
 			) RETURNING id, session_no`,
 			warehouseID, body.PurchaseReceiptNo, body.SupplierName, userID(c), status,
