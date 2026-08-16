@@ -168,6 +168,82 @@ export default function PutawayWizard() {
     )
   }
 
+  if (step === 'item_pick') {
+    const zoneItems = selectedZone
+      ? queue.filter(q => {
+          return true // placeholder for actual zone filtering
+        })
+      : queue
+
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <button onClick={() => setStep(mode === 'zone' ? 'zone_select' : 'mode_select')}>← Back</button>
+          <h1>{selectedZone ? `Zone ${selectedZone}` : 'Select Items'}</h1>
+        </div>
+
+        {toteItems.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <p style={{ fontWeight: 600, marginBottom: 8 }}>Tote ({toteItems.length} items)</p>
+            {toteItems.map(item => (
+              <div key={item.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>{item.item_code} — {item.qty} units</span>
+                <button
+                  className="erpnext-btn-secondary"
+                  style={{ padding: '4px 8px', fontSize: 12 }}
+                  onClick={() => {
+                    void api.del(`/putaway/sessions/${session?.id}/items/${item.id}`)
+                    setToteItems(toteItems.filter(i => i.id !== item.id))
+                    notify({ type: 'success', title: 'Removed', message: `${item.item_code} removed from tote` })
+                  }}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+            <button
+              className="erpnext-btn-primary"
+              style={{ width: '100%', marginTop: 16 }}
+              onClick={() => setStep('putaway')}
+            >
+              Start Putaway →
+            </button>
+          </div>
+        )}
+
+        <div>
+          <p style={{ fontWeight: 600, marginBottom: 8 }}>Available Items:</p>
+          {zoneItems.map(q => (
+            <div key={q.id} style={{ padding: '12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{q.item_code}</div>
+                <div style={{ color: 'var(--text-dim)' }}>{q.qty} units from {q.location_code}</div>
+              </div>
+              <button
+                className="erpnext-btn-secondary"
+                onClick={() => {
+                  void (async () => {
+                    const r = await api.post(`/putaway/sessions/${session?.id}/pick`, {
+                      item_code: q.item_code,
+                      source_location_id: q.location_id,
+                      qty: q.qty
+                    })
+                    if (r.ok && r.data) {
+                      setToteItems([...toteItems, { ...r.data as ToteItem, item_code: q.item_code, qty: q.qty, source: q.location_code }])
+                      notify({ type: 'success', title: 'Picked', message: `${q.item_code} added to tote` })
+                    }
+                  })()
+                }}
+              >
+                Pick
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
   // ... rest of component will be added in subsequent tasks
 
   return (
