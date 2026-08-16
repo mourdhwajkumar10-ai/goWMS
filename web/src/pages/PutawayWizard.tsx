@@ -365,6 +365,121 @@ export default function PutawayWizard() {
     )
   }
 
+  if (step === 'fit_exception') {
+    const currentToteItem = toteItems.find(i => i.status === 'picked')
+
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <button onClick={() => setStep('putaway')}>← Back</button>
+          <h1>Doesn't Fit</h1>
+        </div>
+
+        {currentToteItem && (
+          <>
+            <p style={{ marginBottom: 16 }}>
+              {currentToteItem.qty} × {currentToteItem.item_code} into {suggestion?.location_code || 'this bin'}
+            </p>
+
+            <div style={{ marginBottom: 16 }}>
+              <label className="erpnext-label">What's wrong?</label>
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button
+                  className={fitReason === 'too_small' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'}
+                  style={{ flex: 1 }}
+                  onClick={() => setFitReason('too_small')}
+                >
+                  Too small (does not fit)
+                </button>
+                <button
+                  className={fitReason === 'too_large' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'}
+                  style={{ flex: 1 }}
+                  onClick={() => setFitReason('too_large')}
+                >
+                  Too large (wrong size)
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label className="erpnext-label">How many fit?</label>
+              <input
+                className="erpnext-input"
+                type="number"
+                min={0}
+                max={currentToteItem.qty}
+                value={fitQty}
+                onChange={e => setFitQty(e.target.value)}
+                placeholder="0 = do not use this bin"
+              />
+              <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+                Example: suggested {currentToteItem.qty}, only 8 fit → enter 8. Remaining will go to another location.
+              </p>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label className="erpnext-label">Override location (optional)</label>
+              <input
+                className="erpnext-input"
+                value={fitOverride}
+                onChange={e => { setFitOverride(e.target.value); setFitOverrideId(null) }}
+                placeholder="Type location code to override"
+              />
+              {suggestion?.candidates && suggestion.candidates.length > 0 && (
+                <select
+                  className="erpnext-input"
+                  style={{ marginTop: 8 }}
+                  value={fitOverrideId ?? ''}
+                  onChange={e => {
+                    const id = +e.target.value
+                    const c = suggestion.candidates.find((x: any) => x.location_id === id)
+                    if (c) {
+                      setFitOverride(c.location_code)
+                      setFitOverrideId(c.location_id)
+                    }
+                  }}
+                >
+                  <option value="">Suggested other bins</option>
+                  {suggestion.candidates.filter((c: any) => c.location_id !== suggestion.location_id).map((c: any) => (
+                    <option key={c.location_id} value={c.location_id}>
+                      {c.location_code} — {c.reason}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <button
+              className="erpnext-btn-primary"
+              style={{ width: '100%' }}
+              onClick={() => {
+                void (async () => {
+                  const fits = +(fitQty || 0)
+                  const r = await api.post('/putaway/fit-exception', {
+                    item_code: currentToteItem.item_code,
+                    rejected_location: suggestion?.location_code,
+                    rejected_location_id: suggestion?.location_id,
+                    reason: fitReason,
+                    requested_qty: currentToteItem.qty,
+                    fits_qty: fits,
+                    override_location: fitOverride || undefined,
+                    override_location_id: fitOverrideId || undefined
+                  })
+                  if (r.ok) {
+                    notify({ type: 'success', title: 'Exception recorded', message: 'System will suggest new location' })
+                    setStep('putaway')
+                  }
+                })()
+              }}
+            >
+              Confirm & move
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="desk-page">
       <h1>Putaway Wizard</h1>
