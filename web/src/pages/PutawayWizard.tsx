@@ -22,6 +22,7 @@ interface QueueRow {
   batch_no: string
   qty: number
   location_type: string
+  zone: string
 }
 
 interface ZoneInfo {
@@ -188,10 +189,21 @@ export default function PutawayWizard() {
 
   if (step === 'item_pick') {
     const zoneItems = selectedZone
-      ? queue.filter(q => {
-          return true // placeholder for actual zone filtering
-        })
+      ? queue.filter(q => q.zone === selectedZone)
       : queue
+
+    const ensureSession = async () => {
+      if (!session && zoneItems.length > 0) {
+        const wid = zoneItems[0].warehouse_id
+        const r = await api.post<SessionData>('/putaway/sessions', { warehouse_id: wid, zone: selectedZone || '' })
+        if (r.ok && r.data) {
+          setSession(r.data)
+          return r.data.id
+        }
+        return null
+      }
+      return session?.id ?? null
+    }
 
     return (
       <div className="desk-page">
@@ -239,7 +251,12 @@ export default function PutawayWizard() {
                 className="erpnext-btn-secondary"
                 onClick={() => {
                   void (async () => {
-                    const r = await api.post(`/putaway/sessions/${session?.id}/pick`, {
+                    const sid = await ensureSession()
+                    if (!sid) {
+                      notify({ type: 'error', title: 'Error', message: 'Failed to create session' })
+                      return
+                    }
+                    const r = await api.post(`/putaway/sessions/${sid}/pick`, {
                       item_code: q.item_code,
                       source_location_id: q.location_id,
                       qty: q.qty

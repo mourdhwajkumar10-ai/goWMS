@@ -381,7 +381,18 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 
 		query := `
 			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
-			       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type
+			       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
+			       COALESCE(
+			           CASE
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '391990%' THEN 'B'
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87149%' OR UPPER(COALESCE(i.hsn_no,'')) LIKE '87141%' THEN 'C'
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '7318%' THEN 'D'
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '40169%' THEN 'E'
+			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '854430%' THEN 'F'
+			               ELSE 'G'
+			           END, 'G'
+			       ) as zone
 			FROM stock_location_balances slb
 			JOIN warehouse_locations wl ON wl.id = slb.location_id
 			JOIN warehouses w ON w.id = slb.warehouse_id
@@ -389,9 +400,20 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
 
 		args := []any{}
+		argIdx := 1
 		if zoneFilter != "" {
-			query += ` AND UPPER(COALESCE(i.hsn_no,'')) LIKE $1`
-			args = append(args, zoneFilter+"%")
+			query += fmt.Sprintf(` AND COALESCE(
+			    CASE
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '391990%%' THEN 'B'
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87149%%' OR UPPER(COALESCE(i.hsn_no,'')) LIKE '87141%%' THEN 'C'
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '7318%%' THEN 'D'
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '40169%%' THEN 'E'
+			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '854430%%' THEN 'F'
+			        ELSE 'G'
+			    END, 'G') = $%d`, argIdx)
+			args = append(args, strings.ToUpper(zoneFilter))
+			argIdx++
 		}
 
 		query += ` ORDER BY slb.updated_at ASC`
@@ -414,12 +436,13 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 			BatchNo       string  `json:"batch_no"`
 			Qty           float64 `json:"qty"`
 			LocationType  string  `json:"location_type"`
+			Zone          string  `json:"zone"`
 		}
 		list := []row{}
 		for rows.Next() {
 			var r row
 			if err := rows.Scan(&r.ID, &r.ItemCode, &r.ItemName, &r.WarehouseID, &r.WarehouseCode,
-				&r.LocationID, &r.LocationCode, &r.BatchNo, &r.Qty, &r.LocationType); err != nil {
+				&r.LocationID, &r.LocationCode, &r.BatchNo, &r.Qty, &r.LocationType, &r.Zone); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, r)
@@ -431,23 +454,24 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 func queueZones(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT
-				COALESCE(
-					CASE
-						WHEN UPPER(i.hsn_no) LIKE '87141090' THEN 'A'
-						WHEN UPPER(i.hsn_no) LIKE '391990%' THEN 'B'
-						WHEN UPPER(i.hsn_no) LIKE '87149%' OR UPPER(i.hsn_no) LIKE '87141%' THEN 'C'
-						WHEN UPPER(i.hsn_no) LIKE '7318%' THEN 'D'
-						WHEN UPPER(i.hsn_no) LIKE '40169%' THEN 'E'
-						WHEN UPPER(i.hsn_no) LIKE '854430%' THEN 'F'
-						ELSE 'G'
-					END, 'G'
-				) as zone,
-				COUNT(*) as count
-			FROM stock_location_balances slb
-			JOIN warehouse_locations wl ON wl.id = slb.location_id
-			LEFT JOIN items i ON i.code = slb.item_code
-			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
+			SELECT zone, COUNT(*) as count FROM (
+				SELECT
+					COALESCE(
+						CASE
+							WHEN UPPER(i.hsn_no) LIKE '87141090' THEN 'A'
+							WHEN UPPER(i.hsn_no) LIKE '391990%' THEN 'B'
+							WHEN UPPER(i.hsn_no) LIKE '87149%' OR UPPER(i.hsn_no) LIKE '87141%' THEN 'C'
+							WHEN UPPER(i.hsn_no) LIKE '7318%' THEN 'D'
+							WHEN UPPER(i.hsn_no) LIKE '40169%' THEN 'E'
+							WHEN UPPER(i.hsn_no) LIKE '854430%' THEN 'F'
+							ELSE 'G'
+						END, 'G'
+					) as zone
+				FROM stock_location_balances slb
+				JOIN warehouse_locations wl ON wl.id = slb.location_id
+				LEFT JOIN items i ON i.code = slb.item_code
+				WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
+			) sub
 			GROUP BY zone
 			ORDER BY zone`)
 		if err != nil {
