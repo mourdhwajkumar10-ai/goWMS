@@ -82,6 +82,11 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
+		var velocityTier string
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(velocity_tier,'medium')
+			FROM items WHERE UPPER(code)=UPPER($1) AND disabled=false`, itemCode).Scan(&velocityTier)
+
 		if warehouseID < 1 {
 			if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
 				warehouseID = wid
@@ -225,6 +230,8 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				FROM warehouse_locations wl` + joins + `
 				WHERE COALESCE(wl.disabled,false)=false` + mixedOK + fits
 
+		skipShelfFilter := false
+
 		load := func(reason, zone string, sameBayOnly, emptyOnly bool, onlyID int, limit int) []cand {
 			args := []any{qty, itemCode}
 			sql := selectSQL
@@ -235,6 +242,13 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				args = append(args, warehouseID)
 			}
 			sql += zoneSQL(zone)
+			if !skipShelfFilter {
+				band := velocityShelfBand(velocityTier)
+				sf := shelfBandFilter(band)
+				if sf != "" {
+					sql += sf
+				}
+			}
 			if emptyOnly {
 				sql += ` AND NOT EXISTS (
 					SELECT 1 FROM stock_location_balances slb
@@ -298,6 +312,29 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		}
 		candidates = uniq
 
+		// Retry without shelf filter if no candidates found with band filter
+		if len(candidates) == 0 && shelfBandFilter(velocityShelfBand(velocityTier)) != "" {
+			skipShelfFilter = true
+			candidates = load("consolidate_same_item", "pick_face", true, false, 0, 20)
+			candidates = append(candidates, load("consolidate_same_item", "pick_face", false, false, 0, 20)...)
+			candidates = append(candidates, load("consolidate_same_item", "storage", true, false, 0, 20)...)
+			candidates = append(candidates, load("consolidate_same_item", "storage", false, false, 0, 20)...)
+			candidates = append(candidates, load("empty_pick_face_dedicated_bay", "pick_face", true, true, 0, 20)...)
+			candidates = append(candidates, load("empty_pick_face", "pick_face", false, true, 0, 20)...)
+			candidates = append(candidates, load("empty_storage_dedicated_bay", "storage", true, true, 0, 20)...)
+			candidates = append(candidates, load("empty_storage", "storage", false, true, 0, 20)...)
+			seen2 := map[int]bool{}
+			uniq2 := []cand{}
+			for _, cnd := range candidates {
+				if seen2[cnd.LocationID] {
+					continue
+				}
+				seen2[cnd.LocationID] = true
+				uniq2 = append(uniq2, cnd)
+			}
+			candidates = uniq2
+		}
+
 		if len(candidates) == 0 {
 			return shared.Err(c, fiber.StatusNotFound,
 				"no home, same-item, or empty pick/storage bin with capacity — free a location or raise max qty per bin")
@@ -312,8 +349,10 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			"location_type": best.LocationType, "zone": best.Zone, "same_bay": best.SameBay,
 			"preferred_aisle": prefAisle, "preferred_bay": prefBay,
 			"control_mode": controlMode,
-			"strategy":     []string{"home_bin", "consolidate_same_item", "empty_pick_face", "empty_storage"},
-			"candidates":   candidates,
+			"velocity_tier": velocityTier,
+			"shelf_band":    velocityShelfBand(velocityTier),
+			"strategy":      []string{"home_bin", "consolidate_same_item", "empty_pick_face", "empty_storage"},
+			"candidates":    candidates,
 		}
 		if homeID != nil {
 			out["home_location_id"] = *homeID
