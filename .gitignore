@@ -7,3 +7,4 @@ web/dist/
 *.log
 .DS_Store
 tmp/
+scripts/node_modules/
