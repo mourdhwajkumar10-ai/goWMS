@@ -105,6 +105,47 @@ export default function PutawayWizard() {
     return null
   }, [])
 
+  if (step === 'mode_select') {
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <h1>Putaway</h1>
+        </div>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+          <button
+            className="erpnext-btn-primary"
+            style={{ flex: 1, padding: '24px 16px', fontSize: 18 }}
+            onClick={() => { setMode('zone'); setStep('zone_select') }}
+          >
+            By Zone
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Batch putaway with tote</div>
+          </button>
+          <button
+            className="erpnext-btn-primary"
+            style={{ flex: 1, padding: '24px 16px', fontSize: 18 }}
+            onClick={() => { setMode('item'); setStep('item_pick') }}
+          >
+            By Item
+            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Single item putaway</div>
+          </button>
+        </div>
+        <p style={{ color: 'var(--text-dim)', marginBottom: 8 }}>
+          {queue.length} items pending in staging
+        </p>
+        {queue.length > 0 && (
+          <div>
+            <p style={{ fontWeight: 600, marginBottom: 8 }}>Top 5:</p>
+            {queue.slice(0, 5).map(q => (
+              <div key={q.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4 }}>
+                {q.item_code} — {q.qty} units
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   // ... rest of component will be added in subsequent tasks
 
   return (
