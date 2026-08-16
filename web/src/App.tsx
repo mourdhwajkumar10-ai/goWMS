@@ -27,6 +27,7 @@ import Notifications from "./pages/Notifications";
 import Qi from "./pages/Qi";
 import Serial from "./pages/Serial";
 import Putaway from "./pages/Putaway";
+import PutawayWizard from "./pages/PutawayWizard";
 import Batches from "./pages/Batches";
 import DeliveryNotes from "./pages/DeliveryNotes";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
@@ -101,6 +102,7 @@ export default function App() {
         <Route path="qi" element={<Qi />} />
         <Route path="serial" element={<Serial />} />
         <Route path="putaway" element={<Putaway />} />
+        <Route path="putaway-wizard" element={<PutawayWizard />} />
         <Route path="batches" element={<Batches />} />
         <Route path="delivery-notes" element={<DeliveryNotes />} />
         <Route path="purchase-invoices" element={<PurchaseInvoices />} />
