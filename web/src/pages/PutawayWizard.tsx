@@ -146,6 +146,28 @@ export default function PutawayWizard() {
     )
   }
 
+  if (step === 'zone_select') {
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <button onClick={() => setStep('mode_select')}>← Back</button>
+          <h1>Select Zone</h1>
+        </div>
+        {zones.map(z => (
+          <button
+            key={z.zone}
+            className="erpnext-btn-secondary"
+            style={{ width: '100%', textAlign: 'left', padding: '16px', marginBottom: 8 }}
+            onClick={() => { setSelectedZone(z.zone); setStep('item_pick') }}
+          >
+            Zone {z.zone} — {z.count} items
+          </button>
+        ))}
+        {zones.length === 0 && <p style={{ color: 'var(--text-dim)' }}>No items by zone</p>}
+      </div>
+    )
+  }
+
   // ... rest of component will be added in subsequent tasks
 
   return (
