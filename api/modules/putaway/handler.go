@@ -19,6 +19,10 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/rules", listRulesAlias(db))
 	r.Get("/suggest", suggest(db))
 	r.Get("/queue", queue(db))
+	r.Post("/sessions", createSession(db))
+	r.Get("/sessions/:id", getSession(db))
+	r.Delete("/sessions/:id", cancelSession(db))
+	r.Post("/sessions/:id/heartbeat", sessionHeartbeat(db))
 }
 
 func listRulesAlias(db *pgxpool.Pool) fiber.Handler {
