@@ -128,6 +128,7 @@ export default function Warehouses() {
   const [bulkType, setBulkType] = useState('storage')
   const [bulkPriority, setBulkPriority] = useState('5')
   const [showBulk, setShowBulk] = useState(false)
+  const [quickSetupLoading, setQuickSetupLoading] = useState(false)
 
   const [editType, setEditType] = useState('storage')
   const [editPriority, setEditPriority] = useState('5')
@@ -235,6 +236,28 @@ export default function Warehouses() {
     } else {
       notify({ type: 'error', title: 'Bulk failed', message: r.error || '' })
     }
+  }
+
+  const quickSetup6Zones = async () => {
+    if (!selected) return
+    setQuickSetupLoading(true)
+    let total = 0
+    const zones = ['A', 'B', 'C', 'D', 'E', 'F']
+    for (const zone of zones) {
+      const r = await api.locationBulk(selected.id, {
+        aisle: zone,
+        bay_from: 1,
+        bay_to: 4,
+        bins_per_bay: 2,
+        level_count: 6,
+        location_type: 'storage',
+        putaway_priority: 5,
+      })
+      if (r.ok) total += r.data.created
+    }
+    setQuickSetupLoading(false)
+    notify({ type: 'success', title: '6 zones created', message: `${total} storage locations across zones A–F` })
+    openWarehouse(selected)
   }
 
   const startEdit = (l: Loc) => {
@@ -448,6 +471,13 @@ export default function Warehouses() {
                 </button>
                 <button className="erpnext-btn-secondary text-sm" onClick={() => setShowBulk(!showBulk)}>
                   {showBulk ? 'Hide bulk' : 'Bulk generate'}
+                </button>
+                <button
+                  className="erpnext-btn-primary text-sm"
+                  onClick={quickSetup6Zones}
+                  disabled={quickSetupLoading}
+                >
+                  {quickSetupLoading ? 'Creating...' : 'Quick Setup 6 Zones'}
                 </button>
               </div>
             )}
