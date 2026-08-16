@@ -480,6 +480,44 @@ export default function PutawayWizard() {
     )
   }
 
+  if (step === 'complete') {
+    const placedItems = toteItems.filter(i => i.status === 'placed')
+
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <h1>Putaway Complete</h1>
+        </div>
+
+        <div style={{ textAlign: 'center', padding: 32 }}>
+          <p style={{ fontSize: 48, marginBottom: 16 }}>✓</p>
+          <p style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>
+            {placedItems.length} item(s) placed successfully
+          </p>
+
+          {placedItems.map(item => (
+            <div key={item.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4 }}>
+              {item.item_code} — {item.qty} units
+            </div>
+          ))}
+
+          <button
+            className="erpnext-btn-primary"
+            style={{ marginTop: 24 }}
+            onClick={() => {
+              setSelectedItem(null)
+              setSuggestion(null)
+              setToteItems([])
+              setStep(mode === 'zone' ? 'item_pick' : 'mode_select')
+            }}
+          >
+            {mode === 'zone' ? 'Next Item' : 'Done'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="desk-page">
       <h1>Putaway Wizard</h1>
