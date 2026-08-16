@@ -42,9 +42,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
 
-  const payload = await res.json().catch(() => ({})) as ApiResponse<T>;
+  const payload = await res.json().catch(() => ({})) as ApiResponse<T> & { message?: string }
   if (!res.ok || payload.ok === false) {
-    return { ok: false, data: payload.data, error: payload.error || `Request failed (${res.status})` };
+    const errText = typeof payload.error === 'string' && payload.error.trim()
+      ? payload.error
+      : (typeof payload.message === 'string' && payload.message.trim() ? payload.message : `Request failed (${res.status})`)
+    return { ok: false, data: payload.data, error: errText }
   }
   return { ok: true, data: payload.data, total: (payload as { total?: number }).total };
 }
@@ -231,6 +234,10 @@ export const api = {
     post<any>(`/grn/session/${id}/discrepancy`, data),
   grnCloseBox: (id: number, data: { carton_id: number; reason?: string }) =>
     post<any>(`/grn/session/${id}/close-box`, data),
+  grnPatchLine: (id: number, lineId: number, data: { scanned_qty: number }) =>
+    patch<any>(`/grn/session/${id}/line/${lineId}`, data),
+  grnUndoItem: (id: number) => post<any>(`/grn/session/${id}/undo-item`, {}),
+  grnUndoBox: (id: number) => post<any>(`/grn/session/${id}/undo-box`, {}),
   grnResolveException: (exceptionId: number, data: { resolution: string; status?: string; create_followup?: boolean }) =>
     post<any>(`/grn/exceptions/${exceptionId}/resolve`, data),
   grnStartAudit: (id: number, sampleSize?: number) =>

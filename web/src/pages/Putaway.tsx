@@ -62,7 +62,7 @@ export default function Putaway() {
   const [msg, setMsg] = useState('')
 
   const [itemCode, setItemCode] = useState('')
-  const [warehouse, setWarehouse] = useState('MAIN')
+  const [warehouse, setWarehouse] = useState('WH-01')
   const [priority, setPriority] = useState('1')
   const [capacity, setCapacity] = useState('')
 
@@ -563,13 +563,15 @@ export default function Putaway() {
                     border: selected ? '1px solid var(--accent)' : '1px solid var(--border)',
                   }}
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="font-semibold" style={{ color: 'var(--text)' }}>{q.item_code}</div>
-                    <div className="text-sm font-semibold tabular-nums" style={{ color: 'var(--accent)' }}>{q.qty}</div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="font-semibold truncate" style={{ color: 'var(--text)' }}>{q.item_code}</div>
+                      {q.item_name && String(q.item_name).toUpperCase() !== String(q.item_code).toUpperCase() && (
+                        <div className="text-xs mt-0.5 truncate" style={{ color: 'var(--text-dim)' }}>{q.item_name}</div>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold tabular-nums shrink-0" style={{ color: 'var(--accent)' }}>{q.qty}</div>
                   </div>
-                  {q.item_name && (
-                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-dim)' }}>{q.item_name}</div>
-                  )}
                   <div className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
                     {q.warehouse_code} · {q.location_code} · {q.location_type}
                     {q.batch_no ? ` · batch ${q.batch_no}` : ''}
@@ -590,12 +592,12 @@ export default function Putaway() {
                 {formError}
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="erpnext-label">Item Code *</label>
                 <div className="flex gap-1">
-                  <input className="erpnext-input" value={putawayItem} onChange={e => setPutawayItem(e.target.value)} placeholder="Pick from queue" />
-                  <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
+                  <input className="erpnext-input min-w-0 flex-1" value={putawayItem} onChange={e => setPutawayItem(e.target.value)} placeholder="Pick from queue" />
+                  <button type="button" onClick={() => setShowScanner(true)} className="erpnext-btn-secondary shrink-0" aria-label="Scan item">📷</button>
                 </div>
               </div>
               <div>
@@ -618,23 +620,24 @@ export default function Putaway() {
                 <label className="erpnext-label">Preferred bay</label>
                 <input className="erpnext-input" value={prefBay} onChange={e => setPrefBay(e.target.value)} placeholder="01" />
               </div>
-              <div>
+              <div className="sm:col-span-2">
                 <label className="erpnext-label">Put into bin *</label>
-                <input
-                  className="erpnext-input"
-                  value={putawayTarget}
-                  onChange={e => { setPutawayTarget(e.target.value); setPutawayTargetId(null) }}
-                  placeholder="Suggested after you pick a queue line"
-                />
-              </div>
-              <div className="flex items-end">
-                <button
-                  onClick={() => { void suggest() }}
-                  className="erpnext-btn-secondary w-full"
-                  disabled={suggestBusy || !putawayItem}
-                >
-                  {suggestBusy ? 'Finding bin…' : 'Suggest location'}
-                </button>
+                <div className="flex gap-2">
+                  <input
+                    className="erpnext-input min-w-0 flex-1"
+                    value={putawayTarget}
+                    onChange={e => { setPutawayTarget(e.target.value); setPutawayTargetId(null) }}
+                    placeholder="Suggested after you pick a queue line"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => { void suggest() }}
+                    className="erpnext-btn-secondary shrink-0"
+                    disabled={suggestBusy || !putawayItem}
+                  >
+                    {suggestBusy ? 'Finding bin…' : 'Suggest location'}
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -749,14 +752,14 @@ export default function Putaway() {
             </p>
           </div>
           <div className="p-4 space-y-3">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="erpnext-label">Item Code *</label>
                 <input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} placeholder="ITEM-001" />
               </div>
               <div>
                 <label className="erpnext-label">Warehouse</label>
-                <input className="erpnext-input" value={warehouse} onChange={e => setWarehouse(e.target.value)} />
+                <input className="erpnext-input" value={warehouse} onChange={e => setWarehouse(e.target.value)} placeholder="WH-01" />
               </div>
               <div>
                 <label className="erpnext-label">Priority</label>

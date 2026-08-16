@@ -206,6 +206,7 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		if !sessionWritable(status) {
 			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
 		}
+		healFalsePOExcess(c, db, sessionID)
 
 		rows, err := db.Query(c.Context(), `
 			SELECT gl.id, COALESCE(gc.carton_no,''), gl.item_code, COALESCE(gl.invoice_no,''),
@@ -242,6 +243,7 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 			FROM grn_lines gl
 			LEFT JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
 			WHERE gl.grn_session_id=$1
+			  AND COALESCE(gl.expected_qty,0) > 0
 			  AND COALESCE(gl.scanned_qty,0) > COALESCE(gl.expected_qty,0)`, sessionID)
 		if exErr == nil {
 			for exRows.Next() {
@@ -258,6 +260,10 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 			}
 			exRows.Close()
 		}
+
+		poShort, poExcess := reconcileSessionAgainstPO(db, c, sessionID)
+		shortCount += poShort
+		excessCount += poExcess
 
 		var openExc int
 		_ = db.QueryRow(c.Context(), `
@@ -313,6 +319,64 @@ func ensureExcessException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, inv, b
 	})
 }
 
+// reconcileSessionAgainstPO records session-level short/excess when there is no
+// packing list (skipped import). Items that already have expected packing-list
+// or invoice lines are left to the per-line pass above.
+func reconcileSessionAgainstPO(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (shortCount, excessCount int) {
+	var imported int
+	_ = db.QueryRow(c.Context(), `
+		SELECT COUNT(*) FROM grn_lines
+		WHERE grn_session_id=$1 AND COALESCE(verification_method,'')='import'`, sessionID).Scan(&imported)
+	if imported > 0 {
+		return 0, 0
+	}
+	rows, err := db.Query(c.Context(), `
+		SELECT MIN(poi.item_code),
+		       SUM(GREATEST(COALESCE(poi.qty,0)-COALESCE(poi.received_qty,0),0))
+		FROM purchase_order_items poi
+		JOIN purchase_orders po ON po.id = poi.purchase_order_id
+		JOIN grn_sessions gs ON gs.purchase_receipt_no = po.name
+		WHERE gs.id=$1
+		GROUP BY UPPER(poi.item_code)`, sessionID)
+	if err != nil {
+		return 0, 0
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var part string
+		var remaining float64
+		if err := rows.Scan(&part, &remaining); err != nil || part == "" {
+			continue
+		}
+		var mapped int
+		_ = db.QueryRow(c.Context(), `
+			SELECT COUNT(*) FROM grn_lines
+			WHERE grn_session_id=$1 AND UPPER(item_code)=UPPER($2)
+			  AND COALESCE(expected_qty,0) > 0
+			  AND COALESCE(verification_method,'') NOT IN ('po_fallback')`, sessionID, part).Scan(&mapped)
+		if mapped > 0 {
+			continue
+		}
+		scanned := sessionScannedQtyForItem(c, db, sessionID, part, 0)
+		if remaining > 0 && scanned < remaining {
+			ensureShortageException(db, c, sessionID, "", "", part, remaining, scanned)
+			writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
+				"part_no": part, "quantity": remaining - scanned, "result": "shortage",
+				"payload": fiber.Map{"source": "po"},
+			})
+			shortCount++
+		} else if remaining > 0 && scanned > remaining {
+			ensureExcessException(db, c, sessionID, "", "", part, remaining, scanned)
+			writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
+				"part_no": part, "quantity": scanned - remaining, "result": "excess",
+				"payload": fiber.Map{"source": "po"},
+			})
+			excessCount++
+		}
+	}
+	return shortCount, excessCount
+}
+
 func finalizeGRN(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sessionID, err := strconv.Atoi(c.Params("id"))
@@ -337,6 +401,7 @@ func finalizeGRN(db *pgxpool.Pool) fiber.Handler {
 		if stockPosted != nil && *stockPosted != "" {
 			return shared.Err(c, fiber.StatusBadRequest, "stock already posted")
 		}
+		healFalsePOExcess(c, db, sessionID)
 
 		st := strings.ToLower(status)
 		okStatus := st == "item_verification_complete" || st == "exception_pending" ||
@@ -418,6 +483,8 @@ func itemSummaryData(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (fiber.Map, 
 			if short < 0 {
 				excess = -short
 				short = 0
+			} else {
+				excess = 0
 			}
 		}
 	}
@@ -445,6 +512,28 @@ func itemSummaryData(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (fiber.Map, 
 			var ln partBoxQty
 			if err := partRows.Scan(&ln.PartNo, &ln.BoxNo, &ln.Expected, &ln.Scanned); err == nil {
 				partLines = append(partLines, ln)
+			}
+		}
+	}
+
+	if exp == 0 || !sessionHasPackingListExpected(c, db, sessionID) {
+		partLines = overlayPOExpectedParts(c, db, sessionID, partLines)
+		if exp == 0 {
+			var poExp, poScan float64
+			for _, ln := range partLines {
+				poExp += ln.Expected
+				poScan += ln.Scanned
+			}
+			if poExp > 0 {
+				exp = poExp
+				recv = poScan
+				short = poExp - recv
+				if short < 0 {
+					excess = -short
+					short = 0
+				} else {
+					excess = 0
+				}
 			}
 		}
 	}

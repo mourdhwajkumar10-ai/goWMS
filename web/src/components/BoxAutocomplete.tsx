@@ -17,10 +17,12 @@ type Props = {
   placeholder?: string
   className?: string
   ariaLabel?: string
+  /** Hide the dropdown (e.g. while a confirm modal is open). */
+  closed?: boolean
 }
 
 export default function BoxAutocomplete({
-  value, onChangeText, onSelect, onKeyDown, suggestions, placeholder, className, ariaLabel,
+  value, onChangeText, onSelect, onKeyDown, suggestions, placeholder, className, ariaLabel, closed,
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -43,7 +45,11 @@ export default function BoxAutocomplete({
     return out
   }, [suggestions, value])
 
-  const { anchorRef, rect } = useAnchoredMenu(open, [filtered.length])
+  const { anchorRef, rect } = useAnchoredMenu(open && !closed && filtered.length > 0, [filtered.length, closed])
+
+  useEffect(() => {
+    if (closed) setOpen(false)
+  }, [closed])
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -62,7 +68,7 @@ export default function BoxAutocomplete({
     onSelect?.(row)
   }
 
-  const menu = open && rect ? createPortal(
+  const menu = open && !closed && rect && filtered.length > 0 ? createPortal(
     <div
       ref={menuRef}
       className="rounded-lg shadow-lg overflow-y-auto border"
@@ -77,26 +83,20 @@ export default function BoxAutocomplete({
         borderColor: 'var(--border)',
       }}
     >
-      {filtered.length > 0 ? (
-        filtered.map((row) => (
-          <button
-            key={row.carton_no}
-            type="button"
-            className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
-            style={{ borderColor: 'var(--border)' }}
-            onMouseDown={() => handleSelect(row)}
-          >
-            <span className="font-medium">{row.carton_no}</span>
-            <span className="ml-2 text-xs" style={{ color: 'var(--text-dim)' }}>
-              {[row.is_expected ? 'expected' : null, row.status].filter(Boolean).join(' · ')}
-            </span>
-          </button>
-        ))
-      ) : (
-        <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
-          No saved boxes yet — scan or type a new ID
-        </div>
-      )}
+      {filtered.map((row) => (
+        <button
+          key={row.carton_no}
+          type="button"
+          className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
+          style={{ borderColor: 'var(--border)' }}
+          onMouseDown={() => handleSelect(row)}
+        >
+          <span className="font-medium">{row.carton_no}</span>
+          <span className="ml-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+            {[row.is_expected ? 'expected' : null, row.status].filter(Boolean).join(' · ')}
+          </span>
+        </button>
+      ))}
     </div>,
     document.body,
   ) : null

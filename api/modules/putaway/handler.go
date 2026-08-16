@@ -69,19 +69,25 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 
 		var controlMode string
 		var homeID *int
-		var masterComplete bool
 		err := db.QueryRow(c.Context(), `
-			SELECT COALESCE(control_mode,'item_controlled'), home_location_id, COALESCE(master_complete,false)
-			FROM items WHERE code=$1 AND disabled=false`, itemCode).
-			Scan(&controlMode, &homeID, &masterComplete)
+			SELECT COALESCE(control_mode,'item_controlled'), home_location_id
+			FROM items WHERE UPPER(code)=UPPER($1) AND disabled=false`, itemCode).
+			Scan(&controlMode, &homeID)
 		if err == pgx.ErrNoRows {
-			return shared.Err(c, fiber.StatusConflict, "item not in master — complete item master first")
+			shared.EnsureItemStub(c.Context(), db, itemCode)
+			controlMode = "item_controlled"
+			err = nil
 		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		if !masterComplete {
-			return shared.Err(c, fiber.StatusConflict, "item master incomplete — complete required fields before putaway")
+
+		if warehouseID < 1 {
+			if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
+				warehouseID = wid
+			}
+		} else {
+			_ = shared.EnsureDefaultPickBins(c.Context(), db, warehouseID)
 		}
 
 		if prefAisle == "" || prefBay == "" {
@@ -394,18 +400,7 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "source_location_id or source_location required")
 		}
 
-		var complete bool
-		err := db.QueryRow(c.Context(), `
-			SELECT COALESCE(master_complete,false) FROM items WHERE code=$1`, body.ItemCode).Scan(&complete)
-		if err == pgx.ErrNoRows {
-			return shared.Err(c, fiber.StatusConflict, "item not in master — complete item master first")
-		}
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if !complete {
-			return shared.Err(c, fiber.StatusConflict, "item master incomplete")
-		}
+		shared.EnsureItemStub(c.Context(), db, body.ItemCode)
 
 		tx, err := db.Begin(c.Context())
 		if err != nil {

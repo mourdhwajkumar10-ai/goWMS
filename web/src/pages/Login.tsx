@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { setSession } from "../services/api";
+import { canOpenPath, homePathForRole } from "../utils/roleAccess";
 
 function looksLikeWarehouseScan(s: string) {
   return /^(BOX|PART|ITEM|INV|PO|GRN)[-_]/i.test((s || "").trim());
@@ -16,6 +17,13 @@ export default function Login() {
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+
+  const goHome = (role: string) => {
+    const last = localStorage.getItem("gowms_last_path") || "";
+    const next = last.startsWith("/") && canOpenPath(role, last) ? last : homePathForRole(role);
+    navigate(next);
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -29,24 +37,24 @@ export default function Login() {
           return;
         }
         setSession(r.data.token, r.data.role);
-      } else {
-        if (!pin || (!badge && !empNo)) {
-          setError("Badge/employee number and PIN required");
-          return;
-        }
-        const r = await api.pinLogin({
-          badge_code: badge || undefined,
-          employee_number: empNo || undefined,
-          pin,
-        });
-        if (!r.ok || !r.data) {
-          setError(r.error || "PIN login failed");
-          return;
-        }
-        setSession(r.data.token, r.data.role);
+        goHome(r.data.role);
+        return;
       }
-      const next = localStorage.getItem("gowms_last_path") || "/";
-      navigate(next.startsWith("/") ? next : "/");
+      if (!pin || (!badge && !empNo)) {
+        setError("Badge/employee number and PIN required");
+        return;
+      }
+      const r = await api.pinLogin({
+        badge_code: badge || undefined,
+        employee_number: empNo || undefined,
+        pin,
+      });
+      if (!r.ok || !r.data) {
+        setError(r.error || "PIN login failed");
+        return;
+      }
+      setSession(r.data.token, r.data.role);
+      goHome(r.data.role);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -63,7 +71,7 @@ export default function Login() {
             <h1>Login to goWMS</h1>
           </div>
         </div>
-        <p className="sub">Warehouse Management Desk — password or floor PIN</p>
+        <p className="sub">Sign in with password or floor PIN</p>
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <button type="button" className={mode === "password" ? "btn" : "btn btn-ghost"} onClick={() => setMode("password")}>Password</button>
           <button type="button" className={mode === "pin" ? "btn" : "btn btn-ghost"} onClick={() => setMode("pin")}>PIN</button>
@@ -87,7 +95,12 @@ export default function Login() {
             </div>
             <div className="field">
               <label>Password</label>
-              <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" />
+              <div style={{ position: 'relative' }}>
+                <input type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} required autoComplete="current-password" style={{ paddingRight: 40 }} />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, opacity: 0.6 }} aria-label={showPassword ? 'Hide password' : 'Show password'}>
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
           </>
         ) : (
@@ -108,7 +121,12 @@ export default function Login() {
             </div>
             <div className="field">
               <label>PIN</label>
-              <input type="password" value={pin} onChange={(e) => setPin(e.target.value)} required inputMode="numeric" />
+              <div style={{ position: 'relative' }}>
+                <input type={showPassword ? 'text' : 'password'} value={pin} onChange={(e) => setPin(e.target.value)} required inputMode="numeric" style={{ paddingRight: 40 }} />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, padding: 4, opacity: 0.6 }} aria-label={showPassword ? 'Hide PIN' : 'Show PIN'}>
+                  {showPassword ? '🙈' : '👁️'}
+                </button>
+              </div>
             </div>
           </>
         )}

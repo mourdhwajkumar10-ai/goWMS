@@ -432,6 +432,8 @@ a:hover { text-decoration: underline; }
   flex: 1;
   max-width: 1400px;
   width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 /* ─── Page chrome ─── */
@@ -748,6 +750,26 @@ h2 { font-size: var(--text-lg); font-weight: 600; margin-bottom: 8px; color: var
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-lg);
   box-shadow: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.grn-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
+
+.grn-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.erpnext-table td.grn-action-cell {
+  white-space: normal;
+  vertical-align: middle;
 }
 
 .card { padding: 14px 16px; }
@@ -806,6 +828,14 @@ td, .erpnext-table td {
   white-space: nowrap;
   color: var(--text-color);
   vertical-align: middle;
+}
+
+/* Beat `.erpnext-table th { text-align: left }` so numeric headers sit over their values. */
+th.text-right,
+td.text-right,
+.erpnext-table th.text-right,
+.erpnext-table td.text-right {
+  text-align: right;
 }
 
 tr:last-child td { border-bottom: none; }
@@ -891,6 +921,66 @@ tr:hover td, .erpnext-table tr:hover td { background: var(--fg-hover-color); }
   font-size: var(--text-sm);
   font-weight: 600;
   padding: 2px 0 12px;
+}
+
+.grn-gate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+
+.grn-wizard-track {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--gray-100, #eee);
+  overflow: hidden;
+}
+
+.grn-floor-phases {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.grn-floor-phase {
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: pointer;
+  color: inherit;
+}
+.grn-floor-phase:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+.grn-floor-phase.is-current {
+  border-color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.grn-floor-phase.is-done {
+  border-color: var(--green);
+}
+.grn-floor-phase-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.grn-floor-phase-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin-top: 4px;
+}
+@media (max-width: 640px) {
+  .grn-floor-phases {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .grn-gate-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Status indicator — ERPNext style (dot + pill) */
@@ -1249,6 +1339,8 @@ input[type="checkbox"] { width: auto; height: auto; }
 .text-left { text-align: left; }
 .text-center { text-align: center; }
 .text-right { text-align: right; }
+th.text-right, td.text-right,
+.erpnext-table th.text-right, .erpnext-table td.text-right { text-align: right; }
 .text-xs { font-size: var(--text-xs); }
 .text-sm { font-size: var(--text-sm); }
 .text-lg { font-size: var(--text-lg); }

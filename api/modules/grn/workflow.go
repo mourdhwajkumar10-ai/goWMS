@@ -44,7 +44,7 @@ func sessionWritable(status string) bool {
 
 func sessionAcceptsBoxReceive(status string) bool {
 	switch canonicalStatus(status) {
-	case "open", "draft", "receiving", "box_reconciliation":
+	case "open", "draft", "receiving", "box_reconciliation", "item_verification", "exception_pending":
 		return true
 	default:
 		return false

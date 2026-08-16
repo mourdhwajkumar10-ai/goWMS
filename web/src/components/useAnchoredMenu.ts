@@ -16,7 +16,7 @@ export function useAnchoredMenu(open: boolean, deps: unknown[] = []) {
     const el = anchorRef.current
     if (!el) return
     const r = el.getBoundingClientRect()
-    const width = Math.max(r.width, 240)
+    const width = Math.min(Math.max(r.width, 160), r.width || 240)
     const maxLeft = Math.max(8, window.innerWidth - width - 8)
     setRect({ top: r.bottom + 4, left: Math.min(r.left, maxLeft), width })
   }, [])

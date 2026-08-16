@@ -66,9 +66,20 @@ func main() {
 	app.Use(logger.New())
 
 	// API group: rate limited (static assets are not throttled).
+	// Floor receiving fires many GETs (session + box/item summary). Admin and
+	// operator on the same warehouse IP must not starve carton scans.
 	api := app.Group("/api", limiter.New(limiter.Config{
-		Max:        120,
+		Max:        600,
 		Expiration: time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			if auth := c.Get(fiber.HeaderAuthorization); auth != "" {
+				return c.IP() + "|" + auth
+			}
+			return c.IP()
+		},
+		Next: func(c *fiber.Ctx) bool {
+			return c.Path() == "/api/health"
+		},
 	}))
 
 	// Public routes registered before the auth middleware.

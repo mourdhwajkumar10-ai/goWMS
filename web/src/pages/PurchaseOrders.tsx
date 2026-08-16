@@ -85,6 +85,35 @@ export default function PurchaseOrders() {
   }
 
   const populateItem = (idx: number, item: any) => {
+    const code = String(item.code || '').trim()
+    if (code) {
+      const dupIdx = items.findIndex((r, i) => i !== idx && r.item_code.trim().toUpperCase() === code.toUpperCase())
+      if (dupIdx >= 0) {
+        const qtyToAdd = items[idx].qty > 0 ? items[idx].qty : 1
+        const rate = +item.standard_rate || +item.mrp || items[idx].rate || 0
+        const { newQty } = mergeScannedItem(idx, code, qtyToAdd, rate)
+        setItems(prev => {
+          const tIdx = prev.findIndex(r => r.item_code.trim().toUpperCase() === code.toUpperCase())
+          if (tIdx < 0) return prev
+          const updated = [...prev]
+          updated[tIdx] = {
+            ...updated[tIdx],
+            item_name: item.name || updated[tIdx].item_name,
+            description: item.description || updated[tIdx].description,
+            brand: item.brand || updated[tIdx].brand,
+            item_group: item.abc_tier || updated[tIdx].item_group,
+            uom: UOM_OPTIONS.includes(item.uom) ? item.uom : updated[tIdx].uom,
+          }
+          return updated
+        })
+        notify({
+          type: 'info',
+          title: 'Same item already on this PO',
+          message: `${code} qty increased to ${newQty}. No new line was added.`,
+        })
+        return
+      }
+    }
     const updated = [...items]
     updated[idx] = {
       ...updated[idx],
@@ -102,6 +131,10 @@ export default function PurchaseOrders() {
     })))
   }
 
+  const makeEmptyPOItem = () => ({
+    ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+  })
+
   const updateItem = (idx: number, field: keyof POItem, value: any) => {
     const updated = [...items]
     ;(updated[idx] as any)[field] = value
@@ -112,9 +145,34 @@ export default function PurchaseOrders() {
       updated[idx].amount = qty * rate
       updated[idx].discount_amount = (qty * rate * disc) / 100
     }
-    setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
-      ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
-    })))
+    // While the item code is still being typed, do not merge duplicates or
+    // insert a new row — "item1" would otherwise match "item" mid-keystroke.
+    if (field === 'item_code') {
+      setItems(updated)
+      return
+    }
+    setItems(withTrailingEmptyRow(updated, poItemFilled, makeEmptyPOItem))
+  }
+
+  const commitItemCode = (idx: number, typed?: string) => {
+    const row = items[idx]
+    if (!row) return
+    const code = (typed ?? row.item_code).trim()
+    if (!code) return
+    const dupIdx = items.findIndex((r, i) => i !== idx && r.item_code.trim().toUpperCase() === code.toUpperCase())
+    if (dupIdx >= 0) {
+      const qtyToAdd = row.qty > 0 ? row.qty : 1
+      const { newQty } = mergeScannedItem(idx, code, qtyToAdd, row.rate)
+      notify({
+        type: 'info',
+        title: 'Same item already on this PO',
+        message: `${code} qty increased to ${newQty}. No new line was added.`,
+      })
+      return
+    }
+    const updated = [...items]
+    updated[idx] = { ...updated[idx], item_code: code }
+    setItems(withTrailingEmptyRow(updated, poItemFilled, makeEmptyPOItem))
   }
 
   const removeItem = (idx: number) => {
@@ -334,8 +392,21 @@ export default function PurchaseOrders() {
         serial_no: r.serial_no || r.SerialNo || '',
         batch_no: r.batch_no || r.BatchNo || '',
       }))
-    setItems([...items, ...imported])
-    notify({ type: 'info', title: 'CSV Imported', message: `${imported.length} items added` })
+    const merged = [...items, ...imported].reduce<POItem[]>((acc, row) => {
+      const code = row.item_code.trim().toUpperCase()
+      if (!code) return acc
+      const existing = acc.find(r => r.item_code.trim().toUpperCase() === code)
+      if (existing) {
+        existing.qty += row.qty
+        existing.amount = existing.qty * existing.rate
+        return acc
+      }
+      return [...acc, row]
+    }, [])
+    setItems(withTrailingEmptyRow(merged, poItemFilled, () => ({
+      ...emptyPOItem(), warehouse: setWarehouse || '', cost_center: costCenter, project, schedule_date: schDate,
+    })))
+    notify({ type: 'info', title: 'CSV Imported', message: `${imported.length} items added (duplicates merged)` })
   }
 
   const downloadTemplate = () => {
@@ -532,6 +603,7 @@ export default function PurchaseOrders() {
                               value={item.item_code}
                               onSelect={(found) => populateItem(idx, found)}
                               onChangeText={(text) => handleItemCodeChange(idx, text)}
+                              onCommit={(text) => commitItemCode(idx, text)}
                               placeholder="Scan or type..."
                             />
                           </td>

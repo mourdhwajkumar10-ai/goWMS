@@ -2,6 +2,7 @@ package shared
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -47,14 +48,84 @@ func EnsureLocation(ctx context.Context, db *pgxpool.Pool, warehouseID int, code
 	return id, code, nil
 }
 
-// ResolveWarehouseID returns warehouse id from pointer or first available warehouse.
+// EnsureDefaultWarehouse returns an existing warehouse or creates WH-01 so
+// receiving can post stock on a fresh database.
+func EnsureDefaultWarehouse(ctx context.Context, db *pgxpool.Pool) (int, error) {
+	var id int
+	err := db.QueryRow(ctx, `
+		SELECT id FROM warehouses WHERE COALESCE(disabled,false)=false ORDER BY id LIMIT 1`).Scan(&id)
+	if err == nil && id > 0 {
+		_ = EnsureDefaultPickBins(ctx, db, id)
+		return id, nil
+	}
+	err = db.QueryRow(ctx, `
+		INSERT INTO warehouses (code, name, warehouse_type, picking_mode)
+		VALUES ('WH-01', 'Main warehouse', 'storage', 'scan')
+		ON CONFLICT (code) DO UPDATE SET name = warehouses.name
+		RETURNING id`).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	_ = EnsureDefaultPickBins(ctx, db, id)
+	return id, nil
+}
+
+// EnsureDefaultPickBins creates a small A-aisle pick-face grid when a warehouse
+// has only staging locations (incoming/hold/damaged). Putaway needs somewhere to go.
+func EnsureDefaultPickBins(ctx context.Context, db *pgxpool.Pool, warehouseID int) error {
+	if warehouseID < 1 {
+		return nil
+	}
+	var n int
+	_ = db.QueryRow(ctx, `
+		SELECT COUNT(*) FROM warehouse_locations
+		WHERE warehouse_id=$1 AND COALESCE(disabled,false)=false
+		  AND location_type IN ('pick_face','storage')`, warehouseID).Scan(&n)
+	if n > 0 {
+		return nil
+	}
+	for bay := 1; bay <= 2; bay++ {
+		for level := 1; level <= 2; level++ {
+			for bin := 1; bin <= 4; bin++ {
+				bayS := fmt.Sprintf("%02d", bay)
+				lvlS := fmt.Sprintf("%02d", level)
+				binS := fmt.Sprintf("%02d", bin)
+				code := fmt.Sprintf("A-%s-%s-%s", bayS, lvlS, binS)
+				_, _ = db.Exec(ctx, `
+					INSERT INTO warehouse_locations (
+						code, warehouse_id, zone, aisle, rack, bin, shelf, level, number,
+						location_type, allow_mixed_items, disabled, is_occupied, putaway_priority
+					) VALUES ($1,$2,'A','A',$3,$4,$3,$5,$4,'pick_face',true,false,false,5)
+					ON CONFLICT (warehouse_id, code) DO NOTHING`,
+					code, warehouseID, bayS, binS, lvlS)
+			}
+		}
+	}
+	return nil
+}
+
+// EnsureItemStub inserts a usable item-master row so received stock can be put away.
+func EnsureItemStub(ctx context.Context, db *pgxpool.Pool, itemCode string) {
+	itemCode = strings.TrimSpace(itemCode)
+	if itemCode == "" {
+		return
+	}
+	var id int
+	if db.QueryRow(ctx, `SELECT id FROM items WHERE UPPER(code)=UPPER($1)`, itemCode).Scan(&id) == nil {
+		return
+	}
+	_, _ = db.Exec(ctx, `
+		INSERT INTO items (code, name, pack_type, control_mode, master_complete, uom, is_stock)
+		VALUES ($1,$1,'loose','item_controlled',true,'Nos',true)
+		ON CONFLICT (code) DO NOTHING`, itemCode)
+}
+
+// ResolveWarehouseID returns warehouse id from pointer or a default warehouse.
 func ResolveWarehouseID(ctx context.Context, db *pgxpool.Pool, warehouseID *int) (int, error) {
 	if warehouseID != nil && *warehouseID > 0 {
 		return *warehouseID, nil
 	}
-	var id int
-	err := db.QueryRow(ctx, `SELECT id FROM warehouses WHERE COALESCE(disabled,false)=false ORDER BY id LIMIT 1`).Scan(&id)
-	return id, err
+	return EnsureDefaultWarehouse(ctx, db)
 }
 
 // AdjustLocationQty upserts a location balance by delta.

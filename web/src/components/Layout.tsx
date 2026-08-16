@@ -1,6 +1,7 @@
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clearSession, getRole } from "../services/api";
+import { deskLabel, navPathsForRole } from "../utils/roleAccess";
 
 const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean; supervisorOnly?: boolean }[] }[] = [
   {
@@ -14,7 +15,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
   {
     title: "Inward",
     items: [
-      { to: "/grn", label: "GRN", icon: "⇩" },
+      { to: "/grn", label: "Receive", icon: "⇩" },
       { to: "/exceptions", label: "Exceptions", icon: "⚠" },
       { to: "/follow-up", label: "Follow-Up Receipts", icon: "↻" },
       { to: "/grn-audit", label: "Random Audit", icon: "✚" },
@@ -88,6 +89,8 @@ export default function Layout() {
   const initial = (role || "U").slice(0, 1).toUpperCase();
   const showAdmin = canSeeAdminNav(role);
   const showRoles = canSeeRolesNav(role);
+  const floorPaths = navPathsForRole(role);
+  const brandSub = deskLabel(role);
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem("gowms_nav") === "collapsed");
   const [mobileOpen, setMobileOpen] = useState(false);
   const [navQuery, setNavQuery] = useState("");
@@ -130,17 +133,20 @@ export default function Layout() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  const itemVisible = (item: (typeof sections)[number]["items"][number]) => {
+    if (item.rolesAdminOnly) return showRoles;
+    if (item.adminOnly || item.supervisorOnly) return showAdmin;
+    if (floorPaths) return floorPaths.includes(item.to);
+    return true;
+  };
+
   const visibleItems = useMemo(() => {
     return sections.flatMap((section) =>
       section.items
-        .filter((item) => {
-          if (item.rolesAdminOnly) return showRoles;
-          if (item.adminOnly || item.supervisorOnly) return showAdmin;
-          return true;
-        })
+        .filter(itemVisible)
         .map((item) => ({ ...item, section: section.title })),
     );
-  }, [showAdmin, showRoles]);
+  }, [showAdmin, showRoles, floorPaths]);
 
   const searchHits = useMemo(() => {
     const q = navQuery.trim().toLowerCase();
@@ -158,16 +164,12 @@ export default function Layout() {
           <span className="brand-mark">gW</span>
           <div className="brand-text">
             <strong>goWMS</strong>
-            <small>Warehouse Desk</small>
+            <small>{brandSub}</small>
           </div>
         </div>
         <nav className="nav">
           {sections.map((section) => {
-            const items = section.items.filter((item) => {
-              if (item.rolesAdminOnly) return showRoles;
-              if (item.adminOnly || item.supervisorOnly) return showAdmin;
-              return true;
-            });
+            const items = section.items.filter(itemVisible);
             if (items.length === 0) return null;
             return (
             <div key={section.title}>
@@ -194,6 +196,7 @@ export default function Layout() {
           <button type="button" className="hamburger" aria-label="Toggle menu" onClick={toggleMenu}>
             ☰
           </button>
+          {floorPaths ? null : (
           <div className="awesomebar">
             <span>⌕</span>
             <input
@@ -225,6 +228,7 @@ export default function Layout() {
               </div>
             )}
           </div>
+          )}
           <div className="topbar-right">
             <span className="role-badge">{role ?? "user"}</span>
             <span className="avatar-chip" title={role ?? "user"}>{initial}</span>

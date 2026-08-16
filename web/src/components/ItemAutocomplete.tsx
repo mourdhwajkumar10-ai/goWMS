@@ -16,6 +16,8 @@ type Props = {
   value: string
   onSelect: (item: ItemSuggestion) => void
   onChangeText?: (text: string) => void
+  /** Fires when the typed value is finished (blur or Enter). Not while typing. */
+  onCommit?: (text: string) => void
   onKeyDown?: (e: KeyboardEvent<HTMLInputElement>) => void
   placeholder?: string
   className?: string
@@ -24,7 +26,7 @@ type Props = {
 }
 
 /** Debounced item typeahead against GET /masterdata/items?q= */
-export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyDown, placeholder, className, display = 'code' }: Props) {
+export default function ItemAutocomplete({ value, onSelect, onChangeText, onCommit, onKeyDown, placeholder, className, display = 'code' }: Props) {
   const [query, setQuery] = useState(value)
   const [results, setResults] = useState<ItemSuggestion[]>([])
   const [open, setOpen] = useState(false)
@@ -33,6 +35,8 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
   const menuRef = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reqSeq = useRef(0)
+  const pickingRef = useRef(false)
+  const committedRef = useRef(false)
   const { anchorRef, rect } = useAnchoredMenu(open, [results.length])
 
   useEffect(() => { setQuery(value) }, [value])
@@ -79,15 +83,29 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
   }, [])
 
   const handleChange = (val: string) => {
+    committedRef.current = false
     setQuery(val)
     onChangeText?.(val)
     search(val)
   }
 
   const handleSelect = (item: ItemSuggestion) => {
+    pickingRef.current = true
     setQuery(display === 'name' ? (item.name || item.code) : item.code)
     setOpen(false)
     onSelect(item)
+  }
+
+  const handleCommit = () => {
+    if (pickingRef.current) {
+      pickingRef.current = false
+      setOpen(false)
+      return
+    }
+    setOpen(false)
+    if (committedRef.current) return
+    committedRef.current = true
+    onCommit?.(query)
   }
 
   const menu = open && rect ? createPortal(
@@ -143,9 +161,16 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onKeyD
         onChange={e => handleChange(e.target.value)}
         onFocus={() => search(query, true)}
         onClick={() => search(query, true)}
+        onBlur={handleCommit}
         placeholder={placeholder || 'Scan barcode or type...'}
         autoComplete="off"
-        onKeyDown={onKeyDown}
+        onKeyDown={e => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            handleCommit()
+          }
+          onKeyDown?.(e)
+        }}
       />
       {loading && (
         <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style={{ color: 'var(--text-dim)' }}>...</div>

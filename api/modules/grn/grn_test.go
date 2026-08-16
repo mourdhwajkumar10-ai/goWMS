@@ -75,8 +75,8 @@ func TestSessionAcceptsBoxReceive(t *testing.T) {
 		{"draft", true},
 		{"receiving", true},
 		{"box_reconciliation", true},
-		{"item_verification", false},
-		{"exception_pending", false},
+		{"item_verification", true},
+		{"exception_pending", true},
 		{"completed", false},
 		{"closed", false},
 		{"", false},
@@ -145,10 +145,10 @@ func TestRequestDeviceTruncates(t *testing.T) {
 
 func TestClassifyNewBox(t *testing.T) {
 	tests := []struct {
-		hasList bool
+		hasList   bool
 		exp, recv int
-		status string
-		excess bool
+		status    string
+		excess    bool
 	}{
 		{true, 0, 0, "excess", true},
 		{true, 10, 2, "excess", true},

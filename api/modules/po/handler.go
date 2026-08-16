@@ -62,7 +62,14 @@ func createPO(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
+		raw := make([]poCreateItem, 0, len(body.Items))
 		for _, it := range body.Items {
+			raw = append(raw, poCreateItem{
+				ItemCode: it.ItemCode, ItemName: it.ItemName, Qty: it.Qty, Rate: it.Rate,
+				Amount: it.Amount, Warehouse: it.Warehouse, UOM: it.UOM, BatchNo: it.BatchNo,
+			})
+		}
+		for _, it := range mergeDuplicatePOItems(raw) {
 			amount := it.Amount
 			if amount == 0 {
 				amount = it.Qty * it.Rate

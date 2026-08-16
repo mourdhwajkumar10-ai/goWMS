@@ -38,7 +38,14 @@ import Roles from "./pages/Roles";
 import Returns from "./pages/Returns";
 import Backorders from "./pages/Backorders";
 import AuditLogs from "./pages/AuditLogs";
-import { getToken } from "./services/api";
+import { getRole, getToken } from "./services/api";
+import { homePathForRole, isDeskRole } from "./utils/roleAccess";
+
+function RoleHome() {
+  const role = getRole();
+  if (!isDeskRole(role)) return <Navigate to={homePathForRole(role)} replace />;
+  return <Dashboard />;
+}
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
   if (!getToken()) return <Navigate to="/login" replace />;
@@ -57,7 +64,7 @@ export default function App() {
           </RequireAuth>
         }
       >
-        <Route index element={<Dashboard />} />
+        <Route index element={<RoleHome />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="grn" element={<GRN />} />
         <Route path="grn/:id" element={<GRN />} />

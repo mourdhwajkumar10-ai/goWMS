@@ -270,7 +270,7 @@ func otherPOForItem(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode stri
 	err := db.QueryRow(c.Context(), `
 		SELECT po.name FROM purchase_order_items poi
 		JOIN purchase_orders po ON po.id = poi.purchase_order_id
-		WHERE poi.item_code=$1 AND po.name <> $2
+		WHERE UPPER(poi.item_code)=UPPER($1) AND po.name <> $2
 		ORDER BY po.id DESC LIMIT 1`, itemCode, thisPO).Scan(&other)
 	if err != nil || other == "" {
 		return "", false
@@ -284,13 +284,13 @@ func itemOnThisGRNPO(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode str
 		SELECT COUNT(*) FROM purchase_order_items poi
 		JOIN purchase_orders po ON po.id = poi.purchase_order_id
 		JOIN grn_sessions gs ON gs.purchase_receipt_no = po.name
-		WHERE gs.id=$1 AND poi.item_code=$2`, sessionID, itemCode).Scan(&n)
+		WHERE gs.id=$1 AND UPPER(poi.item_code)=UPPER($2)`, sessionID, itemCode).Scan(&n)
 	if n > 0 {
 		return true
 	}
 	_ = db.QueryRow(c.Context(), `
 		SELECT COUNT(*) FROM grn_lines
-		WHERE grn_session_id=$1 AND item_code=$2 AND COALESCE(expected_qty,0) > 0`, sessionID, itemCode).Scan(&n)
+		WHERE grn_session_id=$1 AND UPPER(item_code)=UPPER($2) AND COALESCE(expected_qty,0) > 0`, sessionID, itemCode).Scan(&n)
 	return n > 0
 }
 

@@ -74,6 +74,12 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 				Scan(&body.SupplierName)
 		}
 
+		if body.WarehouseID == 0 {
+			if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
+				body.WarehouseID = wid
+			}
+		}
+
 		mode := strings.ToLower(strings.TrimSpace(body.ReceivingMode))
 		if body.PackingListAvailable != nil {
 			if *body.PackingListAvailable {
@@ -181,6 +187,7 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			"truck_no":               body.TruckNo,
 			"driver_name":            body.DriverName,
 			"driver_phone":           body.DriverPhone,
+			"expected_boxes":         body.ExpectedBoxes,
 			"auto_flags":             arrivalFlags,
 		})
 	}
@@ -828,7 +835,10 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 
 	wid, err := shared.ResolveWarehouseID(c.Context(), db, warehouseID)
 	if err != nil {
-		return shared.Err(c, fiber.StatusBadRequest, "no warehouse configured for GRN")
+		return shared.Err(c, fiber.StatusBadRequest, "no warehouse configured for GRN — add one under Warehouses")
+	}
+	if warehouseID == nil || *warehouseID < 1 {
+		_, _ = db.Exec(c.Context(), `UPDATE grn_sessions SET warehouse_id=$2 WHERE id=$1 AND warehouse_id IS NULL`, sessionID, wid)
 	}
 
 	incomingID, incomingCode, err := shared.EnsureLocation(c.Context(), db, wid, "INCOMING-01", "incoming")
@@ -1124,12 +1134,12 @@ func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "quantity must be > 0")
 		}
 
-		exists, complete, err := shared.ItemMasterComplete(c.Context(), db, body.ItemCode)
+		exists, _, err := shared.ItemMasterComplete(c.Context(), db, body.ItemCode)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		if !exists || !complete {
-			return shared.Err(c, fiber.StatusConflict, "item master incomplete")
+		if !exists {
+			shared.EnsureItemStub(c.Context(), db, body.ItemCode)
 		}
 
 		var targetID, warehouseID int
