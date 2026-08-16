@@ -1943,20 +1943,22 @@ export default function GRN() {
         </div>
       )}
 
-      {/* Page Header */}
       <div className="page-head">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>
-            {isSupervisor ? 'GRN (Inward)' : 'Receive goods'}
+            {session?.session_no || (isSupervisor ? 'Receive' : 'Receive goods')}
           </h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-            {session?.session_no
-              ? session.session_no
-              : isSupervisor ? 'Home › Inward › GRN' : 'Scan the truck, then the boxes'}
-          </p>
+          {session ? (
+            <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
+              {selectedPO ? selectedPO.name : (session.supplier_name || '')}
+              {session.truck_no ? ` · ${session.truck_no}` : ''}
+            </p>
+          ) : (
+            <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>Pick a PO, then scan boxes.</p>
+          )}
         </div>
         <div className="page-actions">
-          {(isSupervisor || !session) && (
+          {!session && isSupervisor && (
             <div className="page-actions-field">
               <label className="erpnext-label">Warehouse</label>
               <select className="erpnext-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
@@ -1966,58 +1968,37 @@ export default function GRN() {
               </select>
             </div>
           )}
-          {session ? (
-            isSupervisor ? (
-              <>
-                <button
-                  onClick={() => { setScanTarget('carton'); setShowScanner(true) }}
-                  className="erpnext-btn-secondary"
-                  aria-label="Scan box"
-                >
-                  Scan box
-                </button>
-                <button
-                  onClick={() => { setScanTarget('verify'); setShowScanner(true) }}
-                  className="erpnext-btn-secondary"
-                  aria-label="Scan item"
-                >
-                  Scan item
-                </button>
-              </>
-            ) : null
-          ) : isSupervisor ? (
-            <>
+          {session && floorPhase === 'boxes' && (
             <button
-              disabled
+              onClick={() => { setScanTarget('carton'); setShowScanner(true) }}
               className="erpnext-btn-secondary"
-              title="Open a GRN session first, then scan boxes or items"
-              aria-label="Scan box or item (open a GRN first)"
             >
-              Scan box / item
+              Scan box
             </button>
-          <button onClick={() => createBlankSession(true)} disabled={loading || !canSaveDraft} className="erpnext-btn-secondary" title={canSaveDraft ? 'Save truck arrival as draft' : 'Enter truck or invoice first'}>
-            Save draft
-          </button>
-          <button onClick={() => createBlankSession(false)} disabled={loading} className="erpnext-btn-secondary">
-            + Blank Session
-          </button>
+          )}
+          {session && floorPhase === 'items' && (
+            <button
+              onClick={() => { setScanTarget('verify'); setShowScanner(true) }}
+              className="erpnext-btn-secondary"
+            >
+              Scan item
+            </button>
+          )}
+          {!session && isSupervisor && (
+            <>
+              <button onClick={() => createBlankSession(true)} disabled={loading || !canSaveDraft} className="erpnext-btn-secondary" title={canSaveDraft ? 'Save truck arrival as draft' : 'Enter truck or invoice first'}>
+                Save draft
+              </button>
+              <button onClick={() => createBlankSession(false)} disabled={loading} className="erpnext-btn-secondary">
+                Blank session
+              </button>
             </>
-          ) : null}
+          )}
         </div>
       </div>
 
       {!session && (
         <div className="erpnext-card grn-start-card p-4 space-y-4">
-          <details className="grn-help">
-            <summary>How receiving works</summary>
-            <div className="grn-help-body">
-              <p>Answer the questions below, then pick a PO. You will only see the next step — problems stay behind “Something’s wrong”.</p>
-            </div>
-          </details>
-          <div className="flex items-baseline justify-between gap-3 flex-wrap">
-            <div className="text-sm font-medium">Step 1 of 7 · Truck & papers</div>
-            <span className="text-xs" style={{ color: 'var(--text-dim)' }}>Next: pick a PO or resume an open GRN</span>
-          </div>
           <div className="grn-gate-grid">
             <div>
               <label className="erpnext-label">Papers with the driver?</label>
@@ -2031,13 +2012,6 @@ export default function GRN() {
                 <option value="invoice_only">Invoice only (no packing list)</option>
                 <option value="docs_to_follow">Documents to follow</option>
               </select>
-              <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
-                {gatePapers === 'packing_list'
-                  ? 'Expected boxes and lines come from the packing list.'
-                  : gatePapers === 'docs_to_follow'
-                    ? 'Receive now. Invoice / packing list can be added later.'
-                    : 'Count boxes, then verify pieces against invoice totals.'}
-              </p>
             </div>
             <div>
               <label className="erpnext-label">Anything wrong with this truck right now?</label>
@@ -2054,25 +2028,7 @@ export default function GRN() {
               </select>
             </div>
           </div>
-          <div className="text-sm font-medium">Arrival details</div>
           <div className="grn-arrival-grid">
-            <div>
-              <label className="erpnext-label" htmlFor="grn-receiving-mode">Receiving mode</label>
-              <input
-                id="grn-receiving-mode"
-                className="erpnext-input"
-                readOnly
-                value={
-                  gatePapers === 'packing_list' ? 'Packing list'
-                    : gatePapers === 'docs_to_follow' ? 'Documents to follow'
-                      : 'Invoice only'
-                }
-                aria-label="Receiving mode"
-              />
-              <p className="text-xs mt-1" style={{ color: 'var(--text-dim)' }}>
-                Set by the papers question above.
-              </p>
-            </div>
             <div>
               <label className="erpnext-label" htmlFor="grn-truck">Truck no</label>
               <TruckAutocomplete
@@ -2089,6 +2045,14 @@ export default function GRN() {
               />
             </div>
             <div>
+              <label className="erpnext-label">Expected boxes</label>
+              <input className="erpnext-input" type="number" min={0} value={expectedBoxes} onChange={e => setExpectedBoxes(e.target.value)} placeholder="0" aria-label="Expected boxes" />
+            </div>
+          </div>
+          <details className="grn-more-fields">
+            <summary>More</summary>
+            <div className="grn-arrival-grid" style={{ marginTop: 12 }}>
+            <div>
               <label className="erpnext-label">Driver</label>
               <input className="erpnext-input" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Driver name" />
             </div>
@@ -2102,10 +2066,6 @@ export default function GRN() {
                 onChange={e => setArrivalAt(e.target.value)}
                 aria-label="Arrival date and time"
               />
-            </div>
-            <div>
-              <label className="erpnext-label">Expected boxes</label>
-              <input className="erpnext-input" type="number" min={0} value={expectedBoxes} onChange={e => setExpectedBoxes(e.target.value)} placeholder="0" aria-label="Expected boxes" />
             </div>
             <div className="grn-full-row">
               <label className="erpnext-label">Invoice numbers</label>
@@ -2129,12 +2089,12 @@ export default function GRN() {
                         const next = invoiceRows.filter((_, i) => i !== idx)
                         setInvoiceRows(next.length ? next : [''])
                         setInvoiceNos(next.map(s => s.trim()).filter(Boolean).join(', '))
-                      }}>✕</button>
+                      }}>Remove</button>
                     )}
                   </div>
                 ))}
                 <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => setInvoiceRows([...invoiceRows, ''])}>
-                  + Add invoice
+                  Add invoice
                 </button>
               </div>
               {isSupervisor && (
@@ -2148,16 +2108,13 @@ export default function GRN() {
                 </label>
                 <label className="flex items-center gap-2 text-sm">
                   <input type="checkbox" checked={documentsToFollow} onChange={e => setDocumentsToFollow(e.target.checked)} />
-                  Documents to follow (driver has no papers)
+                  Documents to follow
                 </label>
               </div>
               )}
             </div>
-          </div>
-          {isSupervisor && (
-          <details className="grn-more-fields">
-            <summary>More receiving details</summary>
-            <div className="grn-secondary-grid">
+            {isSupervisor && (
+            <div className="grn-secondary-grid grn-full-row">
               <div>
                 <label className="erpnext-label">Driver phone</label>
                 <input className="erpnext-input" value={driverPhone} onChange={e => setDriverPhone(e.target.value)} placeholder="Phone" />
@@ -2194,8 +2151,9 @@ export default function GRN() {
                 Unscheduled delivery
               </label>
             </div>
+            )}
+            </div>
           </details>
-          )}
         </div>
       )}
 
@@ -2217,12 +2175,7 @@ export default function GRN() {
           {pos.length > 0 && (
             <div className="erpnext-card">
               <div className="px-6 py-4 border-b" style={{ borderColor: 'var(--border)' }}>
-                <h2 className="text-lg font-semibold">{isSupervisor ? 'Select PO to Receive' : 'Which PO is this truck for?'}</h2>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-                  {isSupervisor
-                    ? 'Choose one PO, or select several for the same truck — each PO gets its own GRN'
-                    : 'Resume an open GRN if this PO is already being received'}
-                </p>
+                <h2 className="text-lg font-semibold">Purchase orders</h2>
                 {isSupervisor && pickedPOIds.length > 0 && (
                   <button
                     className="erpnext-btn-primary text-xs mt-3"
@@ -2414,46 +2367,44 @@ export default function GRN() {
             </div>
           </div>
 
-          {isSupervisor && (
-          <div className="erpnext-card">
-            <div className="px-6 py-4 flex items-center justify-between">
-              <div>
-                <h2 className="text-lg font-semibold">Putaway</h2>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-                  Put-away is a separate downstream process after GRN is completed
-                </p>
-              </div>
-              <Link to="/putaway" className="erpnext-btn-secondary text-sm">Open Putaway →</Link>
-            </div>
-          </div>
-          )}
         </>
       ) : (
         <>
           {/* Active Session Header */}
           <div className="erpnext-card">
-            <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
-              <div>
-                <h2 className="text-lg font-semibold">{session.session_no}</h2>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
-                  {selectedPO ? `Receiving ${selectedPO.name} · ${selectedPO.supplier_name}` : (session.supplier_name || '—')}
-                  {session.truck_no ? ` · Truck ${session.truck_no}` : ''}
-                </p>
+            <div className="px-5 py-3 flex items-center justify-between gap-3 border-b" style={{ borderColor: 'var(--border)' }}>
+              <div className="grn-floor-phases" style={{ borderBottom: 'none', flex: 1 }}>
+                {FLOOR_PHASES.map((st, i) => {
+                  const done = i < floorIdx
+                  const current = i === floorIdx
+                  const locked = i > farthestFloorIdx
+                  return (
+                    <button
+                      key={st.key}
+                      type="button"
+                      className={`grn-floor-phase${current ? ' is-current' : ''}${done ? ' is-done' : ''}`}
+                      disabled={locked}
+                      onClick={() => { if (!locked) setOperatorStepKey(stepForFloorPhase(st.key)) }}
+                    >
+                      <div className="grn-floor-phase-title">{st.title.replace(/^\d+\.\s*/, '')}</div>
+                    </button>
+                  )
+                })}
               </div>
-              <div className="flex gap-3 flex-wrap">
+              <div className="flex gap-2 shrink-0">
                 {isSupervisor && (
                   <button type="button" onClick={() => setShowSupervisorMore(v => !v)} className="erpnext-btn-secondary">
-                    {showSupervisorMore ? 'Hide review' : 'More / Review'}
+                    {showSupervisorMore ? 'Hide' : 'Review'}
                   </button>
                 )}
                 <button onClick={onHeaderBack} className="erpnext-btn-secondary">
-                  {wizardPos.index > 0 ? '← Previous step' : '← Sessions'}
+                  {wizardPos.index > 0 ? 'Back' : 'Sessions'}
                 </button>
               </div>
             </div>
 
-            <details className="px-6 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
-              <summary className="text-sm" style={{ color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 }}>
+            <details className="px-5 py-2 border-b" style={{ borderColor: 'var(--border)' }}>
+              <summary className="text-sm" style={{ color: 'var(--text-dim)', cursor: 'pointer' }}>
                 Switch GRN
               </summary>
               <p className="text-sm mt-2 mb-2" style={{ color: 'var(--text-dim)' }}>Open a different receiving session</p>
@@ -2502,58 +2453,15 @@ export default function GRN() {
               </div>
             </details>
 
-            <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
-              <div>
-                <div className="text-base font-semibold">{FLOOR_PHASES[floorIdx]?.title}</div>
-                <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>{FLOOR_PHASES[floorIdx]?.hint}</p>
-              </div>
-              <div className="grn-floor-phases">
-                {FLOOR_PHASES.map((st, i) => {
-                  const done = i < floorIdx
-                  const current = i === floorIdx
-                  const locked = i > farthestFloorIdx
-                  return (
-                    <button
-                      key={st.key}
-                      type="button"
-                      className={`grn-floor-phase${current ? ' is-current' : ''}${done ? ' is-done' : ''}`}
-                      disabled={locked}
-                      onClick={() => { if (!locked) setOperatorStepKey(stepForFloorPhase(st.key)) }}
-                    >
-                      <div className="grn-floor-phase-title">{st.title}{done ? ' · Edit' : ''}</div>
-                      <div className="grn-floor-phase-hint">{st.hint}</div>
-                    </button>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div className="px-6 py-3 border-b grid grid-cols-2 gap-3 text-sm" style={{ borderColor: 'var(--border)' }} aria-label="Received versus expected">
-              <div>
-                <div style={{ color: 'var(--text-dim)' }}>Boxes</div>
-                <div className="font-medium" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {receivedBoxCount} received{expectedBoxCount ? ` · ${expectedBoxCount} expected` : ''}
-                </div>
-              </div>
-              <div>
-                <div style={{ color: 'var(--text-dim)' }}>Items</div>
-                <div className="font-medium" style={{ fontVariantNumeric: 'tabular-nums' }}>
-                  {receivedItemQty} scanned{expectedItemQty ? ` · ${expectedItemQty} on PO` : ''}
-                </div>
-              </div>
-              {floorPhase === 'finish' && (
-                <>
-                  <div>
-                    <div style={{ color: 'var(--text-dim)' }}>Shortage</div>
-                    <div className="font-medium" style={{ color: shortItemQty > 0 ? 'var(--red)' : undefined }}>{shortItemQty}</div>
-                  </div>
-                  <div>
-                    <div style={{ color: 'var(--text-dim)' }}>Excess</div>
-                    <div className="font-medium">{excessItemQty}</div>
-                  </div>
-                </>
-              )}
-            </div>
+            <p className="px-5 py-2 text-sm border-b" style={{ color: 'var(--text-dim)', borderColor: 'var(--border)' }} aria-label="Received versus expected">
+              {receivedBoxCount} box{receivedBoxCount === 1 ? '' : 'es'}
+              {expectedBoxCount ? ` of ${expectedBoxCount}` : ''}
+              {' · '}
+              {receivedItemQty} item{receivedItemQty === 1 ? '' : 's'}
+              {expectedItemQty ? ` of ${expectedItemQty}` : ''}
+              {floorPhase === 'finish' && shortItemQty > 0 ? ` · short ${shortItemQty}` : ''}
+              {floorPhase === 'finish' && excessItemQty > 0 ? ` · extra ${excessItemQty}` : ''}
+            </p>
             {manualEntryMode && (
               <div className="px-6 py-2 text-sm" role="status" style={{ background: 'var(--panel-2)', borderBottom: '1px solid var(--border)' }}>
                 <div className="font-semibold">Scanner not working — manual entry</div>
@@ -2604,12 +2512,7 @@ export default function GRN() {
             )}
             {floorPhase === 'finish' && shortItemQty > 0 && (
               <div className="px-6 py-2 text-sm" style={{ background: 'var(--yellow-50)', color: 'var(--yellow-700)' }} role="status">
-                Short {shortItemQty} vs PO ({receivedItemQty} scanned of {expectedItemQty}).
-              </div>
-            )}
-            {floorPhase === 'finish' && (itemSummary?.net_offset || (shortItemQty > 0 && excessItemQty > 0)) && (
-              <div className="px-6 py-2 text-sm" style={{ background: 'var(--yellow-50)', color: 'var(--yellow-700)' }} role="status">
-                One part can be short while another is extra. Both are recorded.
+                Short {shortItemQty} vs PO.
               </div>
             )}
 
@@ -2617,11 +2520,8 @@ export default function GRN() {
               <div className="px-6 py-4 space-y-4">
                 {floorPhase === 'boxes' && (
                   <div className="space-y-2">
-                    <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-                      Scan each carton. You can edit expected box count. Packing list is optional.
-                    </p>
                     <div>
-                      <label className="erpnext-label" htmlFor="grn-session-expected-boxes-scan">Expected boxes on this truck</label>
+                      <label className="erpnext-label" htmlFor="grn-session-expected-boxes-scan">Expected boxes</label>
                       <input
                         id="grn-session-expected-boxes-scan"
                         className="erpnext-input"
@@ -2650,29 +2550,19 @@ export default function GRN() {
                 )}
                 {floorPhase === 'items' && (
                   <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-                    {invoiceOnly
-                      ? 'Scan item labels against invoice / PO totals. No need to open a box.'
-                      : 'Open a box, then scan item labels. No packing list? Items are checked against the PO.'}
+                    {invoiceOnly ? 'Scan item labels against the PO.' : 'Open a box, then scan labels.'}
                   </p>
                 )}
                 {floorPhase === 'finish' && (
                   <div className="space-y-2">
-                    <p className="text-sm">
-                      {receivedItemQty} of {expectedItemQty || '—'} PO qty scanned.
-                      {shortItemQty > 0 ? ` Short ${shortItemQty}.` : ''}
-                      {excessItemQty > 0 ? ` Extra ${excessItemQty}.` : ''}
-                      {shortItemQty === 0 && excessItemQty === 0 ? ' Counts match.' : ''}
-                    </p>
                     {(shortItemQty > 0 || (boxSummary?.missing_boxes ?? 0) > 0) && (
-                      <button type="button" className="erpnext-btn-secondary text-xs" onClick={createFollowUp}>Create follow-up GRN</button>
+                      <button type="button" className="erpnext-btn-secondary text-xs" onClick={createFollowUp}>Create follow-up</button>
                     )}
-                    {isSupervisor ? (
-                      <div className="flex gap-2 flex-wrap">
-                        <button type="button" className="erpnext-btn-primary" onClick={() => finalizeSession(false)}>Finalize GRN</button>
-                        <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => finalizeSession(true)}>Force finalize</button>
-                      </div>
-                    ) : (
-                      <p className="text-sm" style={{ color: 'var(--text-dim)' }}>A supervisor posts stock and closes this receipt.</p>
+                    {isSupervisor && (
+                      <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => finalizeSession(true)}>Force finalize</button>
+                    )}
+                    {!isSupervisor && (
+                      <p className="text-sm" style={{ color: 'var(--text-dim)' }}>A supervisor closes this receipt.</p>
                     )}
                   </div>
                 )}
@@ -2717,16 +2607,11 @@ export default function GRN() {
                   <button type="button" className="erpnext-btn-secondary" onClick={() => setShowProblemSheet(v => !v)}>
                     {showProblemSheet ? 'Hide problems' : "Something's wrong"}
                   </button>
-                  {floorIdx > 0 && (
-                    <button type="button" className="erpnext-btn-secondary" onClick={goPrevWizardStep}>
-                      ← Previous
-                    </button>
-                  )}
                   {!(floorPhase === 'finish' && !isSupervisor) && (
                     <button type="button" className="erpnext-btn-primary" onClick={() => void goNextWizardStep()}>
-                      {floorPhase === 'boxes' ? 'Boxes done — scan items'
-                        : floorPhase === 'items' ? 'Items done — review'
-                          : 'Finalize GRN'}
+                      {floorPhase === 'boxes' ? 'Next'
+                        : floorPhase === 'items' ? 'Next'
+                          : 'Finalize'}
                     </button>
                   )}
                 </div>
