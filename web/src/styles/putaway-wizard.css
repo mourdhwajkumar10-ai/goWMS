@@ -1,0 +1,165 @@
+/* Putaway Wizard — component styles */
+
+/* Mode selection cards */
+.pw-mode-card {
+  flex: 1;
+  padding: 24px 16px;
+  border-radius: var(--border-radius-lg);
+  background: var(--panel);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  font-size: 18px;
+}
+.pw-mode-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-base);
+}
+.pw-mode-card:active {
+  transform: translateY(0);
+}
+.pw-mode-card .pw-mode-subtitle {
+  font-size: var(--text-xs);
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+/* Queue preview list */
+.pw-queue-preview {
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--border-radius);
+  margin-bottom: 4px;
+}
+
+/* Zone list items */
+.pw-zone-item {
+  width: 100%;
+  text-align: left;
+  padding: var(--padding-md);
+  border-radius: var(--border-radius);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  margin-bottom: 8px;
+}
+.pw-zone-item:hover {
+  border-color: var(--accent);
+}
+
+/* Tote list section */
+.pw-tote-section {
+  margin-bottom: 16px;
+}
+
+/* Tote item row */
+.pw-tote-item {
+  padding: 8px 12px;
+  background: var(--bg);
+  border-radius: var(--border-radius);
+  margin-bottom: 4px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.pw-tote-item:hover {
+  background: var(--panel-2);
+}
+
+/* Available items list */
+.pw-item-row {
+  padding: 12px;
+  background: var(--bg);
+  border-radius: var(--border-radius);
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.pw-item-row:hover {
+  background: var(--panel-2);
+}
+
+/* Putaway suggestion card */
+.pw-suggestion-card {
+  padding: 16px;
+  background: var(--bg);
+  border-radius: var(--border-radius-md);
+  margin-bottom: 16px;
+  border: 2px solid var(--accent);
+}
+.pw-suggestion-card .pw-location-code {
+  font-size: 20px;
+  font-weight: 600;
+  margin: var(--margin-sm) 0;
+}
+
+/* Scanner modal overlay */
+.pw-scanner-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.9);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pw-scanner-modal {
+  background: var(--fg-color, white);
+  padding: 24px;
+  border-radius: var(--border-radius-lg);
+  width: 90%;
+  max-width: 400px;
+}
+
+/* Fit exception form fields */
+.pw-fit-fields {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Complete screen */
+.pw-complete-card {
+  text-align: center;
+  padding: 32px;
+}
+.pw-complete-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+}
+.pw-complete-count {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 480px) {
+  .pw-mode-card {
+    padding: 16px;
+    font-size: 16px;
+  }
+  .pw-scanner-modal {
+    width: 95%;
+    padding: 16px;
+  }
+}
+
+/* Slide-in animation */
+@keyframes pw-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.pw-animate-in {
+  animation: pw-slide-in 150ms ease;
+}

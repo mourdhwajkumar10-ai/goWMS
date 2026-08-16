@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import '../styles/putaway-wizard.css'
 
 type WizardStep =
   | 'mode_select'
@@ -131,32 +132,30 @@ export default function PutawayWizard() {
         <div className="desk-head">
           <h1>Putaway</h1>
         </div>
-        <div style={{ display: 'flex', gap: 16, marginBottom: 24 }}>
+        <div className="flex gap-4 mb-6">
           <button
-            className="erpnext-btn-primary"
-            style={{ flex: 1, padding: '24px 16px', fontSize: 18 }}
+            className="pw-mode-card erpnext-btn-primary"
             onClick={() => { setMode('zone'); setStep('zone_select') }}
           >
             By Zone
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Batch putaway with tote</div>
+            <div className="pw-mode-subtitle">Batch putaway with tote</div>
           </button>
           <button
-            className="erpnext-btn-primary"
-            style={{ flex: 1, padding: '24px 16px', fontSize: 18 }}
+            className="pw-mode-card erpnext-btn-primary"
             onClick={() => { setMode('item'); setStep('item_pick') }}
           >
             By Item
-            <div style={{ fontSize: 12, opacity: 0.7, marginTop: 4 }}>Single item putaway</div>
+            <div className="pw-mode-subtitle">Single item putaway</div>
           </button>
         </div>
-        <p style={{ color: 'var(--text-dim)', marginBottom: 8 }}>
+        <p className="text-dim mb-3">
           {queue.length} items pending in staging
         </p>
         {queue.length > 0 && (
           <div>
-            <p style={{ fontWeight: 600, marginBottom: 8 }}>Top 5:</p>
+            <p className="font-semibold mb-3">Top 5:</p>
             {queue.slice(0, 5).map(q => (
-              <div key={q.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4 }}>
+              <div key={q.id} className="pw-queue-preview">
                 {q.item_code} — {q.qty} units
               </div>
             ))}
@@ -176,14 +175,13 @@ export default function PutawayWizard() {
         {zones.map(z => (
           <button
             key={z.zone}
-            className="erpnext-btn-secondary"
-            style={{ width: '100%', textAlign: 'left', padding: '16px', marginBottom: 8 }}
+            className="pw-zone-item erpnext-btn-secondary"
             onClick={() => { setSelectedZone(z.zone); setStep('item_pick') }}
           >
             Zone {z.zone} — {z.count} items
           </button>
         ))}
-        {zones.length === 0 && <p style={{ color: 'var(--text-dim)' }}>No items by zone</p>}
+        {zones.length === 0 && <p className="text-dim">No items by zone</p>}
       </div>
     )
   }
@@ -203,14 +201,13 @@ export default function PutawayWizard() {
         </div>
 
         {toteItems.length > 0 && (
-          <div style={{ marginBottom: 16 }}>
-            <p style={{ fontWeight: 600, marginBottom: 8 }}>Tote ({toteItems.length} items)</p>
+          <div className="pw-tote-section">
+            <p className="font-semibold mb-3">Tote ({toteItems.length} items)</p>
             {toteItems.map(item => (
-              <div key={item.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div key={item.id} className="pw-tote-item">
                 <span>{item.item_code} — {item.qty} units</span>
                 <button
-                  className="erpnext-btn-secondary"
-                  style={{ padding: '4px 8px', fontSize: 12 }}
+                  className="erpnext-btn-secondary btn-sm"
                   onClick={() => {
                     void api.del(`/putaway/sessions/${session?.id}/items/${item.id}`)
                     setToteItems(toteItems.filter(i => i.id !== item.id))
@@ -222,8 +219,7 @@ export default function PutawayWizard() {
               </div>
             ))}
             <button
-              className="erpnext-btn-primary"
-              style={{ width: '100%', marginTop: 16 }}
+              className="erpnext-btn-primary w-full mt-4"
               onClick={() => setStep('putaway')}
             >
               Start Putaway →
@@ -232,12 +228,12 @@ export default function PutawayWizard() {
         )}
 
         <div>
-          <p style={{ fontWeight: 600, marginBottom: 8 }}>Available Items:</p>
+          <p className="font-semibold mb-3">Available Items:</p>
           {zoneItems.map(q => (
-            <div key={q.id} style={{ padding: '12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div key={q.id} className="pw-item-row">
               <div>
-                <div style={{ fontWeight: 600 }}>{q.item_code}</div>
-                <div style={{ color: 'var(--text-dim)' }}>{q.qty} units from {q.location_code}</div>
+                <div className="font-semibold">{q.item_code}</div>
+                <div className="text-dim">{q.qty} units from {q.location_code}</div>
               </div>
               <button
                 className="erpnext-btn-secondary"
@@ -276,51 +272,50 @@ export default function PutawayWizard() {
 
         {currentToteItem ? (
           <>
-            <div style={{ marginBottom: 16 }}>
-              <p style={{ fontWeight: 600, fontSize: 18 }}>{currentToteItem.item_code}</p>
-              <p style={{ color: 'var(--text-dim)' }}>
+            <div className="mb-4">
+              <p className="font-semibold text-xl">{currentToteItem.item_code}</p>
+              <p className="text-dim">
                 {currentToteItem.qty} units from {currentToteItem.source}
               </p>
             </div>
 
             {suggestion ? (
-              <div style={{ padding: 16, background: 'var(--bg)', borderRadius: 8, marginBottom: 16 }}>
-                <p style={{ fontWeight: 600 }}>Suggested location:</p>
-                <p style={{ fontSize: 20 }}>{suggestion.location_code}</p>
-                <p style={{ color: 'var(--text-dim)' }}>{suggestion.reason}</p>
-                <p style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+              <div className="pw-suggestion-card">
+                <p className="font-semibold">Suggested location:</p>
+                <p className="pw-location-code">{suggestion.location_code}</p>
+                <p className="text-dim">{suggestion.reason}</p>
+                <p className="text-dim text-xs">
                   Velocity: {suggestion.velocity_tier} | Shelf: {suggestion.shelf_band}
                 </p>
               </div>
             ) : (
-              <p style={{ color: 'var(--text-dim)' }}>Finding location...</p>
+              <p className="text-dim">Finding location...</p>
             )}
 
             <button
-              className="erpnext-btn-primary"
-              style={{ width: '100%', padding: 16, fontSize: 16 }}
+              className="erpnext-btn-primary w-full"
+              style={{ padding: 16, fontSize: 16 }}
               onClick={() => setShowScanner(true)}
             >
               Scan location to confirm
             </button>
 
             <button
-              className="erpnext-btn-secondary"
-              style={{ width: '100%', marginTop: 8 }}
+              className="erpnext-btn-secondary w-full mt-1"
               onClick={() => setStep('fit_exception')}
             >
               Doesn't fit
             </button>
           </>
         ) : (
-          <p style={{ color: 'var(--text-dim)' }}>No items in tote</p>
+          <p className="text-dim">No items in tote</p>
         )}
 
         {/* Barcode Scanner Modal */}
         {showScanner && (
-          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ background: 'white', padding: 24, borderRadius: 12, width: '90%', maxWidth: 400 }}>
-              <h2 style={{ marginBottom: 16 }}>Scan Location Barcode</h2>
+          <div className="pw-scanner-overlay">
+            <div className="pw-scanner-modal">
+              <h2 className="mb-4">Scan Location Barcode</h2>
               <input
                 className="erpnext-input"
                 autoFocus
@@ -352,8 +347,7 @@ export default function PutawayWizard() {
                 }}
               />
               <button
-                className="erpnext-btn-secondary"
-                style={{ marginTop: 12, width: '100%' }}
+                className="erpnext-btn-secondary w-full mt-3"
                 onClick={() => setShowScanner(false)}
               >
                 Cancel
@@ -377,23 +371,21 @@ export default function PutawayWizard() {
 
         {currentToteItem && (
           <>
-            <p style={{ marginBottom: 16 }}>
+            <p className="mb-4">
               {currentToteItem.qty} × {currentToteItem.item_code} into {suggestion?.location_code || 'this bin'}
             </p>
 
-            <div style={{ marginBottom: 16 }}>
+            <div className="mb-4">
               <label className="erpnext-label">What's wrong?</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <div className="pw-fit-fields">
                 <button
-                  className={fitReason === 'too_small' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'}
-                  style={{ flex: 1 }}
+                  className={fitReason === 'too_small' ? 'erpnext-btn-primary flex-1' : 'erpnext-btn-secondary flex-1'}
                   onClick={() => setFitReason('too_small')}
                 >
                   Too small (does not fit)
                 </button>
                 <button
-                  className={fitReason === 'too_large' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'}
-                  style={{ flex: 1 }}
+                  className={fitReason === 'too_large' ? 'erpnext-btn-primary flex-1' : 'erpnext-btn-secondary flex-1'}
                   onClick={() => setFitReason('too_large')}
                 >
                   Too large (wrong size)
@@ -401,7 +393,7 @@ export default function PutawayWizard() {
               </div>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
+            <div className="mb-4">
               <label className="erpnext-label">How many fit?</label>
               <input
                 className="erpnext-input"
@@ -412,12 +404,12 @@ export default function PutawayWizard() {
                 onChange={e => setFitQty(e.target.value)}
                 placeholder="0 = do not use this bin"
               />
-              <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 4 }}>
+              <p className="text-xs text-dim mt-1">
                 Example: suggested {currentToteItem.qty}, only 8 fit → enter 8. Remaining will go to another location.
               </p>
             </div>
 
-            <div style={{ marginBottom: 16 }}>
+            <div className="mb-4">
               <label className="erpnext-label">Override location (optional)</label>
               <input
                 className="erpnext-input"
@@ -427,8 +419,7 @@ export default function PutawayWizard() {
               />
               {suggestion?.candidates && suggestion.candidates.length > 0 && (
                 <select
-                  className="erpnext-input"
-                  style={{ marginTop: 8 }}
+                  className="erpnext-input mt-1"
                   value={fitOverrideId ?? ''}
                   onChange={e => {
                     const id = +e.target.value
@@ -450,8 +441,7 @@ export default function PutawayWizard() {
             </div>
 
             <button
-              className="erpnext-btn-primary"
-              style={{ width: '100%' }}
+              className="erpnext-btn-primary w-full"
               onClick={() => {
                 void (async () => {
                   const fits = +(fitQty || 0)
@@ -489,21 +479,20 @@ export default function PutawayWizard() {
           <h1>Putaway Complete</h1>
         </div>
 
-        <div style={{ textAlign: 'center', padding: 32 }}>
-          <p style={{ fontSize: 48, marginBottom: 16 }}>✓</p>
-          <p style={{ fontSize: 18, fontWeight: 600, marginBottom: 8 }}>
+        <div className="pw-complete-card">
+          <p className="pw-complete-icon">✓</p>
+          <p className="pw-complete-count">
             {placedItems.length} item(s) placed successfully
           </p>
 
           {placedItems.map(item => (
-            <div key={item.id} style={{ padding: '8px 12px', background: 'var(--bg)', borderRadius: 6, marginBottom: 4 }}>
+            <div key={item.id} className="pw-queue-preview">
               {item.item_code} — {item.qty} units
             </div>
           ))}
 
           <button
-            className="erpnext-btn-primary"
-            style={{ marginTop: 24 }}
+            className="erpnext-btn-primary mt-6"
             onClick={() => {
               setSelectedItem(null)
               setSuggestion(null)
