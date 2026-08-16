@@ -19,6 +19,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/rules", listRulesAlias(db))
 	r.Get("/suggest", suggest(db))
 	r.Get("/queue", queue(db))
+	r.Get("/queue/zones", queueZones(db))
 	r.Post("/sessions", createSession(db))
 	r.Get("/sessions/:id", getSession(db))
 	r.Delete("/sessions/:id", cancelSession(db))
@@ -376,16 +377,27 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 
 func queue(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		// Pending = incoming/hold balances not yet moved to storage.
-		rows, err := db.Query(c.Context(), `
+		zoneFilter := strings.TrimSpace(c.Query("zone"))
+
+		query := `
 			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
 			       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type
 			FROM stock_location_balances slb
 			JOIN warehouse_locations wl ON wl.id = slb.location_id
 			JOIN warehouses w ON w.id = slb.warehouse_id
 			LEFT JOIN items i ON i.code = slb.item_code
-			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
-			ORDER BY slb.updated_at ASC`)
+			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
+
+		args := []any{}
+		if zoneFilter != "" {
+			query += ` AND UPPER(COALESCE(i.hsn_no,'')) LIKE $1`
+			args = append(args, zoneFilter+"%")
+		}
+
+		query += ` ORDER BY slb.updated_at ASC`
+
+		// Pending = incoming/hold balances not yet moved to storage.
+		rows, err := db.Query(c.Context(), query, args...)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -411,6 +423,49 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, r)
+		}
+		return shared.OK(c, list)
+	}
+}
+
+func queueZones(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT
+				COALESCE(
+					CASE
+						WHEN UPPER(i.hsn_no) LIKE '87141090' THEN 'A'
+						WHEN UPPER(i.hsn_no) LIKE '391990%' THEN 'B'
+						WHEN UPPER(i.hsn_no) LIKE '87149%' OR UPPER(i.hsn_no) LIKE '87141%' THEN 'C'
+						WHEN UPPER(i.hsn_no) LIKE '7318%' THEN 'D'
+						WHEN UPPER(i.hsn_no) LIKE '40169%' THEN 'E'
+						WHEN UPPER(i.hsn_no) LIKE '854430%' THEN 'F'
+						ELSE 'G'
+					END, 'G'
+				) as zone,
+				COUNT(*) as count
+			FROM stock_location_balances slb
+			JOIN warehouse_locations wl ON wl.id = slb.location_id
+			LEFT JOIN items i ON i.code = slb.item_code
+			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
+			GROUP BY zone
+			ORDER BY zone`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type zoneInfo struct {
+			Zone  string `json:"zone"`
+			Count int    `json:"count"`
+		}
+		list := []zoneInfo{}
+		for rows.Next() {
+			var z zoneInfo
+			if err := rows.Scan(&z.Zone, &z.Count); err != nil {
+				continue
+			}
+			list = append(list, z)
 		}
 		return shared.OK(c, list)
 	}
