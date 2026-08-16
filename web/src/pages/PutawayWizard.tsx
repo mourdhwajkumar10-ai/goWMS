@@ -88,6 +88,26 @@ export default function PutawayWizard() {
     void loadZones()
   }, [loadQueue, loadZones])
 
+  useEffect(() => {
+    if (step === 'putaway' && toteItems.length > 0) {
+      const currentToteItem = toteItems.find(i => i.status === 'picked')
+      if (currentToteItem) {
+        void (async () => {
+          setLoading(true)
+          const r = await api.putawaySuggest(
+            currentToteItem.item_code,
+            currentToteItem.qty,
+            session?.warehouse_id
+          )
+          if (r.ok && r.data) {
+            setSuggestion(r.data)
+          }
+          setLoading(false)
+        })()
+      }
+    }
+  }, [step, toteItems, session])
+
   const loadSession = useCallback(async (sessionId: number) => {
     const r = await api.get<{ session: SessionData; items: ToteItem[] }>(`/putaway/sessions/${sessionId}`)
     if (r.ok && r.data) {
@@ -244,7 +264,106 @@ export default function PutawayWizard() {
     )
   }
 
-  // ... rest of component will be added in subsequent tasks
+  if (step === 'putaway') {
+    const currentToteItem = toteItems.find(i => i.status === 'picked')
+
+    return (
+      <div className="desk-page">
+        <div className="desk-head">
+          <button onClick={() => setStep('item_pick')}>← Back</button>
+          <h1>Putaway</h1>
+        </div>
+
+        {currentToteItem ? (
+          <>
+            <div style={{ marginBottom: 16 }}>
+              <p style={{ fontWeight: 600, fontSize: 18 }}>{currentToteItem.item_code}</p>
+              <p style={{ color: 'var(--text-dim)' }}>
+                {currentToteItem.qty} units from {currentToteItem.source}
+              </p>
+            </div>
+
+            {suggestion ? (
+              <div style={{ padding: 16, background: 'var(--bg)', borderRadius: 8, marginBottom: 16 }}>
+                <p style={{ fontWeight: 600 }}>Suggested location:</p>
+                <p style={{ fontSize: 20 }}>{suggestion.location_code}</p>
+                <p style={{ color: 'var(--text-dim)' }}>{suggestion.reason}</p>
+                <p style={{ color: 'var(--text-dim)', fontSize: 12 }}>
+                  Velocity: {suggestion.velocity_tier} | Shelf: {suggestion.shelf_band}
+                </p>
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-dim)' }}>Finding location...</p>
+            )}
+
+            <button
+              className="erpnext-btn-primary"
+              style={{ width: '100%', padding: 16, fontSize: 16 }}
+              onClick={() => setShowScanner(true)}
+            >
+              Scan location to confirm
+            </button>
+
+            <button
+              className="erpnext-btn-secondary"
+              style={{ width: '100%', marginTop: 8 }}
+              onClick={() => setStep('fit_exception')}
+            >
+              Doesn't fit
+            </button>
+          </>
+        ) : (
+          <p style={{ color: 'var(--text-dim)' }}>No items in tote</p>
+        )}
+
+        {/* Barcode Scanner Modal */}
+        {showScanner && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'white', padding: 24, borderRadius: 12, width: '90%', maxWidth: 400 }}>
+              <h2 style={{ marginBottom: 16 }}>Scan Location Barcode</h2>
+              <input
+                className="erpnext-input"
+                autoFocus
+                placeholder="Type or scan location code..."
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    const code = (e.target as HTMLInputElement).value.trim()
+                    if (code) {
+                      // Validate scanned location matches suggestion
+                      if (suggestion && code === suggestion.location_code) {
+                        void (async () => {
+                          const r = await api.post(`/putaway/sessions/${session?.id}/place/${currentToteItem?.id}`, {
+                            target_location_id: suggestion.location_id
+                          })
+                          if (r.ok) {
+                            setToteItems(toteItems.map(i =>
+                              i.id === currentToteItem?.id ? { ...i, status: 'placed' } : i
+                            ))
+                            notify({ type: 'success', title: 'Placed', message: `${currentToteItem?.item_code} placed at ${code}` })
+                            setShowScanner(false)
+                            setStep('complete')
+                          }
+                        })()
+                      } else {
+                        notify({ type: 'error', title: 'Wrong location', message: `Expected ${suggestion?.location_code}, got ${code}` })
+                      }
+                    }
+                  }
+                }}
+              />
+              <button
+                className="erpnext-btn-secondary"
+                style={{ marginTop: 12, width: '100%' }}
+                onClick={() => setShowScanner(false)}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="desk-page">
