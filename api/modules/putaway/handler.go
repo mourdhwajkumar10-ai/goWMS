@@ -187,7 +187,7 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				        AND UPPER(o.item_code) <> UPPER($2)
 				    )
 				  )`
-		fits := ` AND (cap.item_bin_cap IS NULL OR cap.item_bin_cap - COALESCE(oh.on_hand,0) >= $1)`
+		fits := ` AND (COALESCE(cap.item_bin_cap, 50) - COALESCE(oh.on_hand,0) >= $1)`
 		zoneSQL := func(zone string) string {
 			if zone == "pick_face" {
 				return ` AND (
@@ -219,10 +219,15 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 					&s.Aisle, &s.Bay, &s.Level, &s.LocationType) != nil {
 					continue
 				}
-				if cap != nil {
-					free := *cap - s.OnHandQty
-					s.FreeCapacity = &free
-				}
+			if cap != nil {
+				free := *cap - s.OnHandQty
+				s.FreeCapacity = &free
+			} else {
+				// Apply default capacity when none configured
+				defCap := 50.0
+				free := defCap - s.OnHandQty
+				s.FreeCapacity = &free
+			}
 				s.Zone = zone
 				s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
 				s.Reason = reason
@@ -382,6 +387,7 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		query := `
 			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
 			       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
+			       slb.suggested_location_id, wl2.code,
 			       COALESCE(
 			           CASE
 			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
@@ -397,6 +403,7 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 			JOIN warehouse_locations wl ON wl.id = slb.location_id
 			JOIN warehouses w ON w.id = slb.warehouse_id
 			LEFT JOIN items i ON i.code = slb.item_code
+			LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
 			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
 
 		args := []any{}
@@ -426,23 +433,26 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type row struct {
-			ID            int     `json:"id"`
-			ItemCode      string  `json:"item_code"`
-			ItemName      *string `json:"item_name"`
-			WarehouseID   int     `json:"warehouse_id"`
-			WarehouseCode string  `json:"warehouse_code"`
-			LocationID    int     `json:"location_id"`
-			LocationCode  string  `json:"location_code"`
-			BatchNo       string  `json:"batch_no"`
-			Qty           float64 `json:"qty"`
-			LocationType  string  `json:"location_type"`
-			Zone          string  `json:"zone"`
+			ID                   int      `json:"id"`
+			ItemCode             string   `json:"item_code"`
+			ItemName             *string  `json:"item_name"`
+			WarehouseID          int      `json:"warehouse_id"`
+			WarehouseCode        string   `json:"warehouse_code"`
+			LocationID           int      `json:"location_id"`
+			LocationCode         string   `json:"location_code"`
+			BatchNo              string   `json:"batch_no"`
+			Qty                  float64  `json:"qty"`
+			LocationType         string   `json:"location_type"`
+			Zone                 string   `json:"zone"`
+			SuggestedLocationID  *int     `json:"suggested_location_id"`
+			SuggestedLocationCode *string `json:"suggested_location_code"`
 		}
 		list := []row{}
 		for rows.Next() {
 			var r row
 			if err := rows.Scan(&r.ID, &r.ItemCode, &r.ItemName, &r.WarehouseID, &r.WarehouseCode,
-				&r.LocationID, &r.LocationCode, &r.BatchNo, &r.Qty, &r.LocationType, &r.Zone); err != nil {
+				&r.LocationID, &r.LocationCode, &r.BatchNo, &r.Qty, &r.LocationType,
+				&r.SuggestedLocationID, &r.SuggestedLocationCode, &r.Zone); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, r)
