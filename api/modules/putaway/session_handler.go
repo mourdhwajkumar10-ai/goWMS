@@ -405,13 +405,13 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		// Partial placement — reduce qty, keep as 'picked' for next split
 		_, err = db.Exec(c.Context(),
 			`UPDATE putaway_session_items
-			 SET qty=$1, updated_at=now()
+			 SET qty=$1
 			 WHERE id=$2 AND session_id=$3 AND status='picked'`, remaining, itemID, sessionID)
 	} else {
 		// Full placement — mark as placed
 		_, err = db.Exec(c.Context(),
 			`UPDATE putaway_session_items
-			 SET target_location_id=$1, status='placed', qty=$4, updated_at=now()
+			 SET target_location_id=$1, status='placed', qty=$4
 			 WHERE id=$2 AND session_id=$3 AND status='picked'`, body.TargetLocationID, itemID, sessionID, qty)
 	}
 	if err != nil {
