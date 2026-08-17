@@ -63,20 +63,29 @@ export default function ScannerInput({
   }, [suggestions, query])
 
   const handleFileChange = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    async (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0]
       if (!file) return
-      const reader = new FileReader()
-      reader.onload = () => {
-        // For simplicity, just pass the filename as a placeholder
-        // In a real app, you'd decode the QR code from the image
-        const value = file.name.replace(/\.[^.]+$/, '')
-        onScan(value)
-        navigator.vibrate?.(10)
-      }
-      reader.readAsDataURL(file)
-      // Reset so same file can be selected again
       e.target.value = ''
+
+      const BD = (window as any).BarcodeDetector
+      if (BD) {
+        try {
+          const bitmap = await createImageBitmap(file)
+          const detector = new BD({ formats: ['qr_code', 'code_128', 'ean_13', 'ean_8', 'upc_a', 'code_39', 'itf', 'data_matrix', 'codabar'] })
+          const results = await detector.detect(bitmap)
+          if (results.length > 0) {
+            onScan(results[0].rawValue)
+            navigator.vibrate?.(10)
+            return
+          }
+        } catch {
+          // fall through to filename fallback
+        }
+      }
+
+      onScan(file.name.replace(/\.[^.]+$/, ''))
+      navigator.vibrate?.(10)
     },
     [onScan],
   )

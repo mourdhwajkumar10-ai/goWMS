@@ -1764,6 +1764,19 @@ th.text-right, td.text-right,
   padding: 4px 0;
 }
 
+/* ScannerInput component */
+.scanner-trigger {
+  flex-shrink: 0;
+}
+
+.scanner-field {
+  min-width: 0;
+}
+
+.scanner-suggestions {
+  border-radius: var(--border-radius-lg);
+}
+
 @media (max-width: 640px) {
   .putaway-split {
     grid-template-columns: 1fr;
