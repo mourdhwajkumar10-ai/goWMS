@@ -79,6 +79,11 @@ export default function ReceivingWizard() {
   const [transporter, setTransporter] = useState("");
   const [defaultRoute, setDefaultRoute] = useState("INCOMING-01");
 
+  // Driver autocomplete
+  const [driverSuggestions, setDriverSuggestions] = useState<any[]>([]);
+  const [showDriverDropdown, setShowDriverDropdown] = useState(false);
+  const driverDropdownRef = useRef<HTMLDivElement>(null);
+
   // Session
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [sessionNo, setSessionNo] = useState("");
@@ -118,6 +123,33 @@ export default function ReceivingWizard() {
   const triggerVibrate = (pattern: number | number[] = 200) => {
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(pattern);
   };
+
+  // Fetch driver history on mount and debounce on typing
+  useEffect(() => {
+    api.receivingDrivers(driverName || undefined).then((r) => {
+      if (r.ok) setDriverSuggestions(r.data || []);
+    });
+  }, []); // load on mount
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      api.receivingDrivers(driverName || undefined).then((r) => {
+        if (r.ok) setDriverSuggestions(r.data || []);
+      });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [driverName]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (driverDropdownRef.current && !driverDropdownRef.current.contains(e.target as Node)) {
+        setShowDriverDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
 
   useEffect(() => {
     if (step === "scan" && scanInputRef.current) scanInputRef.current.focus();
@@ -303,9 +335,40 @@ export default function ReceivingWizard() {
             </div>
 
             <div className="rec-container form-grid">
-              <div className="form-field">
+              <div className="form-field" style={{ position: "relative" }} ref={driverDropdownRef}>
                 <label>Driver Name</label>
-                <input className="form-input" placeholder="Ramesh Kumar" value={driverName} onChange={(e) => setDriverName(e.target.value)} />
+                <input
+                  className="form-input"
+                  placeholder="Ramesh Kumar"
+                  value={driverName}
+                  onChange={(e) => { setDriverName(e.target.value); setShowDriverDropdown(true); }}
+                  onFocus={() => setShowDriverDropdown(true)}
+                  autoComplete="off"
+                />
+                {showDriverDropdown && driverSuggestions.length > 0 && (
+                  <div className="rec-driver-dropdown">
+                    {driverSuggestions.slice(0, 8).map((d, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        className="rec-driver-option"
+                        onClick={() => {
+                          setDriverName(d.name || "");
+                          setDriverPhone(d.phone || "");
+                          setTransporter(d.transporter || "");
+                          setShowDriverDropdown(false);
+                        }}
+                      >
+                        <span className="rec-driver-name">{d.name}</span>
+                        <span className="rec-driver-meta">
+                          {d.phone && <span>{d.phone}</span>}
+                          {d.transporter && <span>· {d.transporter}</span>}
+                          {d.last_used && <span>· {d.last_used}</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="form-field">
                 <label>Driver Phone</label>

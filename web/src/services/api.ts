@@ -24,6 +24,7 @@ interface ApiResponse<T> {
   data: T;
   ok: boolean;
   error?: string;
+  errorType?: string;
   total?: number;
 }
 
@@ -47,7 +48,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     const errText = typeof payload.error === 'string' && payload.error.trim()
       ? payload.error
       : (typeof payload.message === 'string' && payload.message.trim() ? payload.message : `Request failed (${res.status})`)
-    return { ok: false, data: payload.data, error: errText }
+    return { ok: false, data: payload.data, error: errText, errorType: (payload as any).error_type }
   }
   return { ok: true, data: payload.data, total: (payload as { total?: number }).total };
 }
@@ -440,6 +441,38 @@ export const api = {
 
   // Reports
   reportsSummary: () => get<any>("/reports/summary"),
+
+  // Receiving Wizard
+  receivingImport: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, defaultRoute?: string, grnSessionId?: number) => {
+    const fd = new FormData()
+    fd.append("file", file)
+    if (driverName) fd.append("driver_name", driverName)
+    if (driverPhone) fd.append("driver_phone", driverPhone)
+    if (transporter) fd.append("transporter", transporter)
+    if (defaultRoute) fd.append("default_route", defaultRoute)
+    if (grnSessionId) fd.append("grn_session_id", String(grnSessionId))
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    if (typeof navigator !== "undefined" && navigator.userAgent) {
+      headers["X-Device"] = navigator.userAgent.slice(0, 100)
+    }
+    const res = await fetch(`${BASE}/receiving/import`, { method: "POST", headers, body: fd })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok || payload.ok === false) {
+      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` }
+    }
+    return { ok: true as const, data: payload.data }
+  },
+  receivingInvoices: (sessionId: number) => get<any[]>(`/receiving/invoices?session_id=${sessionId}`),
+  receivingDNs: (sessionId: number, invoiceNo?: string) => get<any[]>(`/receiving/delivery-notes?session_id=${sessionId}${invoiceNo ? `&invoice_no=${encodeURIComponent(invoiceNo)}` : ""}`),
+  receivingBoxes: (sessionId: number, deliveryNo?: string) => get<any>(`/receiving/boxes?session_id=${sessionId}${deliveryNo ? `&delivery_no=${encodeURIComponent(deliveryNo)}` : ""}`),
+  receivingScanBox: (data: { session_id: number; box_number: string; auto_complete_single: boolean; default_route?: string }) => post<any>("/receiving/scan-box", data),
+  receivingScanItem: (data: { session_id: number; box_number: string; qr_raw: string; qty_override?: number }) => post<any>("/receiving/scan-item", data),
+  receivingCompleteBox: (data: { session_id: number; box_number: string; default_route?: string }) => post<any>("/receiving/complete-box", data),
+  receivingRouteException: (data: { session_id: number; routes: { grn_line_id: number; location: string }[] }) => post<any>("/receiving/route-exception", data),
+  receivingStats: (sessionId: number) => get<any>(`/receiving/stats?session_id=${sessionId}`),
+  receivingDrivers: (q?: string) => get<any[]>(`/receiving/drivers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
 };
 
 export default api;
