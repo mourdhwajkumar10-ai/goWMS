@@ -356,6 +356,13 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		}
 	}
 
+	// Warehouse rule capacity warning (non-blocking)
+	var warehouseWarning string
+	rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
+	if rule != nil && rule.StockCapacity > 0 && rule.CurrentQty+qty > rule.StockCapacity+1e-9 {
+		warehouseWarning = fmt.Sprintf("Warehouse cap %.0f exceeded (current %.0f + placing %.0f)", rule.StockCapacity, rule.CurrentQty, qty)
+	}
+
 	// Decrement source location
 	_, _ = db.Exec(c.Context(), `
 		UPDATE stock_location_balances
@@ -443,6 +450,6 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 	_, _ = db.Exec(c.Context(),
 		`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
 
-	return shared.OK(c, fiber.Map{"status": "placed", "item_code": itemCode, "quantity": qty, "remaining": remaining, "source_location_id": sourceLocationID, "target_location_id": body.TargetLocationID})
+	return shared.OK(c, fiber.Map{"status": "placed", "item_code": itemCode, "quantity": qty, "remaining": remaining, "source_location_id": sourceLocationID, "target_location_id": body.TargetLocationID, "warning": warehouseWarning})
 	}
 }

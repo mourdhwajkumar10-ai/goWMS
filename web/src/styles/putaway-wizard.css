@@ -1,12 +1,15 @@
-/* Putaway Wizard — Minimal/Modern Design System
+/* Putaway Wizard — Responsive Design System
+   Breakpoints: sm 480, md 768, lg 1024, xl 1280
    Tokens: 8px grid, 12px radius, accent blue #2563eb */
 
 /* ─── Design Tokens ─── */
 :root {
   --pw-accent: #2563eb;
   --pw-accent-hover: #1d4ed8;
+  --pw-accent-light: #dbeafe;
   --pw-bg: #ffffff;
   --pw-bg-2: #f9fafb;
+  --pw-bg-3: #f3f4f6;
   --pw-border: #e5e7eb;
   --pw-border-hover: #d1d5db;
   --pw-text: #111827;
@@ -14,6 +17,8 @@
   --pw-radius: 12px;
   --pw-radius-sm: 8px;
   --pw-radius-xs: 6px;
+  --pw-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --pw-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
   --pw-zone-a: #2563eb;
   --pw-zone-b: #059669;
   --pw-zone-c: #7c3aed;
@@ -26,7 +31,7 @@
 /* ─── Mode Grid ─── */
 .pw-mode-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -65,11 +70,10 @@
 }
 .pw-mode-card:hover {
   border-color: var(--pw-accent);
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+  box-shadow: var(--pw-shadow-md);
 }
 .pw-mode-card:active {
-  transform: scale(0.96);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transform: scale(0.98);
 }
 .pw-mode-icon {
   font-size: 24px;
@@ -83,6 +87,13 @@
 .pw-mode-label {
   font-size: 16px;
   font-weight: 600;
+}
+@media (max-width: 480px) {
+  .pw-mode-card {
+    padding: 20px 16px;
+    font-size: 15px;
+    min-height: 100px;
+  }
 }
 
 /* ─── Queue Summary Banner ─── */
@@ -105,6 +116,14 @@
 .pw-queue-label {
   font-size: 13px;
   color: var(--pw-text-dim);
+}
+@media (max-width: 480px) {
+  .pw-queue-banner {
+    padding: 10px 12px;
+  }
+  .pw-queue-count {
+    font-size: 24px;
+  }
 }
 
 /* ─── Queue Item Cards ─── */
@@ -183,7 +202,6 @@
   font-size: 13px;
   flex-shrink: 0;
 }
-/* Zone-specific colors */
 .pw-zone-letter[data-zone="A"] { background: var(--pw-zone-a); }
 .pw-zone-letter[data-zone="B"] { background: var(--pw-zone-b); }
 .pw-zone-letter[data-zone="C"] { background: var(--pw-zone-c); }
@@ -205,6 +223,11 @@
 .pw-zone-arrow {
   color: var(--pw-text-dim);
   font-size: 16px;
+}
+@media (max-width: 480px) {
+  .pw-zone-card {
+    padding: 12px 16px;
+  }
 }
 
 /* ─── Tote Section ─── */
@@ -237,6 +260,11 @@
   border-radius: 12px;
   min-width: 24px;
   text-align: center;
+}
+@media (max-width: 480px) {
+  .pw-tote-section {
+    padding: 12px;
+  }
 }
 
 /* ─── Tote Items ─── */
@@ -354,7 +382,15 @@
   transition: transform 120ms ease-out;
 }
 .pw-scan-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
+}
+@media (max-width: 480px) {
+  .pw-scan-section {
+    padding: 12px;
+  }
+  .pw-scan-field {
+    font-size: 14px;
+  }
 }
 
 /* ─── Suggestions Dropdown ─── */
@@ -527,6 +563,14 @@
   font-weight: 600;
   font-size: 14px;
 }
+@media (max-width: 480px) {
+  .pw-current-item-card {
+    padding: 16px;
+  }
+  .pw-current-item-code {
+    font-size: 18px;
+  }
+}
 
 /* ─── Suggestion Card ─── */
 .pw-suggestion-card {
@@ -570,6 +614,14 @@
 .pw-suggestion-tag strong {
   color: var(--pw-text);
 }
+@media (max-width: 480px) {
+  .pw-suggestion-card {
+    padding: 16px;
+  }
+  .pw-location-code {
+    font-size: 22px;
+  }
+}
 
 /* ─── Loading Card ─── */
 .pw-loading-card {
@@ -607,7 +659,7 @@
   transition: transform 120ms ease-out;
 }
 .pw-start-putaway-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 
 /* ─── Scanner Modal ─── */
@@ -627,6 +679,12 @@
   width: 90%;
   max-width: 400px;
   animation: pw-slide-in 150ms ease;
+}
+@media (max-width: 480px) {
+  .pw-scanner-modal {
+    width: 95%;
+    padding: 16px;
+  }
 }
 
 /* ─── Fit Exception ─── */
@@ -784,7 +842,7 @@
 
 /* ─── Skeletons ─── */
 .pw-skeleton {
-  background: linear-gradient(90deg, var(--pw-bg-secondary, #f3f4f6) 25%, var(--pw-border, #e5e7eb) 50%, var(--pw-bg-secondary, #f3f4f6) 75%);
+  background: linear-gradient(90deg, var(--pw-bg-3, #f3f4f6) 25%, var(--pw-border, #e5e7eb) 50%, var(--pw-bg-3, #f3f4f6) 75%);
   background-size: 200% 100%;
   animation: pw-shimmer 1.5s ease-in-out infinite;
   border-radius: 6px;
@@ -861,7 +919,7 @@
   transition: transform 120ms ease-out;
 }
 .pw-exception-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.98);
 }
 .pw-exception-danger {
   border-color: var(--red, #dc2626) !important;
@@ -913,49 +971,11 @@
   color: #166534 !important;
 }
 
-/* ─── Responsive ─── */
-@media (max-width: 480px) {
-  .pw-mode-card {
-    padding: 20px 16px;
-    font-size: 15px;
-  }
-  .pw-scanner-modal {
-    width: 95%;
-    padding: 16px;
-  }
-  .pw-scan-field {
-    font-size: 14px;
-  }
-  .pw-location-code {
-    font-size: 22px;
-  }
-  .pw-current-item-code {
-    font-size: 18px;
-  }
-  .pw-queue-banner {
-    padding: 10px 12px;
-  }
-  .pw-queue-count {
-    font-size: 24px;
-  }
-}
-@media (max-width: 768px) {
-  .pw-mode-card {
-    min-height: 100px;
-  }
-  .pw-zone-card {
-    padding: 12px 16px;
-  }
-  .pw-tote-section {
-    padding: 12px;
-  }
-  .pw-scan-section {
-    padding: 12px;
-  }
-  .pw-current-item-card {
-    padding: 16px;
-  }
-  .pw-suggestion-card {
-    padding: 16px;
-  }
+/* ─── Qty Override ─── */
+.pw-qty-override {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius-sm);
+  border: 1px solid var(--pw-border);
 }
