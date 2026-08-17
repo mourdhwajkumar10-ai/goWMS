@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "gen:icons": "node scripts/gen-icons.mjs"
+    "gen:icons": "node scripts/gen-icons.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@zxing/library": "^0.21.3",
@@ -17,12 +19,16 @@
     "react-router-dom": "6.30.4"
   },
   "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.2",
     "@types/react": "18.3.31",
     "@types/react-dom": "18.3.7",
     "@vitejs/plugin-react": "4.7.0",
+    "jsdom": "^30.0.1",
     "sharp": "^0.35.3",
     "typescript": "5.6.3",
     "vite": "5.4.21",
-    "vite-plugin-pwa": "0.19.8"
+    "vite-plugin-pwa": "0.19.8",
+    "vitest": "^4.1.10"
   }
 }
