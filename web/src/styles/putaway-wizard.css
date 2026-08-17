@@ -868,6 +868,51 @@
   color: var(--red, #dc2626) !important;
 }
 
+/* ─── Split Indicator ─── */
+.pw-split-indicator {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: #fff7ed;
+  border: 1px solid #fb923c;
+  border-radius: 8px;
+}
+.pw-split-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 700;
+  color: #c2410c;
+  margin-bottom: 4px;
+}
+.pw-split-detail {
+  display: block;
+  font-size: 12px;
+  color: #9a3412;
+}
+
+/* ─── Override Button ─── */
+.pw-exception-override {
+  border-color: #7c3aed !important;
+  color: #7c3aed !important;
+  background: #f5f3ff !important;
+}
+.pw-exception-override:hover {
+  background: #ede9fe !important;
+}
+
+/* ─── Cancel Button ─── */
+.pw-cancel-btn {
+  font-size: 12px !important;
+  padding: 6px 12px !important;
+  color: var(--red, #dc2626) !important;
+  border-color: var(--red, #dc2626) !important;
+}
+
+/* ─── Last Picked Tag ─── */
+.pw-last-picked {
+  background: #f0fdf4 !important;
+  color: #166534 !important;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 480px) {
   .pw-mode-card {

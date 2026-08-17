@@ -20,6 +20,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
       { to: "/follow-up", label: "Follow-Up Receipts", icon: "↻" },
       { to: "/grn-audit", label: "Random Audit", icon: "✚" },
       { to: "/putaway", label: "Putaway", icon: "⇨" },
+      { to: "/putaway/logs", label: "Putaway Logs", icon: "☰" },
     ],
   },
   {

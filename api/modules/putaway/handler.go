@@ -296,10 +296,12 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			LocationType string   `json:"location_type"`
 			SameBay      bool     `json:"same_bay"`
 			Zone         string   `json:"zone"`
-			MaxFitQty       float64 `json:"max_fit_qty"`
-			RequiresSplit   bool    `json:"requires_split"`
-			ProximityScore  int     `json:"proximity_score"`
-		}
+		MaxFitQty       float64 `json:"max_fit_qty"`
+		RequiresSplit   bool    `json:"requires_split"`
+		ProximityScore  int     `json:"proximity_score"`
+		LastPickedBy    string  `json:"last_picked_by"`
+		LastPickedAt    string  `json:"last_picked_at"`
+	}
 
 		joins := `
 				LEFT JOIN LATERAL (
@@ -356,8 +358,8 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			for rows.Next() {
 				var s cand
 				var cap *float64
-				if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &cap, &s.OnHandQty,
-					&s.Aisle, &s.Bay, &s.Level, &s.LocationType) != nil {
+			if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &cap, &s.OnHandQty,
+				&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt) != nil {
 					continue
 				}
 			if cap != nil {
@@ -386,8 +388,10 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		selectSQL := `
 				SELECT wl.id, wl.code, wl.warehouse_id, cap.item_bin_cap, COALESCE(oh.on_hand,0),
 				       COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,''),
-				       COALESCE(wl.location_type,'storage')
+				       COALESCE(wl.location_type,'storage'),
+				       COALESCE(u.username,''), COALESCE(wl.last_picked_at::text,'')
 				FROM warehouse_locations wl` + joins + `
+				LEFT JOIN users u ON u.id = wl.last_picked_by_user_id` + `
 				WHERE COALESCE(wl.disabled,false)=false` + mixedOK
 
 		skipShelfFilter := false
@@ -520,6 +524,8 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			"max_fit_qty":    best.MaxFitQty,
 			"requires_split": best.RequiresSplit,
 			"remaining_after_fit": requestedQty - best.MaxFitQty,
+			"last_picked_by": best.LastPickedBy,
+			"last_picked_at": best.LastPickedAt,
 		}
 		if homeID != nil {
 			out["home_location_id"] = *homeID

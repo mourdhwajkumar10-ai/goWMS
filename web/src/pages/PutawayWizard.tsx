@@ -69,6 +69,12 @@ interface Suggestion {
   candidates: any[]
   velocity_tier: string
   shelf_band: string
+  max_fit_qty?: number
+  requires_split?: boolean
+  remaining_after_fit?: number
+  requested_qty?: number
+  preferred_aisle?: string
+  preferred_bay?: string
 }
 
 interface ToteItem {
@@ -130,6 +136,7 @@ export default function PutawayWizard() {
   const [putawayError, setPutawayError] = useState<{ type: string; message: string; data?: any } | null>(null)
   const [locationScanInput, setLocationScanInput] = useState('')
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
+  const [usedLocationIds, setUsedLocationIds] = useState<number[]>([])
 
   const haptic = useHaptic()
 
@@ -139,6 +146,21 @@ export default function PutawayWizard() {
     setTransitionDir(dir)
     setStep(next)
   }, [])
+
+  const handleCancelSession = useCallback(async () => {
+    if (!session) return
+    const r = await api.del(`/putaway/sessions/${session.id}`)
+    if (r.ok) {
+      notify({ type: 'info', title: 'Session cancelled', message: 'Session items preserved for resume' })
+      setSession(null)
+      setToteItems([])
+      setUsedLocationIds([])
+      setSuggestion(null)
+      navigate('mode_select', 'backward')
+    } else {
+      notify({ type: 'error', title: 'Cancel failed', message: r.error || 'Could not cancel session' })
+    }
+  }, [session, navigate])
 
   const loadQueue = useCallback(async () => {
     const r = await api.putawayQueue()
@@ -164,7 +186,8 @@ export default function PutawayWizard() {
           const r = await api.putawaySuggest(
             currentToteItem.item_code,
             currentToteItem.qty,
-            session?.warehouse_id
+            session?.warehouse_id,
+            usedLocationIds.length > 0 ? { excludeLocationIds: usedLocationIds } : undefined
           )
           if (r.ok && r.data) {
             setSuggestion(r.data)
@@ -175,7 +198,7 @@ export default function PutawayWizard() {
         })()
       }
     }
-  }, [step, toteItems, session])
+  }, [step, toteItems, session, usedLocationIds])
 
   const loadSession = useCallback(async (sessionId: number) => {
     const r = await api.get<{ session: SessionData; items: ToteItem[] }>(`/putaway/sessions/${sessionId}`)
@@ -289,11 +312,28 @@ export default function PutawayWizard() {
       const r = await api.post(`/putaway/sessions/${session?.id}/place/${item.id}`, body)
       if (r.ok) {
         haptic(30)
-        setToteItems(toteItems.map(i => i.id === item.id ? { ...i, status: 'placed' } : i))
-        notify({ type: 'success', title: 'Placed', message: `${item.item_code} × ${item.qty} placed at ${code}` })
+        const newUsedIds = [...usedLocationIds, targetId]
+        setUsedLocationIds(newUsedIds)
+        const resp = r.data as any
+        const remaining = resp?.remaining ?? 0
+        setToteItems(toteItems.map(i => i.id === item.id ? { ...i, status: remaining > 0 ? 'picked' : 'placed', qty: remaining > 0 ? remaining : i.qty } : i))
+        notify({ type: 'success', title: 'Placed', message: `${item.item_code} × ${placeQty || item.qty} placed at ${code}${remaining > 0 ? ` · ${remaining} remaining` : ''}` })
         setLocationScanInput('')
         setPutawayError(null)
-        if (toteItems.filter(i => i.status === 'picked').length <= 1) navigate('complete', 'forward')
+        if (remaining > 0) {
+          // Auto-advance: suggest next bin excluding already-used locations
+          setLoading(true)
+          const sr = await api.putawaySuggest(item.item_code, item.qty, session?.warehouse_id, {
+            excludeLocationIds: newUsedIds
+          })
+          if (sr.ok && sr.data) {
+            setSuggestion(sr.data)
+            notify({ type: 'info', title: 'Next bin suggested', message: `Remaining ${remaining} → ${sr.data.location_code}` })
+          }
+          setLoading(false)
+        } else if (toteItems.filter(i => i.status === 'picked').length <= 1) {
+          navigate('complete', 'forward')
+        }
       } else {
         const errType = r.errorType || (r.data as any)?.error_type || 'unknown'
         setPutawayError({ type: errType, message: r.error || 'Could not place item', data: r.data as any })
@@ -593,6 +633,11 @@ export default function PutawayWizard() {
         <div className="desk-head">
           <ButtonPress onClick={() => navigate('item_pick', 'backward')}>← Back</ButtonPress>
           <h1>Putaway</h1>
+          {session && (
+            <ButtonPress className="erpnext-btn-secondary pw-cancel-btn" onClick={handleCancelSession}>
+              ✕ Cancel
+            </ButtonPress>
+          )}
         </div>
 
         <div className="pw-putaway-progress">
@@ -645,7 +690,18 @@ export default function PutawayWizard() {
                   {suggestion.free_capacity != null && (
                     <span className="pw-suggestion-tag"><strong>Free:</strong> {suggestion.free_capacity} pcs</span>
                   )}
+                  {(suggestion as any).last_picked_by && (
+                    <span className="pw-suggestion-tag pw-last-picked">👤 Last picked by {(suggestion as any).last_picked_by}</span>
+                  )}
                 </div>
+                {suggestion.max_fit_qty != null && suggestion.max_fit_qty < (cti?.qty || 0) && (
+                  <div className="pw-split-indicator">
+                    <span className="pw-split-badge">⚠ Split required</span>
+                    <span className="pw-split-detail">
+                      Bin fits <strong>{suggestion.max_fit_qty}</strong> of {cti?.qty} · {suggestion.remaining_after_fit ?? (cti?.qty ?? 0) - suggestion.max_fit_qty} will need another bin
+                    </span>
+                  </div>
+                )}
               </div>
             ) : (
               <p className="text-dim">No location suggestion available</p>
@@ -675,10 +731,11 @@ export default function PutawayWizard() {
                     <>
                       <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => {
                         setPutawayError(null)
-                        notify({ type: 'info', title: 'Finding next location', message: 'System will suggest another bin' })
                         setLoading(true)
                         void (async () => {
-                          const r = await api.putawaySuggest(cti?.item_code || '', cti?.qty || 0, session?.warehouse_id)
+                          const r = await api.putawaySuggest(cti?.item_code || '', cti?.qty || 0, session?.warehouse_id, {
+                            excludeLocationIds: [...usedLocationIds, suggestion?.location_id].filter(Boolean) as number[]
+                          })
                           if (r.ok && r.data) setSuggestion(r.data)
                           setLoading(false)
                         })()
@@ -691,6 +748,27 @@ export default function PutawayWizard() {
                         navigate('fit_exception', 'forward')
                       }}>
                         ⇩ Split quantity
+                      </ButtonPress>
+                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-override" onClick={() => {
+                        void (async () => {
+                          const targetId = suggestion?.location_id
+                          if (!targetId) return
+                          const r = await api.post(`/putaway/sessions/${session?.id}/place/${cti?.id}`, {
+                            target_location_id: targetId, is_override: true, qty: cti?.qty
+                          })
+                          if (r.ok) {
+                            haptic(30)
+                            setUsedLocationIds([...usedLocationIds, targetId])
+                            setToteItems(toteItems.map(i => i.id === cti?.id ? { ...i, status: 'placed' } : i))
+                            setPutawayError(null)
+                            notify({ type: 'success', title: 'Override placed', message: `${cti?.qty} × ${cti?.item_code} forced into ${suggestion?.location_code}` })
+                            if (toteItems.filter(i => i.status === 'picked').length <= 1) navigate('complete', 'forward')
+                          } else {
+                            notify({ type: 'error', title: 'Override failed', message: r.error || 'Could not place' })
+                          }
+                        })()
+                      }}>
+                        ⚡ Override capacity ({cti?.qty} pcs)
                       </ButtonPress>
                       <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-danger" onClick={() => navigate('fit_exception', 'forward')}>
                         ⚠ Report issue
@@ -828,6 +906,9 @@ export default function PutawayWizard() {
 
                 const actualRemaining = (placeR.ok && placeR.data?.remaining != null)
                   ? placeR.data.remaining : remaining
+
+                const newUsedIds = fits > 0 && targetId ? [...usedLocationIds, targetId] : usedLocationIds
+                setUsedLocationIds(newUsedIds)
 
                 if (actualRemaining > 0) {
                   setToteItems(toteItems.map(i =>
