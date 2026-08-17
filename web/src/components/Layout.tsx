@@ -16,6 +16,7 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
     title: "Inward",
     items: [
       { to: "/grn", label: "Receive", icon: "⇩" },
+      { to: "/receiving", label: "Receive Wizard (RF)", icon: "📥" },
       { to: "/exceptions", label: "Exceptions", icon: "⚠" },
       { to: "/follow-up", label: "Follow-Up Receipts", icon: "↻" },
       { to: "/grn-audit", label: "Random Audit", icon: "✚" },

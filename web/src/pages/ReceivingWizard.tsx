@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import api from "../services/api";
+import TruckAutocomplete from "../components/TruckAutocomplete";
 import "../styles/receiving-wizard.css";
 
 interface ImportSummary {
@@ -374,9 +375,18 @@ export default function ReceivingWizard() {
                 <label>Driver Phone</label>
                 <input className="form-input" placeholder="9876543210" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
               </div>
-              <div className="form-field">
-                <label>Transporter</label>
-                <input className="form-input" placeholder="SAFEXPRESS PVT LTD" value={transporter} onChange={(e) => setTransporter(e.target.value)} />
+              <div className="form-field" style={{ gridColumn: "span 2" }}>
+                <label>Truck / Transporter</label>
+                <TruckAutocomplete
+                  value={transporter}
+                  onChangeText={setTransporter}
+                  onSelect={(row) => {
+                    setTransporter(row.transporter || row.truck_no || "");
+                    if (row.driver_name && !driverName) setDriverName(row.driver_name);
+                    if (row.driver_phone && !driverPhone) setDriverPhone(row.driver_phone);
+                  }}
+                  placeholder="Type truck no, name or transporter…"
+                />
               </div>
               <div className="form-field">
                 <label>Default Putaway Route</label>
