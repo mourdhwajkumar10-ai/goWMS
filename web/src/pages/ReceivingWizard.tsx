@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import api from "../services/api";
 import "../styles/receiving-wizard.css";
 
@@ -79,14 +79,10 @@ export default function ReceivingWizard() {
   const [transporter, setTransporter] = useState("");
   const [defaultRoute, setDefaultRoute] = useState("INCOMING-01");
 
-  // Truck autocomplete
+  // Truck + Driver autocomplete (shared data from transports table)
   const [truckSuggestions, setTruckSuggestions] = useState<any[]>([]);
   const [showTruckDropdown, setShowTruckDropdown] = useState(false);
   const truckDropdownRef = useRef<HTMLDivElement>(null);
-  const truckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // Driver autocomplete
-  const [driverSuggestions, setDriverSuggestions] = useState<any[]>([]);
   const [showDriverDropdown, setShowDriverDropdown] = useState(false);
   const driverDropdownRef = useRef<HTMLDivElement>(null);
 
@@ -130,24 +126,11 @@ export default function ReceivingWizard() {
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(pattern);
   };
 
-  // Fetch all trucks on mount
+  // Fetch all trucks on mount (shared by both driver + truck fields)
   useEffect(() => {
     api.transportsList().then((r) => {
       if (r.ok) setTruckSuggestions(r.data || []);
     });
-    api.receivingDrivers().then((r) => {
-      if (r.ok) setDriverSuggestions(r.data || []);
-    });
-  }, []);
-
-  // Truck search with debounce
-  const searchTrucks = useCallback((q: string) => {
-    if (truckTimerRef.current) clearTimeout(truckTimerRef.current);
-    truckTimerRef.current = setTimeout(() => {
-      api.transportsList(q.trim() || undefined).then((r) => {
-        if (r.ok) setTruckSuggestions(r.data || []);
-      });
-    }, 150);
   }, []);
 
   // Close truck dropdown on outside click
@@ -356,100 +339,128 @@ export default function ReceivingWizard() {
             </div>
 
             <div className="rec-container form-grid">
+              {/* Driver Name — searches transports table by driver_name */}
               <div className="form-field" style={{ position: "relative" }} ref={driverDropdownRef}>
                 <label>Driver Name</label>
                 <input
                   className="form-input"
-                  placeholder="Ramesh Kumar"
+                  placeholder="Type driver name…"
                   value={driverName}
-                  onChange={(e) => { setDriverName(e.target.value); setShowDriverDropdown(true); }}
+                  onChange={(e) => {
+                    setDriverName(e.target.value);
+                    setShowDriverDropdown(true);
+                  }}
                   onFocus={() => setShowDriverDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowDriverDropdown(false), 150)}
                   autoComplete="off"
                 />
-                {showDriverDropdown && driverSuggestions.length > 0 && (
+                {showDriverDropdown && (
                   <div className="rec-driver-dropdown">
-                    {driverSuggestions.slice(0, 8).map((d, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        className="rec-driver-option"
-                        onMouseDown={(e) => {
-                          e.preventDefault(); // prevent blur
-                          setDriverName(d.name || "");
-                          setDriverPhone(d.phone || "");
-                          setTransporter(d.transporter || "");
-                          setShowDriverDropdown(false);
-                        }}
-                      >
-                        <span className="rec-driver-name">{d.name}</span>
-                        <span className="rec-driver-meta">
-                          {d.phone && <span>{d.phone}</span>}
-                          {d.transporter && <span>· {d.transporter}</span>}
-                          {d.last_used && <span>· {d.last_used}</span>}
-                        </span>
-                      </button>
-                    ))}
+                    {(() => {
+                      const q = driverName.trim().toLowerCase();
+                      const matches = q
+                        ? truckSuggestions.filter((t) => t.driver_name && t.driver_name.toLowerCase().includes(q))
+                        : truckSuggestions.filter((t) => t.driver_name);
+                      if (matches.length === 0) return null;
+                      return matches.slice(0, 8).map((t, i) => (
+                        <button
+                          key={t.id ?? i}
+                          type="button"
+                          className="rec-driver-option"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setDriverName(t.driver_name || "");
+                            setDriverPhone(t.driver_phone || "");
+                            setTransporter(t.transporter || t.truck_no || "");
+                            setShowDriverDropdown(false);
+                          }}
+                        >
+                          <span className="rec-driver-name">{t.driver_name}</span>
+                          <span className="rec-driver-meta">
+                            {t.driver_phone && <span>{t.driver_phone}</span>}
+                            {t.truck_no && <span>· {t.truck_no}</span>}
+                            {t.transporter && <span>· {t.transporter}</span>}
+                          </span>
+                        </button>
+                      ));
+                    })()}
                   </div>
                 )}
               </div>
+
+              {/* Driver Phone — auto-filled from driver selection */}
               <div className="form-field">
                 <label>Driver Phone</label>
-                <input className="form-input" placeholder="9876543210" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
+                <input className="form-input" placeholder="Auto-filled from driver" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
               </div>
+
+              {/* Truck / Transporter — searches transports table by truck_no */}
               <div className="form-field" style={{ gridColumn: "span 2", position: "relative" }} ref={truckDropdownRef}>
                 <label>Truck / Transporter</label>
                 <input
                   className="form-input"
-                  placeholder="Type truck no, name or transporter…"
+                  placeholder="Type truck no or transporter…"
                   value={transporter}
                   onChange={(e) => {
                     setTransporter(e.target.value);
                     setShowTruckDropdown(true);
-                    searchTrucks(e.target.value);
                   }}
-                  onFocus={() => {
-                    setShowTruckDropdown(true);
-                    searchTrucks(transporter);
-                  }}
+                  onFocus={() => setShowTruckDropdown(true)}
                   onBlur={() => {
-                    // Auto-populate driver fields from matching truck
-                    const match = truckSuggestions.find(
-                      (t) => t.truck_no === transporter || t.transporter === transporter
-                    );
-                    if (match) {
-                      if (match.driver_name) setDriverName(match.driver_name);
-                      if (match.driver_phone) setDriverPhone(match.driver_phone);
+                    // Auto-populate driver fields from matching truck on tab away
+                    const q = transporter.trim().toLowerCase();
+                    if (q) {
+                      const match = truckSuggestions.find(
+                        (t) => t.truck_no.toLowerCase() === q || (t.transporter && t.transporter.toLowerCase() === q)
+                      );
+                      if (match) {
+                        if (match.driver_name) setDriverName(match.driver_name);
+                        if (match.driver_phone) setDriverPhone(match.driver_phone);
+                      }
                     }
                     setTimeout(() => setShowTruckDropdown(false), 150);
                   }}
                   autoComplete="off"
                 />
-                {showTruckDropdown && truckSuggestions.length > 0 && (
+                {showTruckDropdown && (
                   <div className="rec-driver-dropdown">
-                    {truckSuggestions.slice(0, 10).map((t, i) => (
-                      <button
-                        key={t.id ?? i}
-                        type="button"
-                        className="rec-driver-option"
-                        onMouseDown={(e) => {
-                          e.preventDefault(); // prevent blur
-                          setTransporter(t.transporter || t.truck_no || "");
-                          if (t.driver_name) setDriverName(t.driver_name);
-                          if (t.driver_phone) setDriverPhone(t.driver_phone);
-                          setShowTruckDropdown(false);
-                        }}
-                      >
-                        <span className="rec-driver-name">{t.truck_no}</span>
-                        <span className="rec-driver-meta">
-                          {t.name && <span>{t.name}</span>}
-                          {t.transporter && <span>· {t.transporter}</span>}
-                          {t.driver_name && <span>· {t.driver_name}</span>}
-                        </span>
-                      </button>
-                    ))}
+                    {(() => {
+                      const q = transporter.trim().toLowerCase();
+                      const matches = q
+                        ? truckSuggestions.filter((t) =>
+                            t.truck_no.toLowerCase().includes(q) ||
+                            (t.transporter && t.transporter.toLowerCase().includes(q)) ||
+                            (t.name && t.name.toLowerCase().includes(q))
+                          )
+                        : truckSuggestions;
+                      if (matches.length === 0) return null;
+                      return matches.slice(0, 10).map((t, i) => (
+                        <button
+                          key={t.id ?? i}
+                          type="button"
+                          className="rec-driver-option"
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            setTransporter(t.transporter || t.truck_no || "");
+                            if (t.driver_name) setDriverName(t.driver_name);
+                            if (t.driver_phone) setDriverPhone(t.driver_phone);
+                            setShowTruckDropdown(false);
+                          }}
+                        >
+                          <span className="rec-driver-name">{t.truck_no}</span>
+                          <span className="rec-driver-meta">
+                            {t.name && <span>{t.name}</span>}
+                            {t.transporter && <span>· {t.transporter}</span>}
+                            {t.driver_name && <span>· {t.driver_name}</span>}
+                          </span>
+                        </button>
+                      ));
+                    })()}
                   </div>
                 )}
               </div>
+
+              {/* Default Route */}
               <div className="form-field">
                 <label>Default Putaway Route</label>
                 <select className="form-input" value={defaultRoute} onChange={(e) => setDefaultRoute(e.target.value)}>
