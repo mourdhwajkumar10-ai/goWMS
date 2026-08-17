@@ -435,7 +435,12 @@
   color: var(--text-muted);
 }
 
-/* ─── Driver autocomplete dropdown ─── */
+/* Prevent card overflow from clipping dropdowns */
+.rec-container .erpnext-card {
+  overflow: visible !important;
+}
+
+/* ─── Driver / Truck autocomplete dropdown ─── */
 .rec-driver-dropdown {
   position: absolute;
   top: 100%;

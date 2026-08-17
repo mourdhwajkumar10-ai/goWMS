@@ -1,6 +1,5 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 import api from "../services/api";
-import TruckAutocomplete from "../components/TruckAutocomplete";
 import "../styles/receiving-wizard.css";
 
 interface ImportSummary {
@@ -80,6 +79,12 @@ export default function ReceivingWizard() {
   const [transporter, setTransporter] = useState("");
   const [defaultRoute, setDefaultRoute] = useState("INCOMING-01");
 
+  // Truck autocomplete
+  const [truckSuggestions, setTruckSuggestions] = useState<any[]>([]);
+  const [showTruckDropdown, setShowTruckDropdown] = useState(false);
+  const truckDropdownRef = useRef<HTMLDivElement>(null);
+  const truckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Driver autocomplete
   const [driverSuggestions, setDriverSuggestions] = useState<any[]>([]);
   const [showDriverDropdown, setShowDriverDropdown] = useState(false);
@@ -125,23 +130,38 @@ export default function ReceivingWizard() {
     if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(pattern);
   };
 
-  // Fetch driver history on mount and debounce on typing
+  // Fetch all trucks on mount
   useEffect(() => {
-    api.receivingDrivers(driverName || undefined).then((r) => {
+    api.transportsList().then((r) => {
+      if (r.ok) setTruckSuggestions(r.data || []);
+    });
+    api.receivingDrivers().then((r) => {
       if (r.ok) setDriverSuggestions(r.data || []);
     });
-  }, []); // load on mount
+  }, []);
 
-  useEffect(() => {
-    const t = setTimeout(() => {
-      api.receivingDrivers(driverName || undefined).then((r) => {
-        if (r.ok) setDriverSuggestions(r.data || []);
+  // Truck search with debounce
+  const searchTrucks = useCallback((q: string) => {
+    if (truckTimerRef.current) clearTimeout(truckTimerRef.current);
+    truckTimerRef.current = setTimeout(() => {
+      api.transportsList(q.trim() || undefined).then((r) => {
+        if (r.ok) setTruckSuggestions(r.data || []);
       });
-    }, 300);
-    return () => clearTimeout(t);
-  }, [driverName]);
+    }, 150);
+  }, []);
 
-  // Close dropdown on outside click
+  // Close truck dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (truckDropdownRef.current && !truckDropdownRef.current.contains(e.target as Node)) {
+        setShowTruckDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  // Close driver dropdown on outside click
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
       if (driverDropdownRef.current && !driverDropdownRef.current.contains(e.target as Node)) {
@@ -353,7 +373,8 @@ export default function ReceivingWizard() {
                         key={i}
                         type="button"
                         className="rec-driver-option"
-                        onClick={() => {
+                        onMouseDown={(e) => {
+                          e.preventDefault(); // prevent blur
                           setDriverName(d.name || "");
                           setDriverPhone(d.phone || "");
                           setTransporter(d.transporter || "");
@@ -375,18 +396,48 @@ export default function ReceivingWizard() {
                 <label>Driver Phone</label>
                 <input className="form-input" placeholder="9876543210" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
               </div>
-              <div className="form-field" style={{ gridColumn: "span 2" }}>
+              <div className="form-field" style={{ gridColumn: "span 2", position: "relative" }} ref={truckDropdownRef}>
                 <label>Truck / Transporter</label>
-                <TruckAutocomplete
-                  value={transporter}
-                  onChangeText={setTransporter}
-                  onSelect={(row) => {
-                    setTransporter(row.transporter || row.truck_no || "");
-                    if (row.driver_name && !driverName) setDriverName(row.driver_name);
-                    if (row.driver_phone && !driverPhone) setDriverPhone(row.driver_phone);
-                  }}
+                <input
+                  className="form-input"
                   placeholder="Type truck no, name or transporter…"
+                  value={transporter}
+                  onChange={(e) => {
+                    setTransporter(e.target.value);
+                    setShowTruckDropdown(true);
+                    searchTrucks(e.target.value);
+                  }}
+                  onFocus={() => {
+                    setShowTruckDropdown(true);
+                    searchTrucks(transporter);
+                  }}
+                  autoComplete="off"
                 />
+                {showTruckDropdown && truckSuggestions.length > 0 && (
+                  <div className="rec-driver-dropdown">
+                    {truckSuggestions.slice(0, 10).map((t, i) => (
+                      <button
+                        key={t.id ?? i}
+                        type="button"
+                        className="rec-driver-option"
+                        onMouseDown={(e) => {
+                          e.preventDefault(); // prevent blur
+                          setTransporter(t.transporter || t.truck_no || "");
+                          if (t.driver_name && !driverName) setDriverName(t.driver_name);
+                          if (t.driver_phone && !driverPhone) setDriverPhone(t.driver_phone);
+                          setShowTruckDropdown(false);
+                        }}
+                      >
+                        <span className="rec-driver-name">{t.truck_no}</span>
+                        <span className="rec-driver-meta">
+                          {t.name && <span>{t.name}</span>}
+                          {t.transporter && <span>· {t.transporter}</span>}
+                          {t.driver_name && <span>· {t.driver_name}</span>}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="form-field">
                 <label>Default Putaway Route</label>
