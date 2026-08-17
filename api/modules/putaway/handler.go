@@ -375,12 +375,16 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				if s.FreeCapacity != nil {
 					freeCap = *s.FreeCapacity
 				}
-				s.MaxFitQty = math.Min(freeCap, requestedQty)
-				s.RequiresSplit = s.MaxFitQty < requestedQty
-				s.Zone = zone
-				s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
-				s.Reason = reason
-				out = append(out, s)
+			s.MaxFitQty = math.Min(freeCap, requestedQty)
+			s.RequiresSplit = s.MaxFitQty < requestedQty
+			s.Zone = zone
+			s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
+			s.Reason = reason
+			// Skip bins with no room at all
+			if freeCap <= 0 {
+				continue
+			}
+			out = append(out, s)
 			}
 			return out
 		}

@@ -711,40 +711,45 @@ export default function PutawayWizard() {
                   <div className="pw-split-indicator">
                     <span className="pw-split-badge">⚠ Split required</span>
                     <span className="pw-split-detail">
-                      Bin fits <strong>{suggestion.max_fit_qty}</strong> of {cti?.qty} · {suggestion.remaining_after_fit ?? (cti?.qty ?? 0) - suggestion.max_fit_qty} will need another bin
+                      {suggestion.max_fit_qty > 0
+                        ? <>Bin fits <strong>{suggestion.max_fit_qty}</strong> of {cti?.qty} · {suggestion.remaining_after_fit ?? (cti?.qty ?? 0) - suggestion.max_fit_qty} will need another bin</>
+                        : <>Bin is full ({suggestion.free_capacity ?? 0} free) — find another bin</>
+                      }
                     </span>
-                    <div className="pw-qty-override">
-                      <label className="erpnext-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, display: 'block' }}>Qty to place:</label>
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                        <input
-                          type="number"
-                          className="erpnext-input"
-                          style={{ width: 80, fontSize: 16, fontWeight: 700, textAlign: 'center' }}
-                          min={1}
-                          max={cti?.qty || 1}
-                          value={placeQty ?? suggestion.max_fit_qty}
-                          onChange={e => {
-                            const v = Math.max(1, Math.min(Number(e.target.value) || 1, cti?.qty || 1))
-                            setPlaceQty(v)
-                          }}
-                        />
-                        <span style={{ fontSize: 12, color: 'var(--pw-text-dim, #6b7280)' }}>of {cti?.qty}</span>
-                        <ButtonPress
-                          className="erpnext-btn-primary"
-                          onClick={() => {
-                            const qty = placeQty ?? suggestion.max_fit_qty ?? cti?.qty ?? 0
-                            setConfirmPlace({
-                              targetId: suggestion.location_id,
-                              targetCode: suggestion.location_code,
-                              qty,
-                              isOverride: qty > (suggestion.max_fit_qty || 0)
-                            })
-                          }}
-                        >
-                          Place {placeQty ?? suggestion.max_fit_qty ?? '?'} here
-                        </ButtonPress>
+                    {(suggestion.max_fit_qty ?? 0) > 0 && (
+                      <div className="pw-qty-override">
+                        <label className="erpnext-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, display: 'block' }}>Qty to place:</label>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                          <input
+                            type="number"
+                            className="erpnext-input"
+                            style={{ width: 80, fontSize: 16, fontWeight: 700, textAlign: 'center' }}
+                            min={1}
+                            max={suggestion.max_fit_qty}
+                            value={placeQty ?? suggestion.max_fit_qty}
+                            onChange={e => {
+                              const v = Math.max(1, Math.min(Number(e.target.value) || 1, suggestion.max_fit_qty || 1))
+                              setPlaceQty(v)
+                            }}
+                          />
+                          <span style={{ fontSize: 12, color: 'var(--pw-text-dim, #6b7280)' }}>of {cti?.qty}</span>
+                          <ButtonPress
+                            className="erpnext-btn-primary"
+                            onClick={() => {
+                              const qty = placeQty ?? suggestion.max_fit_qty ?? cti?.qty ?? 0
+                              setConfirmPlace({
+                                targetId: suggestion.location_id,
+                                targetCode: suggestion.location_code,
+                                qty,
+                                isOverride: qty > (suggestion.max_fit_qty || 0)
+                              })
+                            }}
+                          >
+                            Place {placeQty ?? suggestion.max_fit_qty ?? '?'} here
+                          </ButtonPress>
+                        </div>
                       </div>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
