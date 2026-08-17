@@ -3,6 +3,8 @@ package putaway
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
 
 	"goWMS/api/modules/shared"
 
@@ -13,21 +15,24 @@ func init() {
 	shared.OnIncomingStock = func(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batchArg any, delta float64) {
 		go func() {
 			bgCtx := context.Background()
-			locID, _, err := FindBestLocation(bgCtx, db, itemCode, delta, warehouseID)
+			locID, _, maxFit, requiresSplit, err := FindBestLocation(bgCtx, db, itemCode, delta, warehouseID)
 			if err == nil && locID > 0 {
 				_, _ = db.Exec(bgCtx,
 					`UPDATE stock_location_balances
 					SET suggested_location_id=$1, updated_at=now()
 					WHERE item_code=$2 AND location_id=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
 					locID, itemCode, locationID, batchArg)
+				if requiresSplit {
+					log.Printf("auto-putaway: item %s requires split (max_fit=%.0f, requested=%.0f)", itemCode, maxFit, delta)
+				}
 			}
 		}()
 	}
 }
 
 // FindBestLocation computes the best storage location for an item.
-// Returns locationID, locationCode, error.
-func FindBestLocation(ctx context.Context, db *pgxpool.Pool, itemCode string, qty float64, warehouseID int) (int, string, error) {
+// Returns locationID, locationCode, maxFitQty, requiresSplit, error.
+func FindBestLocation(ctx context.Context, db *pgxpool.Pool, itemCode string, qty float64, warehouseID int) (int, string, float64, bool, error) {
 	// 1. Get item velocity_tier
 	var velocityTier string
 	_ = db.QueryRow(ctx, `SELECT COALESCE(velocity_tier,'medium') FROM items WHERE code=$1`, itemCode).Scan(&velocityTier)
@@ -56,35 +61,40 @@ func FindBestLocation(ctx context.Context, db *pgxpool.Pool, itemCode string, qt
 		id   int
 		code string
 	}
+	proximityOrder := `ORDER BY
+		CASE WHEN wl.aisle = $3 AND wl.shelf = $4 THEN 0 ELSE 1 END,
+		CASE WHEN wl.aisle = $3 THEN 0 ELSE 1 END,
+		COALESCE(wl.putaway_priority, 5) ASC,
+		wl.code ASC`
 	queries := []string{
 		// Consolidate: same item, storage, same bay
 		fmt.Sprintf(`SELECT wl.id, wl.code FROM warehouse_locations wl
 			WHERE wl.warehouse_id=$1 AND wl.location_type IN ('storage','pick_face')
 			AND wl.disabled=false AND wl.allow_mixed_items=true
 			AND EXISTS (SELECT 1 FROM stock_location_balances slb WHERE slb.location_id=wl.id AND slb.item_code=$2 AND slb.actual_qty>0)
-			%s AND ($3='' OR wl.aisle=$3) ORDER BY wl.putaway_priority ASC, wl.code ASC LIMIT 1`, shelfBandFilter(band)),
+			%s AND ($3='' OR wl.aisle=$3) %s LIMIT 1`, shelfBandFilter(band), proximityOrder),
 		// Consolidate: same item, storage, any bay
 		fmt.Sprintf(`SELECT wl.id, wl.code FROM warehouse_locations wl
 			WHERE wl.warehouse_id=$1 AND wl.location_type IN ('storage','pick_face')
 			AND wl.disabled=false AND wl.allow_mixed_items=true
 			AND EXISTS (SELECT 1 FROM stock_location_balances slb WHERE slb.location_id=wl.id AND slb.item_code=$2 AND slb.actual_qty>0)
-			%s ORDER BY wl.putaway_priority ASC, wl.code ASC LIMIT 1`, shelfBandFilter(band)),
+			%s %s LIMIT 1`, shelfBandFilter(band), proximityOrder),
 		// Empty storage, same bay
 		fmt.Sprintf(`SELECT wl.id, wl.code FROM warehouse_locations wl
 			WHERE wl.warehouse_id=$1 AND wl.location_type IN ('storage','pick_face')
 			AND wl.disabled=false AND wl.allow_mixed_items=true AND wl.is_occupied=false
-			%s AND ($3='' OR wl.aisle=$3) ORDER BY wl.putaway_priority ASC, wl.code ASC LIMIT 1`, shelfBandFilter(band)),
+			%s AND ($3='' OR wl.aisle=$3) %s LIMIT 1`, shelfBandFilter(band), proximityOrder),
 		// Empty storage, any bay
 		fmt.Sprintf(`SELECT wl.id, wl.code FROM warehouse_locations wl
 			WHERE wl.warehouse_id=$1 AND wl.location_type IN ('storage','pick_face')
 			AND wl.disabled=false AND wl.allow_mixed_items=true AND wl.is_occupied=false
-			%s ORDER BY wl.putaway_priority ASC, wl.code ASC LIMIT 1`, shelfBandFilter(band)),
+			%s %s LIMIT 1`, shelfBandFilter(band), proximityOrder),
 	}
 
 	for _, q := range queries {
 		var c candidate
-		if err := db.QueryRow(ctx, q, warehouseID, itemCode, preferredAisle).Scan(&c.id, &c.code); err == nil {
-			return c.id, c.code, nil
+		if err := db.QueryRow(ctx, q, warehouseID, itemCode, preferredAisle, preferredBay).Scan(&c.id, &c.code); err == nil {
+			return computeMaxFit(ctx, db, itemCode, qty, c.id, c.code)
 		}
 	}
 
@@ -95,7 +105,25 @@ func FindBestLocation(ctx context.Context, db *pgxpool.Pool, itemCode string, qt
 		AND wl.disabled=false AND wl.allow_mixed_items=true
 		ORDER BY wl.putaway_priority ASC, wl.code ASC LIMIT 1`, warehouseID).Scan(&c.id, &c.code)
 	if err != nil {
-		return 0, "", fmt.Errorf("no storage locations available")
+		return 0, "", 0, false, fmt.Errorf("no storage locations available")
 	}
-	return c.id, c.code, nil
+	return computeMaxFit(ctx, db, itemCode, qty, c.id, c.code)
+}
+
+// computeMaxFit determines how much of qty fits in the given location.
+func computeMaxFit(ctx context.Context, db *pgxpool.Pool, itemCode string, qty float64, locationID int, locationCode string) (int, string, float64, bool, error) {
+	cap, err := shared.ItemBinCapacity(ctx, db, itemCode, locationID)
+	if err != nil {
+		return 0, "", 0, false, err
+	}
+	var currentQty float64
+	_ = db.QueryRow(ctx,
+		`SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
+		WHERE item_code=$1 AND location_id=$2`, itemCode, locationID).Scan(&currentQty)
+	free := *cap - currentQty
+	if free < 0 {
+		free = 0
+	}
+	maxFit := math.Min(free, qty)
+	return locationID, locationCode, maxFit, maxFit < qty, nil
 }
