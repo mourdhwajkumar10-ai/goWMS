@@ -217,9 +217,12 @@ export default function ReceivingWizard() {
 
   const loadBoxes = async (sid: number, dn: string) => {
     setLoading(true);
-    const boxRes = await api.receivingBoxes(sid, dn);
-    setLoading(false);
-    if (boxRes.ok) setBoxes(boxRes.data.boxes || []);
+    try {
+      const boxRes = await api.receivingBoxes(sid, dn);
+      if (boxRes.ok) setBoxes(boxRes.data.boxes || []);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const startReceiving = () => {
@@ -235,7 +238,8 @@ export default function ReceivingWizard() {
   const handleScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const raw = scanInput.trim();
-    if (!raw || !sessionId) return;
+    if (!raw) return;
+    if (!sessionId) { showFlash("Session not loaded — try refreshing", "error"); return; }
     setScanInput("");
     const scanType = detectScanType(raw);
     if (currentBox) {
@@ -250,8 +254,12 @@ export default function ReceivingWizard() {
   const handleBoxScan = async (boxNo: string) => {
     if (!sessionId) return;
     setLoading(true);
-    const res = await api.receivingScanBox({ session_id: sessionId, box_number: boxNo, auto_complete_single: true, default_route: defaultRoute });
-    setLoading(false);
+    let res;
+    try {
+      res = await api.receivingScanBox({ session_id: sessionId, box_number: boxNo, auto_complete_single: true, default_route: defaultRoute });
+    } finally {
+      setLoading(false);
+    }
     if (!res.ok) { showFlash(res.error || "Failed to scan box.", "error"); return; }
     const data = res.data;
     if (data.auto_completed) {
@@ -280,8 +288,12 @@ export default function ReceivingWizard() {
   const completeMultiItemBox = async () => {
     if (!sessionId || !currentBox) return;
     setLoading(true);
-    const res = await api.receivingCompleteBox({ session_id: sessionId, box_number: currentBox.box_number, default_route: defaultRoute });
-    setLoading(false);
+    let res;
+    try {
+      res = await api.receivingCompleteBox({ session_id: sessionId, box_number: currentBox.box_number, default_route: defaultRoute });
+    } finally {
+      setLoading(false);
+    }
     if (res.ok) {
       showFlash(`Box ${currentBox.box_number} verified.`, "success");
       setScanHistory((prev) => [{ box_number: currentBox.box_number, auto_completed: false, message: `Verified Box ${currentBox.box_number} (${currentBox.item_count} items)`, timestamp: new Date(), status: "success" }, ...prev.slice(0, 9)]);
@@ -543,7 +555,7 @@ export default function ReceivingWizard() {
             <form onSubmit={handleScanSubmit}>
               <div className="scan-input-wrapper">
                 <input type="text" className="scan-input" ref={scanInputRef} value={scanInput} onChange={(e) => setScanInput(e.target.value)}
-                  placeholder={currentBox ? "Scan item QR code…" : "Scan Box Barcode…"} disabled={loading} />
+                  placeholder={currentBox ? "Scan item QR code…" : "Scan Box Barcode…"} />
                 <button type="submit" className="rec-btn rec-btn-primary" style={{ height: 28, padding: "2px 12px", flexShrink: 0 }}>Enter</button>
               </div>
             </form>
