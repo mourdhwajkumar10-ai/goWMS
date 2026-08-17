@@ -308,10 +308,10 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				  SELECT MIN(v) AS item_bin_cap
 				  FROM (
 				    SELECT ibc.max_qty FROM item_bin_capacities ibc
-				     WHERE ibc.location_id = wl.id AND UPPER(ibc.item_code)=UPPER($2)
+				     WHERE ibc.location_id = wl.id AND UPPER(ibc.item_code)=UPPER($1)
 				    UNION ALL
 				    SELECT i.max_qty_per_bin FROM items i
-				     WHERE UPPER(i.code)=UPPER($2) AND COALESCE(i.disabled,false)=false
+				     WHERE UPPER(i.code)=UPPER($1) AND COALESCE(i.disabled,false)=false
 				    UNION ALL
 				    SELECT wl.max_capacity_qty
 				  ) s(v)
@@ -320,7 +320,7 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				LEFT JOIN LATERAL (
 				  SELECT COALESCE(SUM(actual_qty),0) AS on_hand
 				  FROM stock_location_balances slb
-				  WHERE slb.location_id = wl.id AND UPPER(slb.item_code)=UPPER($2)
+				  WHERE slb.location_id = wl.id AND UPPER(slb.item_code)=UPPER($1)
 				) oh ON true`
 		mixedOK := `
 				  AND (
@@ -328,7 +328,7 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				    OR NOT EXISTS (
 				      SELECT 1 FROM stock_location_balances o
 				      WHERE o.location_id = wl.id AND o.actual_qty <> 0
-				        AND UPPER(o.item_code) <> UPPER($2)
+				        AND UPPER(o.item_code) <> UPPER($1)
 				    )
 				  )`
 		zoneSQL := func(zone string) string {
@@ -358,8 +358,8 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			for rows.Next() {
 				var s cand
 				var cap *float64
-			if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &cap, &s.OnHandQty,
-				&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt) != nil {
+				if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &cap, &s.OnHandQty,
+					&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt) != nil {
 					continue
 				}
 			if cap != nil {
@@ -397,9 +397,9 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		skipShelfFilter := false
 
 		load := func(reason, zone string, sameBayOnly, emptyOnly bool, onlyID int, limit int) []cand {
-			args := []any{requestedQty, itemCode}
+			args := []any{itemCode}
 			sql := selectSQL
-			n := 2
+			n := 1
 			if warehouseID > 0 {
 				n++
 				sql += fmt.Sprintf(` AND wl.warehouse_id=$%d`, n)

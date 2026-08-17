@@ -156,7 +156,7 @@ describe('PutawayWizard', () => {
       fireEvent.click(screen.getByText(/Doesn't fit/))
     })
     await waitFor(() => {
-      expect(screen.getByText(/What's wrong\?/)).toBeInTheDocument()
+      expect(screen.getByText(/How many actually fit/)).toBeInTheDocument()
     })
   })
 
@@ -174,9 +174,15 @@ describe('PutawayWizard', () => {
     await waitFor(() => {
       expect(screen.getAllByText('BIN-2').length).toBeGreaterThanOrEqual(1)
     })
+    // Scan opens confirmation modal
     mockApi.post.mockResolvedValue({ ok: true, data: {} })
     const scanInput = screen.getByPlaceholderText('Scan bin barcode or type location...')
     fireEvent.change(scanInput, { target: { value: 'BIN-2' } })
+    await waitFor(() => {
+      expect(screen.getByText('Confirm Placement')).toBeInTheDocument()
+    })
+    // Click confirm button
+    fireEvent.click(screen.getByText(/✓ Place/))
     await waitFor(() => {
       expect(screen.getByText('Putaway Complete')).toBeInTheDocument()
     })
