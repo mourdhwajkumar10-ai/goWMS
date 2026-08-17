@@ -23,6 +23,26 @@
   --pw-zone-g: #65a30d;
 }
 
+/* ─── Mode Grid ─── */
+.pw-mode-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+@media (max-width: 480px) {
+  .pw-mode-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Zone Grid ─── */
+.pw-zone-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* ─── Mode Selection ─── */
 .pw-mode-card {
   flex: 1;
@@ -59,6 +79,10 @@
   font-size: 13px;
   font-weight: 400;
   color: var(--pw-text-dim);
+}
+.pw-mode-label {
+  font-size: 16px;
+  font-weight: 600;
 }
 
 /* ─── Queue Summary Banner ─── */
@@ -610,6 +634,19 @@
   display: flex;
   gap: 8px;
   margin-top: 8px;
+}
+.pw-fit-panel {
+  padding: 16px;
+  background: #fffbeb;
+  border: 1px solid #f59e0b;
+  border-radius: var(--pw-radius);
+  margin-bottom: 16px;
+}
+.pw-fit-panel-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #b45309;
+  margin-bottom: 8px;
 }
 
 /* ─── Complete Screen ─── */
