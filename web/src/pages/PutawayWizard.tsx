@@ -6,6 +6,31 @@ import ButtonPress from '../components/ButtonPress'
 import { useHaptic } from '../hooks/useHaptic'
 import '../styles/putaway-wizard.css'
 
+function SkeletonCards({ count = 3 }: { count?: number }) {
+  return (
+    <div>
+      {Array.from({ length: count }).map((_, i) => (
+        <div key={i} className="pw-skeleton pw-skeleton-card">
+          <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="pw-skeleton pw-skeleton-line" style={{ width: '50%' }} />
+            <div className="pw-skeleton pw-skeleton-line" style={{ width: '30%' }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EmptyState({ icon, title, message }: { icon: string; title: string; message: string }) {
+  return (
+    <div className="pw-empty-state">
+      <div className="pw-empty-icon">{icon}</div>
+      <div className="pw-empty-title">{title}</div>
+      <div className="pw-empty-msg">{message}</div>
+    </div>
+  )
+}
+
 type WizardStep =
   | 'mode_select'
   | 'zone_select'
@@ -86,6 +111,7 @@ const ZONE_COLORS: Record<string, string> = {
 
 export default function PutawayWizard() {
   const [step, setStep] = useState<WizardStep>('mode_select')
+  const [transitionDir, setTransitionDir] = useState<'forward' | 'backward'>('forward')
   const [mode, setMode] = useState<'zone' | 'item' | null>(null)
   const [queue, setQueue] = useState<QueueRow[]>([])
   const [zones, setZones] = useState<ZoneInfo[]>([])
@@ -95,6 +121,7 @@ export default function PutawayWizard() {
   const [session, setSession] = useState<SessionData | null>(null)
   const [toteItems, setToteItems] = useState<ToteItem[]>([])
   const [loading, setLoading] = useState(false)
+  const [dataLoading, setDataLoading] = useState(true)
   const [fitReason, setFitReason] = useState<'too_small' | 'too_large'>('too_small')
   const [fitQty, setFitQty] = useState('')
   const [fitOverride, setFitOverride] = useState('')
@@ -105,6 +132,13 @@ export default function PutawayWizard() {
   const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
 
   const haptic = useHaptic()
+
+  const animClass = transitionDir === 'forward' ? 'pw-animate-in' : 'pw-animate-out'
+
+  const navigate = useCallback((next: WizardStep, dir: 'forward' | 'backward' = 'forward') => {
+    setTransitionDir(dir)
+    setStep(next)
+  }, [])
 
   const loadQueue = useCallback(async () => {
     const r = await api.putawayQueue()
@@ -117,8 +151,8 @@ export default function PutawayWizard() {
   }, [])
 
   useEffect(() => {
-    void loadQueue()
-    void loadZones()
+    setDataLoading(true)
+    Promise.all([loadQueue(), loadZones()]).finally(() => setDataLoading(false))
   }, [loadQueue, loadZones])
 
   useEffect(() => {
@@ -235,11 +269,11 @@ export default function PutawayWizard() {
     const match = toteItems.find(t => t.item_code.toLowerCase() === code.toLowerCase() && t.status === 'picked')
     if (match) {
       haptic(20)
-      setStep('putaway')
+      navigate('putaway', 'forward')
     } else {
       notify({ type: 'warning', title: 'Not in tote', message: `"${code}" is not in your tote or already placed` })
     }
-  }, [toteItems, haptic])
+  }, [toteItems, haptic, navigate])
 
   function currentToteItem() {
     return toteItems.find(i => i.status === 'picked') || null
@@ -259,7 +293,7 @@ export default function PutawayWizard() {
         notify({ type: 'success', title: 'Placed', message: `${item.item_code} × ${item.qty} placed at ${code}` })
         setLocationScanInput('')
         setPutawayError(null)
-        if (toteItems.filter(i => i.status === 'picked').length <= 1) setStep('complete')
+        if (toteItems.filter(i => i.status === 'picked').length <= 1) navigate('complete', 'forward')
       } else {
         const errType = r.errorType || (r.data as any)?.error_type || 'unknown'
         setPutawayError({ type: errType, message: r.error || 'Could not place item', data: r.data as any })
@@ -317,18 +351,18 @@ export default function PutawayWizard() {
   // ─── MODE SELECT ───
   if (step === 'mode_select') {
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
           <h1>Putaway</h1>
         </div>
 
         <div className="pw-mode-grid">
-          <ButtonPress className="pw-mode-card" onClick={() => { setMode('zone'); setStep('zone_select') }}>
+          <ButtonPress className="pw-mode-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }}>
             <span className="pw-mode-icon">⇨</span>
             <span className="pw-mode-label">By Zone</span>
             <span className="pw-mode-subtitle">Batch putaway by HSN zone</span>
           </ButtonPress>
-          <ButtonPress className="pw-mode-card" onClick={() => { setMode('item'); setStep('item_pick') }}>
+          <ButtonPress className="pw-mode-card" onClick={() => { setMode('item'); navigate('item_pick', 'forward') }}>
             <span className="pw-mode-icon">📦</span>
             <span className="pw-mode-label">By Item</span>
             <span className="pw-mode-subtitle">Single item putaway</span>
@@ -343,7 +377,9 @@ export default function PutawayWizard() {
           </div>
         </div>
 
-        {queue.length > 0 && (
+        {dataLoading ? (
+          <SkeletonCards count={2} />
+        ) : queue.length > 0 ? (
           <div>
             <p style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: 'var(--text-dim, #888)' }}>Top items:</p>
             {queue.slice(0, 5).map(q => (
@@ -364,6 +400,12 @@ export default function PutawayWizard() {
               </div>
             ))}
           </div>
+        ) : (
+          <EmptyState
+            icon="⇨"
+            title="No items staged"
+            message="Items must be staged before putaway"
+          />
         )}
       </div>
     )
@@ -372,18 +414,22 @@ export default function PutawayWizard() {
   // ─── ZONE SELECT ───
   if (step === 'zone_select') {
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => setStep('mode_select')}>← Back</ButtonPress>
+          <ButtonPress onClick={() => navigate('mode_select', 'backward')}>← Back</ButtonPress>
           <h1>Select Zone</h1>
         </div>
-        <div className="pw-zone-grid">
-          {zones.map(z => (
-            <ButtonPress
-              key={z.zone}
-              className="pw-zone-card"
-              onClick={() => { setSelectedZone(z.zone); setStep('item_pick') }}
-            >
+        {dataLoading ? (
+          <SkeletonCards count={4} />
+        ) : (
+          <>
+            <div className="pw-zone-grid">
+              {zones.map(z => (
+                <ButtonPress
+                  key={z.zone}
+                  className="pw-zone-card"
+                  onClick={() => { setSelectedZone(z.zone); navigate('item_pick', 'forward') }}
+                >
               <span
                 className="pw-zone-letter"
                 data-zone={z.zone}
@@ -398,8 +444,12 @@ export default function PutawayWizard() {
               <span className="pw-zone-arrow">→</span>
             </ButtonPress>
           ))}
-        </div>
-        {zones.length === 0 && <p className="text-dim">No items by zone</p>}
+          </div>
+          {zones.length === 0 && (
+            <EmptyState icon="⇨" title="No zones ready" message="No items are staged for putaway" />
+          )}
+          </>
+        )}
       </div>
     )
   }
@@ -412,9 +462,9 @@ export default function PutawayWizard() {
     const totePicked = toteItems.filter(i => i.status === 'picked')
 
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => setStep(mode === 'zone' ? 'zone_select' : 'mode_select')}>← Back</ButtonPress>
+          <ButtonPress onClick={() => navigate(mode === 'zone' ? 'zone_select' : 'mode_select', 'backward')}>← Back</ButtonPress>
           <h1>{selectedZone ? `Zone ${selectedZone} · ${ZONE_LABELS[selectedZone] || ''}` : 'Select Items'}</h1>
         </div>
 
@@ -428,7 +478,7 @@ export default function PutawayWizard() {
               {totePicked.length > 0 && (
                 <ButtonPress
                   className="erpnext-btn-primary pw-start-putaway-btn"
-                  onClick={() => setStep('putaway')}
+                  onClick={() => navigate('putaway', 'forward')}
                 >
                   Start Putaway →
                 </ButtonPress>
@@ -493,24 +543,33 @@ export default function PutawayWizard() {
           <div className="pw-available-header">
             Available Items <span className="pw-available-count">({zoneItems.length})</span>
           </div>
-          {zoneItems.map(q => (
-            <div key={q.id} className="pw-item-row">
-              <div className="pw-item-row-info">
-                <div className="pw-item-row-code">{q.item_code}</div>
-                <div className="pw-item-row-name">{q.item_name || ''}</div>
-                <div className="pw-item-row-meta">
-                  <span>From {q.location_code}</span>
-                  {q.batch_no && <span>· Batch {q.batch_no}</span>}
-                </div>
-                {q.suggested_location_code && (
-                  <div className="text-dim text-xs" style={{ marginTop: 4 }}>
-                    Suggested: <span style={{ color: 'var(--accent)' }}>{q.suggested_location_code}</span>
+          {dataLoading ? (
+            <SkeletonCards count={3} />
+          ) : zoneItems.length === 0 ? (
+            <EmptyState
+              icon="📦"
+              title={selectedZone ? `No items in Zone ${selectedZone}` : "No items staged"}
+              message="Pick items from staging to start putaway"
+            />
+          ) : (
+            zoneItems.map(q => (
+              <div key={q.id} className="pw-item-row">
+                <div className="pw-item-row-info">
+                  <div className="pw-item-row-code">{q.item_code}</div>
+                  <div className="pw-item-row-name">{q.item_name || ''}</div>
+                  <div className="pw-item-row-meta">
+                    <span>From {q.location_code}</span>
+                    {q.batch_no && <span>· Batch {q.batch_no}</span>}
                   </div>
-                )}
-              </div>
-              <div className="pw-item-row-actions">
-                <span className="pw-qty-badge">{q.qty} pcs</span>
-                <ButtonPress
+                  {q.suggested_location_code && (
+                    <div className="text-dim text-xs" style={{ marginTop: 4 }}>
+                      Suggested: <span style={{ color: 'var(--accent)' }}>{q.suggested_location_code}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="pw-item-row-actions">
+                  <span className="pw-qty-badge">{q.qty} pcs</span>
+                  <ButtonPress
                   className={`erpnext-btn-secondary ${pickingItemId === q.id ? 'pw-picking' : ''}`}
                   disabled={pickingItemId === q.id}
                   onClick={() => void handlePick(q)}
@@ -519,10 +578,7 @@ export default function PutawayWizard() {
                 </ButtonPress>
               </div>
             </div>
-          ))}
-          {zoneItems.length === 0 && (
-            <p className="text-dim">No items in this zone ready for putaway</p>
-          )}
+          )))}
         </div>
       </div>
     )
@@ -533,9 +589,9 @@ export default function PutawayWizard() {
     const cti = currentToteItem()
 
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => setStep('item_pick')}>← Back</ButtonPress>
+          <ButtonPress onClick={() => navigate('item_pick', 'backward')}>← Back</ButtonPress>
           <h1>Putaway</h1>
         </div>
 
@@ -632,11 +688,11 @@ export default function PutawayWizard() {
                         const already = putawayError.data?.bin_on_hand || 0
                         const room = Math.max(0, maxFit - already)
                         setFitQty(String(Math.min(room, cti?.qty || 0)))
-                        setStep('fit_exception')
+                        navigate('fit_exception', 'forward')
                       }}>
                         ⇩ Split quantity
                       </ButtonPress>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-danger" onClick={() => setStep('fit_exception')}>
+                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-danger" onClick={() => navigate('fit_exception', 'forward')}>
                         ⚠ Report issue
                       </ButtonPress>
                     </>
@@ -668,12 +724,16 @@ export default function PutawayWizard() {
               </div>
             )}
 
-            <ButtonPress className="erpnext-btn-secondary w-full mt-1" onClick={() => setStep('fit_exception')}>
+            <ButtonPress className="erpnext-btn-secondary w-full mt-1" onClick={() => navigate('fit_exception', 'forward')}>
               ⇩ Doesn't fit
             </ButtonPress>
           </>
         ) : (
-          <p className="text-dim">No items in tote. Go back and pick items first.</p>
+          <EmptyState
+            icon="⇨"
+            title="Tote is empty"
+            message="Go back and pick items first"
+          />
         )}
       </div>
     )
@@ -683,9 +743,9 @@ export default function PutawayWizard() {
   if (step === 'fit_exception') {
     const cti = currentToteItem()
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => setStep('putaway')}>← Back</ButtonPress>
+          <ButtonPress onClick={() => navigate('putaway', 'backward')}>← Back</ButtonPress>
           <h1>Doesn't Fit</h1>
         </div>
         {cti && (
@@ -779,7 +839,7 @@ export default function PutawayWizard() {
                     i.id === cti.id ? { ...i, status: 'placed' } : i
                   ))
                   if (toteItems.filter(i => i.status === 'picked').length <= 1) {
-                    setStep('complete')
+                    navigate('complete', 'forward')
                     return
                   }
                 }
@@ -788,7 +848,7 @@ export default function PutawayWizard() {
                 setFitOverride('')
                 setFitOverrideId(null)
                 setPutawayError(null)
-                setStep('putaway')
+                navigate('putaway', 'backward')
               })()
             }} disabled={!(+(fitQty || 0) > 0)}>
               {+(fitQty || 0) > 0 ? `Place ${fitQty} here${+(fitQty || 0) < cti.qty ? ` · ${cti.qty - +(fitQty || 0)} remaining` : ''}` : 'Enter how many fit'}
@@ -803,7 +863,7 @@ export default function PutawayWizard() {
   if (step === 'complete') {
     const placedItems = toteItems.filter(i => i.status === 'placed')
     return (
-      <div className="desk-page pw-animate-in">
+      <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
           <h1>Putaway Complete</h1>
         </div>
@@ -823,7 +883,7 @@ export default function PutawayWizard() {
           ))}
           <ButtonPress className="erpnext-btn-primary mt-6" onClick={() => {
             setSelectedItem(null); setSuggestion(null); setToteItems([])
-            setStep(mode === 'zone' ? 'item_pick' : 'mode_select')
+            navigate(mode === 'zone' ? 'item_pick' : 'mode_select', 'forward')
           }}>
             {mode === 'zone' ? 'Next Item' : 'Done'}
           </ButtonPress>

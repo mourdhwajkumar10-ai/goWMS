@@ -758,8 +758,21 @@
     transform: translateX(0);
   }
 }
+@keyframes pw-slide-out {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
 .pw-animate-in {
-  animation: pw-slide-in 150ms ease;
+  animation: pw-slide-in 150ms ease-out;
+}
+.pw-animate-out {
+  animation: pw-slide-out 100ms ease-in;
 }
 @keyframes pw-pulse {
   0%, 100% { opacity: 1; }
@@ -767,6 +780,52 @@
 }
 .pw-pulse {
   animation: pw-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── Skeletons ─── */
+.pw-skeleton {
+  background: linear-gradient(90deg, var(--pw-bg-secondary, #f3f4f6) 25%, var(--pw-border, #e5e7eb) 50%, var(--pw-bg-secondary, #f3f4f6) 75%);
+  background-size: 200% 100%;
+  animation: pw-shimmer 1.5s ease-in-out infinite;
+  border-radius: 6px;
+}
+@keyframes pw-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.pw-skeleton-card {
+  height: 64px;
+  margin-bottom: 8px;
+  border-radius: var(--pw-radius);
+}
+.pw-skeleton-line {
+  height: 14px;
+  margin-bottom: 8px;
+}
+.pw-skeleton-line:last-child {
+  width: 60%;
+}
+
+/* ─── Empty State ─── */
+.pw-empty-state {
+  text-align: center;
+  padding: 32px 16px;
+  color: var(--pw-text-dim);
+}
+.pw-empty-icon {
+  font-size: 36px;
+  margin-bottom: 12px;
+  opacity: 0.5;
+}
+.pw-empty-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 4px;
+  color: var(--pw-text);
+}
+.pw-empty-msg {
+  font-size: 13px;
+  color: var(--pw-text-dim);
 }
 
 /* ─── Exception Panel ─── */
