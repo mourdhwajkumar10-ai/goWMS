@@ -2,6 +2,7 @@ package putaway
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -67,12 +68,18 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		if prefBay == "" {
 			prefBay = strings.TrimSpace(c.Query("preferred_shelf"))
 		}
+		prefLevel, _ := strconv.Atoi(c.Query("preferred_level", "0"))
 		excludeIDs := parseIDList(c.Query("exclude_location_ids"))
+		placedQty, _ := strconv.ParseFloat(c.Query("placed_qty", "0"), 64)
 		if itemCode == "" {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code required")
 		}
 		if qty <= 0 {
 			qty = 1
+		}
+		requestedQty := qty - placedQty
+		if requestedQty <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "no remaining qty to place (qty <= placed_qty)")
 		}
 
 		var controlMode string
@@ -157,6 +164,9 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			LocationType string   `json:"location_type"`
 			SameBay      bool     `json:"same_bay"`
 			Zone         string   `json:"zone"`
+			MaxFitQty       float64 `json:"max_fit_qty"`
+			RequiresSplit   bool    `json:"requires_split"`
+			ProximityScore  int     `json:"proximity_score"`
 		}
 
 		joins := `
@@ -187,7 +197,6 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				        AND UPPER(o.item_code) <> UPPER($2)
 				    )
 				  )`
-		fits := ` AND (COALESCE(cap.item_bin_cap, 50) - COALESCE(oh.on_hand,0) >= $1)`
 		zoneSQL := func(zone string) string {
 			if zone == "pick_face" {
 				return ` AND (
@@ -228,6 +237,12 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				free := defCap - s.OnHandQty
 				s.FreeCapacity = &free
 			}
+				freeCap := 0.0
+				if s.FreeCapacity != nil {
+					freeCap = *s.FreeCapacity
+				}
+				s.MaxFitQty = math.Min(freeCap, requestedQty)
+				s.RequiresSplit = s.MaxFitQty < requestedQty
 				s.Zone = zone
 				s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
 				s.Reason = reason
@@ -241,12 +256,12 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				       COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,''),
 				       COALESCE(wl.location_type,'storage')
 				FROM warehouse_locations wl` + joins + `
-				WHERE COALESCE(wl.disabled,false)=false` + mixedOK + fits
+				WHERE COALESCE(wl.disabled,false)=false` + mixedOK
 
 		skipShelfFilter := false
 
 		load := func(reason, zone string, sameBayOnly, emptyOnly bool, onlyID int, limit int) []cand {
-			args := []any{qty, itemCode}
+			args := []any{requestedQty, itemCode}
 			sql := selectSQL
 			n := 2
 			if warehouseID > 0 {
@@ -290,10 +305,13 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				sql += ` AND wl.id NOT IN (` + strings.Join(ids, ",") + `)`
 			}
 			sql += ` ORDER BY
-				CASE WHEN wl.level ~ '^[0-9]+$' THEN wl.level::int ELSE 99 END ASC,
+				CASE WHEN wl.aisle = $` + strconv.Itoa(n+1) + ` AND wl.shelf = $` + strconv.Itoa(n+2) + ` AND wl.level::int BETWEEN $` + strconv.Itoa(n+3) + `-1 AND $` + strconv.Itoa(n+3) + `+1 THEN 0 ELSE 1 END,
+				CASE WHEN wl.aisle = $` + strconv.Itoa(n+1) + ` AND wl.shelf = $` + strconv.Itoa(n+2) + ` THEN 0 ELSE 1 END,
+				CASE WHEN wl.aisle = $` + strconv.Itoa(n+1) + ` THEN 0 ELSE 1 END,
 				COALESCE(wl.putaway_priority,5) ASC,
 				wl.code
 				LIMIT ` + strconv.Itoa(limit)
+			args = append(args, prefAisle, prefBay, prefLevel)
 			return scanRows(sql, args, reason, zone)
 		}
 
@@ -366,6 +384,10 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			"shelf_band":    velocityShelfBand(velocityTier),
 			"strategy":      []string{"home_bin", "consolidate_same_item", "empty_pick_face", "empty_storage"},
 			"candidates":    candidates,
+			"requested_qty":  requestedQty,
+			"max_fit_qty":    best.MaxFitQty,
+			"requires_split": best.RequiresSplit,
+			"remaining_after_fit": requestedQty - best.MaxFitQty,
 		}
 		if homeID != nil {
 			out["home_location_id"] = *homeID
