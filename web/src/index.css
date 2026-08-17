@@ -1790,3 +1790,12 @@ th.text-right, td.text-right,
   .putaway-stage { padding: 24px 20px; }
   .putaway-bin { font-size: 22px; }
 }
+
+.button-press {
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+.button-press:active:not([disabled]) {
+  transform: scale(0.96);
+  box-shadow: none;
+}
