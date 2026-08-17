@@ -9,6 +9,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// OnIncomingStock is called by AdjustLocationQty when stock arrives in incoming.
+// Set by putaway package to avoid import cycle.
+var OnIncomingStock func(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batchArg any, delta float64)
+
 // EnsureLocation ensures a staging location exists for a warehouse and returns its id+code.
 func EnsureLocation(ctx context.Context, db *pgxpool.Pool, warehouseID int, code, locType string) (int, string, error) {
 	var id int
@@ -184,6 +188,12 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 			if err != nil {
 				return err
 			}
+		}
+	}
+
+	if strings.ToLower(locType) == "incoming" && delta > 0 {
+		if OnIncomingStock != nil {
+			OnIncomingStock(ctx, db, itemCode, warehouseID, locationID, batchArg, delta)
 		}
 	}
 

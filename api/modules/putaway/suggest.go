@@ -4,8 +4,26 @@ import (
 	"context"
 	"fmt"
 
+	"goWMS/api/modules/shared"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func init() {
+	shared.OnIncomingStock = func(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batchArg any, delta float64) {
+		go func() {
+			bgCtx := context.Background()
+			locID, _, err := FindBestLocation(bgCtx, db, itemCode, delta, warehouseID)
+			if err == nil && locID > 0 {
+				_, _ = db.Exec(bgCtx,
+					`UPDATE stock_location_balances
+					SET suggested_location_id=$1, updated_at=now()
+					WHERE item_code=$2 AND location_id=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
+					locID, itemCode, locationID, batchArg)
+			}
+		}()
+	}
+}
 
 // FindBestLocation computes the best storage location for an item.
 // Returns locationID, locationCode, error.
