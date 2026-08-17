@@ -411,6 +411,17 @@ export default function ReceivingWizard() {
                     setShowTruckDropdown(true);
                     searchTrucks(transporter);
                   }}
+                  onBlur={() => {
+                    // Auto-populate driver fields from matching truck
+                    const match = truckSuggestions.find(
+                      (t) => t.truck_no === transporter || t.transporter === transporter
+                    );
+                    if (match) {
+                      if (match.driver_name) setDriverName(match.driver_name);
+                      if (match.driver_phone) setDriverPhone(match.driver_phone);
+                    }
+                    setTimeout(() => setShowTruckDropdown(false), 150);
+                  }}
                   autoComplete="off"
                 />
                 {showTruckDropdown && truckSuggestions.length > 0 && (
@@ -423,8 +434,8 @@ export default function ReceivingWizard() {
                         onMouseDown={(e) => {
                           e.preventDefault(); // prevent blur
                           setTransporter(t.transporter || t.truck_no || "");
-                          if (t.driver_name && !driverName) setDriverName(t.driver_name);
-                          if (t.driver_phone && !driverPhone) setDriverPhone(t.driver_phone);
+                          if (t.driver_name) setDriverName(t.driver_name);
+                          if (t.driver_phone) setDriverPhone(t.driver_phone);
                           setShowTruckDropdown(false);
                         }}
                       >
