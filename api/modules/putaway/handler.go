@@ -17,6 +17,7 @@ import (
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/", createLog(db))
 	r.Post("/fit-exception", recordFitException(db))
+	r.Get("/logs", listLogs(db))
 	r.Get("/rules", listRulesAlias(db))
 	r.Get("/suggest", suggest(db))
 	r.Get("/queue", queue(db))
@@ -55,6 +56,137 @@ func listRulesAlias(db *pgxpool.Pool) fiber.Handler {
 			list = append(list, r)
 		}
 		return shared.OK(c, list)
+	}
+}
+
+func listLogs(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userID, _ := strconv.Atoi(c.Query("user_id", "0"))
+		itemCode := strings.TrimSpace(c.Query("item_code"))
+		logNo := strings.TrimSpace(c.Query("log_no"))
+		dateFrom := strings.TrimSpace(c.Query("date_from"))
+		dateTo := strings.TrimSpace(c.Query("date_to"))
+		exceptionType := strings.TrimSpace(c.Query("exception_type"))
+		page, _ := strconv.Atoi(c.Query("page", "1"))
+		limit, _ := strconv.Atoi(c.Query("limit", "50"))
+		if page < 1 {
+			page = 1
+		}
+		if limit < 1 || limit > 200 {
+			limit = 50
+		}
+		offset := (page - 1) * limit
+
+		query := `
+			SELECT pl.id, pl.log_no, pl.item_code, i.name, pl.quantity,
+			       COALESCE(sl1.code, '') as source_location_code,
+			       COALESCE(sl1.aisle, '') as source_aisle,
+			       COALESCE(sl1.shelf, '') as source_shelf,
+			       COALESCE(sl1.level, '') as source_level,
+			       COALESCE(sl2.code, '') as target_location_code,
+			       COALESCE(sl2.aisle, '') as target_aisle,
+			       COALESCE(sl2.shelf, '') as target_shelf,
+			       COALESCE(sl2.level, '') as target_level,
+			       COALESCE(u.username, '') as placed_by_name,
+			       pl.placed_at::text,
+			       COALESCE(pl.exception_reason, ''),
+			       COALESCE(pl.is_override, false)
+			FROM putaway_logs pl
+			LEFT JOIN items i ON i.code = pl.item_code
+			LEFT JOIN warehouse_locations sl1 ON sl1.id = pl.source_location_id
+			LEFT JOIN warehouse_locations sl2 ON sl2.code = pl.target_location
+			LEFT JOIN users u ON u.id = pl.placed_by
+			WHERE 1=1`
+
+		args := []any{}
+		argIdx := 1
+
+		if userID > 0 {
+			query += fmt.Sprintf(` AND pl.placed_by=$%d`, argIdx)
+			args = append(args, userID)
+			argIdx++
+		}
+		if itemCode != "" {
+			query += fmt.Sprintf(` AND pl.item_code ILIKE $%d`, argIdx)
+			args = append(args, "%"+itemCode+"%")
+			argIdx++
+		}
+		if logNo != "" {
+			query += fmt.Sprintf(` AND pl.log_no ILIKE $%d`, argIdx)
+			args = append(args, "%"+logNo+"%")
+			argIdx++
+		}
+		if dateFrom != "" {
+			query += fmt.Sprintf(` AND pl.placed_at >= $%d`, argIdx)
+			args = append(args, dateFrom)
+			argIdx++
+		}
+		if dateTo != "" {
+			query += fmt.Sprintf(` AND pl.placed_at <= $%d`, argIdx)
+			args = append(args, dateTo+" 23:59:59")
+			argIdx++
+		}
+		if exceptionType != "" {
+			query += fmt.Sprintf(` AND pl.exception_reason = $%d`, argIdx)
+			args = append(args, exceptionType)
+			argIdx++
+		}
+
+		var total int
+		countQuery := "SELECT COUNT(*) FROM (" + query + ") sub"
+		_ = db.QueryRow(c.Context(), countQuery, args...).Scan(&total)
+
+		query += fmt.Sprintf(` ORDER BY pl.placed_at DESC LIMIT $%d OFFSET $%d`, argIdx, argIdx+1)
+		args = append(args, limit, offset)
+
+		rows, err := db.Query(c.Context(), query, args...)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
+
+		type logEntry struct {
+			ID                 int      `json:"id"`
+			LogNo              string   `json:"log_no"`
+			ItemCode           string   `json:"item_code"`
+			ItemName           *string  `json:"item_name"`
+			Quantity           float64  `json:"quantity"`
+			SourceLocationCode string   `json:"source_location_code"`
+			SourceAisle        string   `json:"source_aisle"`
+			SourceShelf        string   `json:"source_shelf"`
+			SourceLevel        string   `json:"source_level"`
+			TargetLocationCode string   `json:"target_location_code"`
+			TargetAisle        string   `json:"target_aisle"`
+			TargetShelf        string   `json:"target_shelf"`
+			TargetLevel        string   `json:"target_level"`
+			PlacedBy           string   `json:"placed_by"`
+			PlacedAt           string   `json:"placed_at"`
+			ExceptionReason    string   `json:"exception_reason"`
+			IsOverride         bool     `json:"is_override"`
+		}
+
+		list := []logEntry{}
+		for rows.Next() {
+			var e logEntry
+			if err := rows.Scan(&e.ID, &e.LogNo, &e.ItemCode, &e.ItemName, &e.Quantity,
+				&e.SourceLocationCode, &e.SourceAisle, &e.SourceShelf, &e.SourceLevel,
+				&e.TargetLocationCode, &e.TargetAisle, &e.TargetShelf, &e.TargetLevel,
+				&e.PlacedBy, &e.PlacedAt, &e.ExceptionReason, &e.IsOverride); err != nil {
+				continue
+			}
+			list = append(list, e)
+		}
+
+		totalPages := (total + limit - 1) / limit
+		return shared.OK(c, fiber.Map{
+			"data": list,
+			"pagination": fiber.Map{
+				"page":        page,
+				"limit":       limit,
+				"total":       total,
+				"total_pages": totalPages,
+			},
+		})
 	}
 }
 
