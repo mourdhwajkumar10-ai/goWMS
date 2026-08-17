@@ -1,103 +1,592 @@
-/* Putaway Wizard — component styles */
+/* Putaway Wizard — Minimal/Modern Design System
+   Tokens: 8px grid, 12px radius, accent blue #2563eb */
 
-/* Mode selection cards */
+/* ─── Design Tokens ─── */
+:root {
+  --pw-accent: #2563eb;
+  --pw-accent-hover: #1d4ed8;
+  --pw-bg: #ffffff;
+  --pw-bg-2: #f9fafb;
+  --pw-border: #e5e7eb;
+  --pw-border-hover: #d1d5db;
+  --pw-text: #111827;
+  --pw-text-dim: #6b7280;
+  --pw-radius: 12px;
+  --pw-radius-sm: 8px;
+  --pw-radius-xs: 6px;
+  --pw-zone-a: #2563eb;
+  --pw-zone-b: #059669;
+  --pw-zone-c: #7c3aed;
+  --pw-zone-d: #db2777;
+  --pw-zone-e: #ea580c;
+  --pw-zone-f: #0891b2;
+  --pw-zone-g: #65a30d;
+}
+
+/* ─── Mode Selection ─── */
 .pw-mode-card {
   flex: 1;
-  padding: 24px 16px;
-  border-radius: var(--border-radius-lg);
-  background: var(--panel);
-  border: 2px solid transparent;
+  padding: 24px 20px;
+  border-radius: var(--pw-radius);
+  background: var(--pw-bg);
+  border: 1px solid var(--pw-border);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 120ms ease-out, box-shadow 120ms ease-out, border-color 120ms ease-out;
   text-align: left;
-  font-size: 18px;
+  font-size: 16px;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  color: var(--pw-text);
+  line-height: 1.4;
+  min-height: 120px;
+  font-family: inherit;
 }
 .pw-mode-card:hover {
-  border-color: var(--accent);
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-base);
+  border-color: var(--pw-accent);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
 }
 .pw-mode-card:active {
-  transform: translateY(0);
+  transform: scale(0.96);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
-.pw-mode-card .pw-mode-subtitle {
-  font-size: var(--text-xs);
-  opacity: 0.7;
-  margin-top: 4px;
-}
-
-/* Queue preview list */
-.pw-queue-preview {
-  padding: 8px 12px;
-  background: var(--bg);
-  border-radius: var(--border-radius);
+.pw-mode-icon {
+  font-size: 24px;
   margin-bottom: 4px;
 }
+.pw-mode-subtitle {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--pw-text-dim);
+}
 
-/* Zone list items */
-.pw-zone-item {
+/* ─── Queue Summary Banner ─── */
+.pw-queue-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+  margin-bottom: 16px;
+}
+.pw-queue-count {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--pw-accent);
+  line-height: 1;
+}
+.pw-queue-label {
+  font-size: 13px;
+  color: var(--pw-text-dim);
+}
+
+/* ─── Queue Item Cards ─── */
+.pw-queue-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+  margin-bottom: 8px;
+  transition: border-color 120ms ease-out;
+}
+.pw-queue-item:hover {
+  border-color: var(--pw-accent);
+}
+.pw-queue-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pw-queue-item-code {
+  font-weight: 600;
+  font-size: 14px;
+}
+.pw-queue-item-name {
+  font-size: 12px;
+  color: var(--pw-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pw-queue-item-qty {
+  font-size: 11px;
+  color: var(--pw-text-dim);
+}
+.pw-queue-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ─── Zone Cards ─── */
+.pw-zone-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
   width: 100%;
   text-align: left;
-  padding: var(--padding-md);
-  border-radius: var(--border-radius);
-  background: var(--panel);
-  border: 1px solid var(--border);
+  padding: 16px 20px;
+  border-radius: var(--pw-radius);
+  background: var(--pw-bg);
+  border: 1px solid var(--pw-border);
   cursor: pointer;
-  transition: all 0.15s ease;
+  transition: transform 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
   margin-bottom: 8px;
 }
-.pw-zone-item:hover {
-  border-color: var(--accent);
+.pw-zone-card:hover {
+  border-color: var(--pw-accent);
+  transform: translateX(4px);
+}
+.pw-zone-letter {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--pw-accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+/* Zone-specific colors */
+.pw-zone-letter[data-zone="A"] { background: var(--pw-zone-a); }
+.pw-zone-letter[data-zone="B"] { background: var(--pw-zone-b); }
+.pw-zone-letter[data-zone="C"] { background: var(--pw-zone-c); }
+.pw-zone-letter[data-zone="D"] { background: var(--pw-zone-d); }
+.pw-zone-letter[data-zone="E"] { background: var(--pw-zone-e); }
+.pw-zone-letter[data-zone="F"] { background: var(--pw-zone-f); }
+.pw-zone-letter[data-zone="G"] { background: var(--pw-zone-g); }
+.pw-zone-info {
+  flex: 1;
+}
+.pw-zone-name {
+  font-weight: 600;
+  font-size: 15px;
+}
+.pw-zone-count {
+  font-size: 12px;
+  color: var(--pw-text-dim);
+}
+.pw-zone-arrow {
+  color: var(--pw-text-dim);
+  font-size: 16px;
 }
 
-/* Tote list section */
+/* ─── Tote Section ─── */
 .pw-tote-section {
   margin-bottom: 16px;
+  padding: 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 2px solid var(--pw-accent);
 }
-
-/* Tote item row */
-.pw-tote-item {
-  padding: 8px 12px;
-  background: var(--bg);
-  border-radius: var(--border-radius);
-  margin-bottom: 4px;
+.pw-tote-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 12px;
 }
-.pw-tote-item:hover {
-  background: var(--panel-2);
+.pw-tote-title {
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pw-tote-count-badge {
+  background: var(--pw-accent);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+  min-width: 24px;
+  text-align: center;
 }
 
-/* Available items list */
-.pw-item-row {
-  padding: 12px;
-  background: var(--bg);
-  border-radius: var(--border-radius);
+/* ─── Tote Items ─── */
+.pw-tote-item {
+  padding: 12px 14px;
+  background: var(--pw-bg-2);
+  border-radius: var(--pw-radius-sm);
   margin-bottom: 8px;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border: 1px solid transparent;
+  transition: border-color 120ms ease-out, background 120ms ease-out;
 }
-.pw-item-row:hover {
-  background: var(--panel-2);
+.pw-tote-item:hover {
+  background: var(--pw-bg);
+  border-color: var(--pw-border);
+}
+.pw-tote-item-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.pw-tote-item-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pw-tote-item-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--pw-text-dim);
 }
 
-/* Putaway suggestion card */
-.pw-suggestion-card {
-  padding: 16px;
-  background: var(--bg);
-  border-radius: var(--border-radius-md);
-  margin-bottom: 16px;
-  border: 2px solid var(--accent);
-}
-.pw-suggestion-card .pw-location-code {
-  font-size: 20px;
+/* ─── Quantity Badge ─── */
+.pw-qty-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--pw-radius-sm);
+  background: var(--pw-bg-2);
+  border: 1px solid var(--pw-border);
   font-weight: 600;
-  margin: var(--margin-sm) 0;
+  font-size: 14px;
+  white-space: nowrap;
+}
+.pw-qty-badge-lg {
+  font-size: 20px;
+  padding: 6px 14px;
 }
 
-/* Scanner modal overlay */
+/* ─── Status Badges ─── */
+.pw-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.pw-placed {
+  background: #dcfce7;
+  color: #166534;
+}
+.pw-picked {
+  background: #fef3c7;
+  color: #92400e;
+}
+.pw-suggested {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+/* ─── Scan Input Section ─── */
+.pw-scan-section {
+  margin-bottom: 16px;
+  padding: 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+}
+.pw-scan-section-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pw-scan-input-wrap {
+  position: relative;
+}
+.pw-scan-input-row {
+  display: flex;
+  gap: 8px;
+}
+.pw-scan-field {
+  flex: 1;
+  font-size: 16px;
+  padding: 12px !important;
+}
+.pw-scan-btn {
+  padding: 12px 20px !important;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 600;
+  transition: transform 120ms ease-out;
+}
+.pw-scan-btn:active {
+  transform: scale(0.96);
+}
+
+/* ─── Suggestions Dropdown ─── */
+.pw-suggestions-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  background: var(--pw-bg);
+  border: 1px solid var(--pw-border);
+  border-radius: 0 0 var(--pw-radius) var(--pw-radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  max-height: 320px;
+  overflow-y: auto;
+}
+.pw-suggestion-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  transition: background 100ms ease;
+  font-size: 14px;
+  border-bottom: 1px solid var(--pw-border);
+}
+.pw-suggestion-item:last-child {
+  border-bottom: none;
+}
+.pw-suggestion-item:hover {
+  background: var(--pw-bg-2);
+}
+.pw-sug-code {
+  font-weight: 600;
+  min-width: 100px;
+  font-family: monospace;
+  font-size: 14px;
+}
+.pw-sug-name {
+  flex: 1;
+  color: var(--pw-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.pw-sug-qty {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pw-text-dim);
+  white-space: nowrap;
+}
+.pw-sug-badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: var(--pw-accent);
+  color: white;
+  border-radius: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.pw-sug-recommended {
+  background: var(--pw-bg-2);
+}
+
+/* ─── Picking State ─── */
+.pw-picking {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ─── Putaway Step ─── */
+.pw-putaway-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+  font-size: 13px;
+}
+.pw-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--pw-border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.pw-progress-fill {
+  height: 100%;
+  background: var(--pw-accent);
+  border-radius: 3px;
+  transition: width 300ms ease;
+}
+.pw-progress-text {
+  font-weight: 500;
+  white-space: nowrap;
+}
+.pw-progress-sep {
+  color: var(--pw-text-dim);
+}
+
+/* ─── Current Item Card ─── */
+.pw-current-item-card {
+  padding: 20px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 2px solid var(--pw-accent);
+  margin-bottom: 16px;
+  animation: pw-slide-in 150ms ease;
+}
+.pw-current-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 8px;
+}
+.pw-current-item-code {
+  font-size: 20px;
+  font-weight: 700;
+}
+.pw-current-item-name {
+  font-size: 13px;
+  color: var(--pw-text-dim);
+  margin-top: 2px;
+}
+.pw-current-item-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--pw-bg-2);
+  border-radius: var(--pw-radius-sm);
+  font-size: 13px;
+}
+.pw-flow-from {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.pw-flow-to {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+.pw-flow-arrow {
+  font-size: 20px;
+  color: var(--pw-accent);
+  flex-shrink: 0;
+}
+.pw-flow-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--pw-text-dim);
+}
+.pw-flow-code {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+/* ─── Suggestion Card ─── */
+.pw-suggestion-card {
+  padding: 20px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  margin-bottom: 16px;
+  border: 2px solid var(--pw-accent);
+  position: relative;
+}
+.pw-suggestion-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--pw-text-dim);
+  margin-bottom: 4px;
+}
+.pw-location-code {
+  font-size: 28px;
+  font-weight: 800;
+  font-family: monospace;
+  letter-spacing: 0.5px;
+  margin: 4px 0 8px;
+}
+.pw-suggestion-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pw-suggestion-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  background: var(--pw-bg-2);
+  border-radius: var(--pw-radius-sm);
+  font-size: 12px;
+  color: var(--pw-text-dim);
+}
+.pw-suggestion-tag strong {
+  color: var(--pw-text);
+}
+
+/* ─── Loading Card ─── */
+.pw-loading-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 32px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  margin-bottom: 16px;
+}
+.pw-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--pw-border);
+  border-top-color: var(--pw-accent);
+  border-radius: 50%;
+  animation: pw-spin 0.8s linear infinite;
+  margin-bottom: 12px;
+}
+@keyframes pw-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ─── Location Scan Section ─── */
+.pw-location-scan-section {
+  margin-bottom: 12px;
+}
+
+/* ─── Start Putaway Button ─── */
+.pw-start-putaway-btn {
+  font-size: 14px;
+  padding: 10px 20px !important;
+  font-weight: 600;
+  transition: transform 120ms ease-out;
+}
+.pw-start-putaway-btn:active {
+  transform: scale(0.96);
+}
+
+/* ─── Scanner Modal ─── */
 .pw-scanner-overlay {
   position: fixed;
   inset: 0;
@@ -108,58 +597,224 @@
   justify-content: center;
 }
 .pw-scanner-modal {
-  background: var(--fg-color, white);
+  background: var(--pw-bg);
   padding: 24px;
-  border-radius: var(--border-radius-lg);
+  border-radius: var(--pw-radius);
   width: 90%;
   max-width: 400px;
+  animation: pw-slide-in 150ms ease;
 }
 
-/* Fit exception form fields */
+/* ─── Fit Exception ─── */
 .pw-fit-fields {
   display: flex;
   gap: 8px;
   margin-top: 8px;
 }
 
-/* Complete screen */
+/* ─── Complete Screen ─── */
 .pw-complete-card {
   text-align: center;
-  padding: 32px;
+  padding: 40px 32px;
+  animation: pw-slide-in 150ms ease;
 }
 .pw-complete-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #dcfce7;
+  color: #166534;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  margin: 0 auto 16px;
 }
 .pw-complete-count {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 8px;
+  font-size: 20px;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+.pw-complete-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: var(--pw-bg-2);
+  border-radius: var(--pw-radius-sm);
+  margin-bottom: 6px;
+  text-align: left;
 }
 
-/* Responsive adjustments */
+/* ─── Available Items Section ─── */
+.pw-available-section {
+  margin-top: 16px;
+}
+.pw-available-header {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pw-available-count {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--pw-text-dim);
+}
+.pw-item-row {
+  padding: 12px 16px;
+  background: var(--pw-bg);
+  border-radius: var(--pw-radius);
+  border: 1px solid var(--pw-border);
+  margin-bottom: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: border-color 120ms ease-out;
+}
+.pw-item-row:hover {
+  border-color: var(--pw-accent);
+}
+.pw-item-row-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+.pw-item-row-code {
+  font-weight: 600;
+  font-size: 14px;
+}
+.pw-item-row-name {
+  font-size: 12px;
+  color: var(--pw-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pw-item-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--pw-text-dim);
+}
+.pw-item-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+/* ─── Animations ─── */
+@keyframes pw-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+.pw-animate-in {
+  animation: pw-slide-in 150ms ease;
+}
+@keyframes pw-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+.pw-pulse {
+  animation: pw-pulse 1.5s ease-in-out infinite;
+}
+
+/* ─── Exception Panel ─── */
+.pw-exception-panel {
+  background: #fffbeb;
+  border: 1px solid #f59e0b;
+  border-radius: var(--pw-radius);
+  padding: 16px;
+  margin-top: 12px;
+  animation: pw-slide-in 150ms ease;
+}
+.pw-exception-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #b45309;
+  margin-bottom: 6px;
+}
+.pw-exception-msg {
+  font-size: 13px;
+  color: #92400e;
+  margin-bottom: 12px;
+  line-height: 1.4;
+}
+.pw-exception-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.pw-exception-btn {
+  font-size: 12px !important;
+  padding: 8px 14px !important;
+  border-radius: 6px !important;
+  transition: transform 120ms ease-out;
+}
+.pw-exception-btn:active {
+  transform: scale(0.96);
+}
+.pw-exception-danger {
+  border-color: var(--red, #dc2626) !important;
+  color: var(--red, #dc2626) !important;
+}
+
+/* ─── Responsive ─── */
 @media (max-width: 480px) {
   .pw-mode-card {
-    padding: 16px;
-    font-size: 16px;
+    padding: 20px 16px;
+    font-size: 15px;
   }
   .pw-scanner-modal {
     width: 95%;
     padding: 16px;
   }
-}
-
-/* Slide-in animation */
-@keyframes pw-slide-in {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
+  .pw-scan-field {
+    font-size: 14px;
   }
-  to {
-    opacity: 1;
-    transform: translateY(0);
+  .pw-location-code {
+    font-size: 22px;
+  }
+  .pw-current-item-code {
+    font-size: 18px;
+  }
+  .pw-queue-banner {
+    padding: 10px 12px;
+  }
+  .pw-queue-count {
+    font-size: 24px;
   }
 }
-.pw-animate-in {
-  animation: pw-slide-in 150ms ease;
+@media (max-width: 768px) {
+  .pw-mode-card {
+    min-height: 100px;
+  }
+  .pw-zone-card {
+    padding: 12px 16px;
+  }
+  .pw-tote-section {
+    padding: 12px;
+  }
+  .pw-scan-section {
+    padding: 12px;
+  }
+  .pw-current-item-card {
+    padding: 16px;
+  }
+  .pw-suggestion-card {
+    padding: 16px;
+  }
 }
