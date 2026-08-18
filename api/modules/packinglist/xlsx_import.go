@@ -70,10 +70,22 @@ func importXLSX(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		colMap := map[string]string{
-			"part_no": "Part No", "part_name": "Part Name", "qty": "Qty",
-			"batch_no": "Batch No", "box_number": "Box Number", "supplier_sku": "Part No",
-			"invoice_no": "Invoice No", "supplier_name": "Supplier Name",
-		}
+			"part_code":     "Part Code",
+			"part_name":     "Part Name",
+			"qty":           "Qty",
+			"box_number":    "Box Number",
+			"invoice_no":    "InvoiceNo",
+			"delivery_no":   "Delivery No",
+			"dealer_code":   "Dealer Code",
+			"dealer_name":   "Dealer",
+			"plant":         "Plant",
+			"invoice_date":  "InvoiceDate",
+			"delivery_date": "Delivery date",
+			"unit_weight":   "Calculated Part Weight(in KG)",
+			"branch":        "Branch",
+		"box_no_from":   "Box No.From",
+		"box_no_to":     "Box No.To",
+	}
 		if templateID > 0 {
 			var raw string
 			_ = db.QueryRow(c.Context(), `SELECT column_map::text FROM packing_list_templates WHERE id=$1`, templateID).Scan(&raw)
@@ -87,6 +99,23 @@ func importXLSX(db *pgxpool.Pool) fiber.Handler {
 				key = logical
 			}
 			idx, ok := colIdx[key]
+			if !ok {
+				// Fallback keys to support alternative spellings
+				fallbackKeys := map[string][]string{
+					"part_code":    {"Part No", "PartCode", "PartNo", "part_no"},
+					"invoice_no":   {"Invoice No", "Invoice_No"},
+					"box_number":   {"Box Number", "BoxNo", "Box_No"},
+					"unit_weight":  {"Calculated Part Weight(in KG)", "Weight", "Unit Weight"},
+					"supplier_sku": {"Part Code", "Part No", "PartNo"},
+				}
+				if fks, exists := fallbackKeys[logical]; exists {
+					for _, fk := range fks {
+						if idx, ok = colIdx[fk]; ok {
+							break
+						}
+					}
+				}
+			}
 			if !ok {
 				for h, i := range colIdx {
 					if strings.EqualFold(h, key) || strings.EqualFold(h, logical) {
@@ -109,7 +138,7 @@ func importXLSX(db *pgxpool.Pool) fiber.Handler {
 				m[colMap[logical]] = getCell(row, logical)
 			}
 			// also store by logical keys for importIntoGRN get()
-			m["Part No"] = getCell(row, "part_no")
+			m["Part No"] = getCell(row, "part_code")
 			m["Part Name"] = getCell(row, "part_name")
 			m["Qty"] = getCell(row, "qty")
 			m["Batch No"] = getCell(row, "batch_no")
