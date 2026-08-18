@@ -1,20 +1,23 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
+import ScannerInput from "../components/ScannerInput";
 import "../styles/receiving-wizard.css";
 
-interface ImportSummary {
-  total_rows: number;
-  rows_imported: number;
-  rows_skipped: number;
-  unique_invoices: string[];
-  unique_delivery_nos: string[];
-  total_boxes: number;
-  single_item_boxes: number;
-  multi_item_boxes: number;
-  total_unique_items: number;
+/* ─── Types ─── */
+
+interface POInfo {
+  id: number;
+  name: string;
+  supplier_name: string;
+  status: string;
+  grand_total: number;
+  schedule_date: string;
+  item_count: number;
   total_qty: number;
-  dealer: string;
-  plant: string;
+  received_qty: number;
+  open_sessions: number;
+  resume_session_id?: number | null;
 }
 
 interface BoxItem {
@@ -22,20 +25,8 @@ interface BoxItem {
   part_name: string;
   expected_qty: number;
   scanned_qty: number;
-  unit_weight_kg: number;
   status: string;
-}
-
-interface BoxInfo {
-  id: number;
-  box_number: string;
-  box_type: string;
-  status: string;
-  item_count: number;
-  is_single_item: boolean;
-  total_qty: number;
-  scanned_qty: number;
-  items: BoxItem[];
+  requires_qi?: boolean;
 }
 
 interface ScanResult {
@@ -48,6 +39,7 @@ interface ScanResult {
 
 interface StatsData {
   session_id: number;
+  session_no?: string;
   delivery_no: string;
   total_boxes: number;
   boxes_received: number;
@@ -66,102 +58,116 @@ interface StatsData {
   est_remaining_sec: number;
 }
 
+/* ─── Helpers ─── */
+
+const playBeep = (freq = 800, duration = 0.15) => {
+  try {
+    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  } catch (_) { /* ignore */ }
+};
+
+const triggerVibrate = (pattern: number | number[] = 200) => {
+  if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(pattern);
+};
+
+const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+
+type Step = "select_po" | "scan_box" | "scan_items" | "complete";
+
+const STEP_LABELS = ["Select PO", "Scan Box", "Scan Items", "Done"];
+const STEP_KEYS: Step[] = ["select_po", "scan_box", "scan_items", "complete"];
+
+/* ─── Component ─── */
+
 export default function ReceivingWizard() {
-  const [step, setStep] = useState<"import" | "select" | "scan" | "complete">("import");
+  const [searchParams] = useSearchParams();
+  const resumeSessionId = searchParams.get("session_id");
+  const packingListId = searchParams.get("packing_list_id");
+
+  const [step, setStep] = useState<Step>(resumeSessionId ? "scan_box" : "select_po");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [flash, setFlash] = useState<{ text: string; type: "success" | "warning" | "error" } | null>(null);
+  const [toasts, setToasts] = useState<{ id: number; text: string; type: string }[]>([]);
 
-  // Import
-  const [file, setFile] = useState<File | null>(null);
-  const [driverName, setDriverName] = useState("");
-  const [driverPhone, setDriverPhone] = useState("");
-  const [transporter, setTransporter] = useState("");
-  const [defaultRoute, setDefaultRoute] = useState("INCOMING-01");
+  // PO selection
+  const [pendingPOs, setPendingPOs] = useState<POInfo[]>([]);
+  const [selectedPO, setSelectedPO] = useState<POInfo | null>(null);
 
-  // Truck + Driver autocomplete (shared data from transports table)
-  const [truckSuggestions, setTruckSuggestions] = useState<any[]>([]);
-  const [showTruckDropdown, setShowTruckDropdown] = useState(false);
-  const truckDropdownRef = useRef<HTMLDivElement>(null);
-  const [showDriverDropdown, setShowDriverDropdown] = useState(false);
-  const driverDropdownRef = useRef<HTMLDivElement>(null);
+  // Packing list from management page
+  const [packingList, setPackingList] = useState<any>(null);
 
   // Session
-  const [sessionId, setSessionId] = useState<number | null>(null);
-  const [sessionNo, setSessionNo] = useState("");
-  const [importSummary, setImportSummary] = useState<ImportSummary | null>(null);
+  const [sessionId, setSessionId] = useState<number | null>(resumeSessionId ? Number(resumeSessionId) : null);
+  const [sessionNo, setSessionNo] = useState<string | null>(null);
 
-  // Select
-  const [invoices, setInvoices] = useState<any[]>([]);
-  const [deliveryNotes, setDeliveryNotes] = useState<any[]>([]);
-  const [selectedInvoice, setSelectedInvoice] = useState("");
-  const [selectedDN, setSelectedDN] = useState("");
+  const defaultRoute = "INCOMING-01";
 
-  // Scan
-  const [boxes, setBoxes] = useState<BoxInfo[]>([]);
-  const [currentBox, setCurrentBox] = useState<BoxInfo | null>(null);
+  // Scan state
+  const [currentBox, setCurrentBox] = useState<{ box_number: string; items: BoxItem[] } | null>(null);
   const [scanInput, setScanInput] = useState("");
+  const [suggestedBoxes, setSuggestedBoxes] = useState<any[]>([]);
   const [scanHistory, setScanHistory] = useState<ScanResult[]>([]);
   const [stats, setStats] = useState<StatsData | null>(null);
-
+  const [lastRoute, setLastRoute] = useState<string | null>(null);
+  const [exceptions, setExceptions] = useState<any[]>([]);
   const scanInputRef = useRef<HTMLInputElement>(null);
 
-  const playBeep = (freq = 800, duration = 0.15) => {
-    try {
-      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.1, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start();
-      osc.stop(ctx.currentTime + duration);
-    } catch (_) { /* ignore */ }
-  };
-
-  const triggerVibrate = (pattern: number | number[] = 200) => {
-    if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(pattern);
-  };
-
-  // Fetch all trucks on mount (shared by both driver + truck fields)
+  // ─── Load POs on mount ───
   useEffect(() => {
-    api.transportsList().then((r) => {
-      if (r.ok) setTruckSuggestions(r.data || []);
+    api.receivingPendingPOs().then((r) => {
+      if (r.ok) setPendingPOs((r.data || []).slice(0, 5));
     });
   }, []);
 
-  // Close truck dropdown on outside click
+  // Resume session from query param
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (truckDropdownRef.current && !truckDropdownRef.current.contains(e.target as Node)) {
-        setShowTruckDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+    if (resumeSessionId) {
+      api.receivingStats(Number(resumeSessionId)).then((r) => {
+        if (r.ok) {
+          setStats(r.data);
+          setSessionId(Number(resumeSessionId));
+          if (r.data.session_no) setSessionNo(r.data.session_no);
+          setStep("scan_box");
+        }
+      });
+    }
+  }, [resumeSessionId]);
 
-  // Close driver dropdown on outside click
+  // Load packing list from management page
   useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
-      if (driverDropdownRef.current && !driverDropdownRef.current.contains(e.target as Node)) {
-        setShowDriverDropdown(false);
-      }
-    };
-    document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, []);
+    if (packingListId) {
+      setLoading(true);
+      api.packingListGet(Number(packingListId)).then((r) => {
+        if (r.ok && r.data) {
+          setPackingList(r.data);
+          showFlash(`Loaded packing list: ${r.data.name}`, "success");
+        }
+        setLoading(false);
+      });
+    }
+  }, [packingListId]);
 
+  // Auto-focus scan input
   useEffect(() => {
-    if (step === "scan" && scanInputRef.current) scanInputRef.current.focus();
+    if ((step === "scan_box" || step === "scan_items") && scanInputRef.current) {
+      scanInputRef.current.focus();
+    }
   }, [step, currentBox]);
 
+  // Poll stats while scanning
   useEffect(() => {
     let timer: any;
-    if (step === "scan" && sessionId) {
+    if ((step === "scan_box" || step === "scan_items") && sessionId) {
       const fetchStats = () => api.receivingStats(sessionId).then((r) => { if (r.ok) setStats(r.data); });
       fetchStats();
       timer = setInterval(fetchStats, 10000);
@@ -169,495 +175,556 @@ export default function ReceivingWizard() {
     return () => clearInterval(timer);
   }, [step, sessionId]);
 
+  // Poll exceptions while scanning
+  useEffect(() => {
+    let timer: any;
+    if ((step === "scan_box" || step === "scan_items") && sessionId) {
+      const fetchExceptions = () => api.receivingExceptions(sessionId).then((r) => { if (r.ok) setExceptions(r.data || []); });
+      fetchExceptions();
+      timer = setInterval(fetchExceptions, 15000);
+    }
+    return () => clearInterval(timer);
+  }, [step, sessionId]);
+
+  // Fetch suggested boxes to scan
+  useEffect(() => {
+    if (sessionId && step === "scan_box") {
+      const fetchBoxes = async () => {
+        const res = await api.receivingBoxes(sessionId);
+        if (res.ok && res.data?.boxes) {
+          // Filter unscanned boxes and show top 3 suggestions
+          const unscanned = res.data.boxes.filter((b: any) => b.status !== "verified" && b.status !== "received");
+          setSuggestedBoxes(unscanned.slice(0, 3));
+        }
+      };
+      fetchBoxes();
+      const timer = setInterval(fetchBoxes, 10000);
+      return () => clearInterval(timer);
+    }
+  }, [sessionId, step]);
+
   const showFlash = (text: string, type: "success" | "warning" | "error" = "success") => {
-    setFlash({ text, type });
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, text, type }]);
     if (type === "success") playBeep(800, 0.15);
     else if (type === "error") { playBeep(250, 0.4); triggerVibrate([100, 50, 100]); }
     else { playBeep(400, 0.25); triggerVibrate(150); }
-    setTimeout(() => setFlash(null), 3000);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 3000);
   };
 
-  const handleImport = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!file) { setError("Please select a valid excel file."); return; }
-    setLoading(true);
-    setError("");
-    const res = await api.receivingImport(file, driverName, driverPhone, transporter, defaultRoute);
-    setLoading(false);
-    if (!res.ok) { setError(res.error || "Failed to import packing list."); return; }
-    const data = res.data;
-    setSessionId(data.grn_session_id);
-    setSessionNo(data.session_no);
-    setImportSummary(data.import_summary);
-    if (data.auto_skip) {
-      setSelectedInvoice(data.auto_selected_invoice);
-      setSelectedDN(data.auto_selected_dn);
-      loadBoxes(data.grn_session_id, data.auto_selected_dn);
-      setStep("scan");
-      showFlash("Import successful — session auto-started.", "success");
-    } else {
-      loadSelectors(data.grn_session_id);
-      setStep("select");
-    }
-  };
+  // ─── Step 1: Select PO or Upload Packing List ───
 
-  const loadSelectors = async (sid: number) => {
-    const invRes = await api.receivingInvoices(sid);
-    if (invRes.ok) setInvoices(invRes.data);
-  };
-
-  const handleInvoiceChange = async (inv: string) => {
-    setSelectedInvoice(inv);
-    setSelectedDN("");
-    if (sessionId) {
-      const dnRes = await api.receivingDNs(sessionId, inv);
-      if (dnRes.ok) setDeliveryNotes(dnRes.data);
-    }
-  };
-
-  const loadBoxes = async (sid: number, dn: string) => {
+  const handleSelectPO = async (po: POInfo) => {
+    setSelectedPO(po);
+    // If the PO already has an open GRN session, resume it — the import call also
+    // backfills expected boxes from PO items if the session has none yet
+    const existingSessionId = po.resume_session_id ?? undefined;
     setLoading(true);
     try {
-      const boxRes = await api.receivingBoxes(sid, dn);
-      if (boxRes.ok) setBoxes(boxRes.data.boxes || []);
-    } finally {
+      const res = await api.receivingImport(
+        new File([""], "placeholder.xlsx", { type: "application/octet-stream" }),
+        "", "", "", defaultRoute, existingSessionId, po.name, po.supplier_name
+      );
       setLoading(false);
+      if (!res.ok) { setError(res.error || "Failed to create session"); return; }
+      setSessionId(res.data.grn_session_id);
+      if (res.data.session_no) setSessionNo(res.data.session_no);
+      // Refresh stats so progress + suggested boxes reflect the (possibly backfilled) session
+      const statsRes = await api.receivingStats(res.data.grn_session_id);
+      if (statsRes.ok) { setStats(statsRes.data); if (statsRes.data.session_no) setSessionNo(statsRes.data.session_no); }
+      setStep("scan_box");
+      if (existingSessionId) {
+        const summary = res.data.import_summary;
+        showFlash(
+          summary && summary.total_boxes > 0
+            ? `${res.data.session_no} ready — ${summary.total_boxes} boxes to scan`
+            : `Resumed ${po.name} — continue scanning boxes`,
+          "success"
+        );
+      } else {
+        showFlash(`Session ${res.data.session_no} started — scan boxes`, "success");
+      }
+    } catch (e: any) {
+      setLoading(false);
+      setError(e.message || "Failed to create session");
     }
   };
 
-  const startReceiving = () => {
-    if (!selectedDN) { setError("Please select a delivery note."); return; }
-    if (sessionId) { loadBoxes(sessionId, selectedDN); setStep("scan"); }
+  const handleStartFromPackingList = async () => {
+    if (!packingList) return;
+    setLoading(true);
+    try {
+      // Create a session from the packing list
+      const res = await api.packingListApprove(packingList.id);
+      setLoading(false);
+      if (!res.ok) { setError(res.error || "Failed to start receiving"); return; }
+      // Navigate to scan mode
+      setStep("scan_box");
+      showFlash(`Receiving started for ${packingList.name} — scan boxes`, "success");
+    } catch (e: any) {
+      setLoading(false);
+      setError(e.message || "Failed to start receiving");
+    }
   };
 
-  const detectScanType = (raw: string): "box" | "item" => {
-    if (/^\d{10}-[CE]\d{4}$/.test(raw.trim())) return "box";
-    return "item";
+
+
+  // ─── Step 2: Scan Box ───
+
+  // Refresh progress bar + suggested boxes right after a successful scan,
+  // so the UI updates immediately instead of waiting for the 10s poll.
+  const refreshProgress = async () => {
+    if (!sessionId) return;
+    api.receivingStats(sessionId).then((r) => { if (r.ok) setStats(r.data); });
+    const res = await api.receivingBoxes(sessionId);
+    if (res.ok && res.data?.boxes) {
+      const unscanned = res.data.boxes.filter((b: any) => b.status !== "verified" && b.status !== "received");
+      setSuggestedBoxes(unscanned.slice(0, 3));
+    }
   };
 
-  const handleScanSubmit = async (e: React.FormEvent) => {
+  // explicitBox lets callers (suggestion buttons, camera scan, dropdown) submit a
+  // box number directly — setScanInput is async, so reading scanInput right after
+  // setScanInput would submit the stale previous value.
+  const handleBoxScanSubmit = async (e: React.FormEvent, explicitBox?: string) => {
+    e.preventDefault();
+    const raw = (explicitBox !== undefined ? explicitBox : scanInput).trim();
+    if (!raw || !sessionId) return;
+    setScanInput("");
+    setLoading(true);
+    try {
+      const res = await api.receivingScanBox({
+        session_id: sessionId,
+        box_number: raw,
+        auto_complete_single: true,
+        default_route: defaultRoute,
+      });
+      setLoading(false);
+      if (!res.ok) { showFlash(res.error || "Box not found", "error"); return; }
+      const data = res.data;
+      if (data.auto_completed) {
+        showFlash(data.message, "success");
+        setScanHistory((prev) => [{ box_number: raw, auto_completed: true, message: data.message, timestamp: new Date(), status: "success" }, ...prev.slice(0, 9)]);
+      } else {
+        setCurrentBox({ box_number: data.box_number, items: data.items || [] });
+        setStep("scan_items");
+        showFlash(data.message, "warning");
+      }
+      refreshProgress();
+    } catch (e: any) {
+      setLoading(false);
+      showFlash(e.message || "Scan failed", "error");
+    }
+  };
+
+  // ─── Step 3: Scan Items ───
+
+  const handleItemScanSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const raw = scanInput.trim();
-    if (!raw) return;
-    if (!sessionId) { showFlash("Session not loaded — try refreshing", "error"); return; }
+    if (!raw || !sessionId || !currentBox) return;
     setScanInput("");
-    const scanType = detectScanType(raw);
-    if (currentBox) {
-      if (scanType === "box") { showFlash(`Close current box before scanning another!`, "warning"); return; }
-      handleItemScan(raw);
-    } else {
-      if (scanType === "item") { showFlash("Scan a Box barcode first.", "warning"); return; }
-      handleBoxScan(raw);
-    }
-  };
-
-  const handleBoxScan = async (boxNo: string) => {
-    if (!sessionId) return;
     setLoading(true);
-    let res;
     try {
-      res = await api.receivingScanBox({ session_id: sessionId, box_number: boxNo, auto_complete_single: true, default_route: defaultRoute });
-    } finally {
+      const res = await api.receivingScanItem({
+        session_id: sessionId,
+        box_number: currentBox.box_number,
+        qr_raw: raw,
+      });
       setLoading(false);
-    }
-    if (!res.ok) { showFlash(res.error || "Failed to scan box.", "error"); return; }
-    const data = res.data;
-    if (data.auto_completed) {
-      showFlash(data.message, "success");
-      setScanHistory((prev) => [{ box_number: boxNo, auto_completed: true, message: data.message, timestamp: new Date(), status: "success" }, ...prev.slice(0, 9)]);
-      if (selectedDN) loadBoxes(sessionId, selectedDN);
-    } else {
-      setCurrentBox({ id: data.box_index, box_number: data.box_number, box_type: data.box_type, status: "received", item_count: data.item_count, is_single_item: false, total_qty: 0, scanned_qty: 0, items: data.items });
-      showFlash(data.message, "warning");
+      if (!res.ok) { showFlash(res.error || "Item not in this box", "error"); return; }
+      const data = res.data;
+      const match = data.match;
+      const updatedItems = currentBox.items.map((it) =>
+        it.part_code === data.parsed.item_code
+          ? { ...it, scanned_qty: match.scanned, status: match.status }
+          : it
+      );
+      setCurrentBox({ ...currentBox, items: updatedItems });
+      showFlash(match.message, match.status === "excess" ? "warning" : "success");
+
+      const isAllMatched = updatedItems.every((it) => it.scanned_qty === it.expected_qty);
+      if (isAllMatched) {
+        await completeBox();
+      }
+    } catch (e: any) {
+      setLoading(false);
+      showFlash(e.message || "Scan failed", "error");
     }
   };
 
-  const handleItemScan = async (qrRaw: string) => {
-    if (!sessionId || !currentBox) return;
-    const res = await api.receivingScanItem({ session_id: sessionId, box_number: currentBox.box_number, qr_raw: qrRaw });
-    if (!res.ok) { showFlash(res.error || "Scan failed.", "error"); return; }
-    const data = res.data;
-    const match = data.match;
-    const updatedItems = currentBox.items.map((it) => it.part_code === data.parsed.item_code ? { ...it, scanned_qty: match.scanned, status: match.status } : it);
-    const isAllMatched = updatedItems.every((it) => it.scanned_qty === it.expected_qty);
-    setCurrentBox((prev) => prev ? { ...prev, items: updatedItems } : null);
-    showFlash(match.message, match.status === "excess" ? "warning" : "success");
-    if (isAllMatched) completeMultiItemBox();
-  };
-
-  const completeMultiItemBox = async () => {
+  const completeBox = async () => {
     if (!sessionId || !currentBox) return;
     setLoading(true);
-    let res;
     try {
-      res = await api.receivingCompleteBox({ session_id: sessionId, box_number: currentBox.box_number, default_route: defaultRoute });
-    } finally {
+      const res = await api.receivingCompleteBox({
+        session_id: sessionId,
+        box_number: currentBox.box_number,
+        default_route: defaultRoute,
+      });
       setLoading(false);
-    }
-    if (res.ok) {
-      showFlash(`Box ${currentBox.box_number} verified.`, "success");
-      setScanHistory((prev) => [{ box_number: currentBox.box_number, auto_completed: false, message: `Verified Box ${currentBox.box_number} (${currentBox.item_count} items)`, timestamp: new Date(), status: "success" }, ...prev.slice(0, 9)]);
-      setCurrentBox(null);
-      if (selectedDN) loadBoxes(sessionId, selectedDN);
-    } else {
-      showFlash(res.error || "Failed to verify box.", "error");
+      if (res.ok) {
+        const route = res.data.box_route || defaultRoute;
+        setLastRoute(route);
+        showFlash(`✅ Box ${currentBox.box_number} verified → ${route}`, "success");
+        setScanHistory((prev) => [
+          { box_number: currentBox.box_number, auto_completed: false, message: `Verified → ${route}`, timestamp: new Date(), status: "success" },
+          ...prev.slice(0, 9),
+        ]);
+        setCurrentBox(null);
+        setStep("scan_box");
+        refreshProgress();
+      } else {
+        showFlash(res.error || "Failed to verify box", "error");
+      }
+    } catch (e: any) {
+      setLoading(false);
+      showFlash(e.message || "Failed", "error");
     }
   };
 
-  const formatDuration = (seconds: number) => `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
-
-  const stepKeys: Array<"import" | "select" | "scan" | "complete"> = ["import", "select", "scan", "complete"];
-  const stepIdx = stepKeys.indexOf(step);
+  const stepIdx = STEP_KEYS.indexOf(step);
 
   return (
-    <div className="rec-container">
-      {/* Page header */}
-      <div className="page-head">
+    <div style={{ maxWidth: 560, margin: '0 auto' }}>
+      {/* ─── Page Head ─── */}
+      <div className="rw-page-head">
         <div>
-          <h1 className="page-title" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div className="rw-page-title">
             ⚡ Receiving Wizard
-            {sessionNo && <span className="session-badge">{sessionNo}</span>}
-          </h1>
-          <p className="page-sub">Import packing list, scan boxes, verify items — RF gun style</p>
+            {sessionNo && <span className="rw-status-badge rw-suggested">{sessionNo}</span>}
+            {selectedPO && <span className="rw-status-badge" style={{ background: "var(--panel-2)", color: "var(--text-dim)" }}>{selectedPO.name}</span>}
+            {packingList && <span className="rw-status-badge rw-suggested">{packingList.name}</span>}
+          </div>
+          <div className="rw-page-sub">
+            {packingList 
+              ? `Receiving from: ${packingList.name} (${packingList.supplier_name})`
+              : sessionNo 
+                ? `${sessionNo} · ${selectedPO?.name || ""}`
+                : "Select PO → scan boxes → verify items → route"
+            }
+          </div>
         </div>
       </div>
 
-      {/* Step indicator */}
-      <div className="rec-steps-bar">
-        {["Import", "Select", "Scan", "Done"].map((label, i) => (
+      {/* ─── Step Indicator Bar ─── */}
+      <div className="rw-steps-bar">
+        {STEP_LABELS.map((label, i) => (
           <React.Fragment key={label}>
-            {i > 0 && <div className={`rec-step-connector ${i <= stepIdx ? "completed" : ""}`} />}
-            <div className={`rec-step-node ${i === stepIdx ? "active" : i < stepIdx ? "completed" : ""}`}>{i + 1}</div>
+            {i > 0 && <div className={`rw-step-connector ${i <= stepIdx ? "done" : ""}`} />}
+            <div className={`rw-step-node ${i === stepIdx ? "active" : i < stepIdx ? "done" : ""}`}>{i < stepIdx ? "✓" : i + 1}</div>
+            <div className="rw-step-label">{label}</div>
           </React.Fragment>
         ))}
       </div>
 
-      {/* Flash */}
-      {flash && <div className={`rec-flash ${flash.type}`}>{flash.type === "success" ? "✅" : flash.type === "error" ? "✕" : "⚠"} <span>{flash.text}</span></div>}
-      {error && <div className="rec-flash error">✕ {error}</div>}
+      {/* ─── Toast notifications ─── */}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 2000, display: "flex", flexDirection: "column", gap: 8 }}>
+        {toasts.map((t) => (
+          <div key={t.id} className={`rw-toast rw-toast-${t.type}`}>
+            {t.type === "success" ? "✓" : t.type === "error" ? "✕" : "⚠"} {t.text}
+          </div>
+        ))}
+      </div>
+      {error && <div style={{ position: "fixed", top: 16, right: 16, zIndex: 2000 }}><div className="rw-toast rw-toast-error">✕ {error}</div></div>}
 
-      {/* ─── Step 1: Import ─── */}
-      {step === "import" && (
-        <div className="erpnext-card p-4">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Import Packing List</h2>
-          <form onSubmit={handleImport}>
-            <div className="dropzone" style={{ marginBottom: 16 }}>
-              <div className="dropzone-label">
-                <span className="dropzone-icon">📥</span>
-                <span style={{ fontWeight: 500 }}>{file ? file.name : "Drag & drop packing list (.xlsx) or click to select"}</span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>Supports .xlsx</span>
+      {/* ═══ Step 1: Select PO or Upload Packing List ═══ */}
+      {step === "select_po" && (
+        <div className="rw-content">
+          {/* Packing list info if loaded from management page */}
+          {packingList && (
+            <div className="rw-card" style={{ border: "2px solid var(--rw-accent)" }}>
+              <div className="rw-section-title">📦 Packing List Loaded</div>
+              <div className="rw-info-grid" style={{ marginBottom: 12 }}>
+                <div className="rw-info-item">
+                  <div className="rw-info-label">Name</div>
+                  <div className="rw-info-value">{packingList.name}</div>
+                </div>
+                <div className="rw-info-item">
+                  <div className="rw-info-label">Supplier</div>
+                  <div className="rw-info-value">{packingList.supplier_name}</div>
+                </div>
+                <div className="rw-info-item">
+                  <div className="rw-info-label">Total Boxes</div>
+                  <div className="rw-info-value">{packingList.total_boxes}</div>
+                </div>
+                <div className="rw-info-item">
+                  <div className="rw-info-label">Total Items</div>
+                  <div className="rw-info-value">{packingList.total_items}</div>
+                </div>
               </div>
-              <input type="file" className="file-input" accept=".xlsx" onChange={(e) => e.target.files?.[0] && setFile(e.target.files[0])} />
-            </div>
-
-            <div className="rec-container form-grid">
-              {/* Driver Name — searches transports table by driver_name */}
-              <div className="form-field" style={{ position: "relative" }} ref={driverDropdownRef}>
-                <label>Driver Name</label>
-                <input
-                  className="form-input"
-                  placeholder="Type driver name…"
-                  value={driverName}
-                  onChange={(e) => {
-                    setDriverName(e.target.value);
-                    setShowDriverDropdown(true);
-                  }}
-                  onFocus={() => setShowDriverDropdown(true)}
-                  onBlur={() => setTimeout(() => setShowDriverDropdown(false), 150)}
-                  autoComplete="off"
-                />
-                {showDriverDropdown && (
-                  <div className="rec-driver-dropdown">
-                    {(() => {
-                      const q = driverName.trim().toLowerCase();
-                      const matches = q
-                        ? truckSuggestions.filter((t) => t.driver_name && t.driver_name.toLowerCase().includes(q))
-                        : truckSuggestions.filter((t) => t.driver_name);
-                      if (matches.length === 0) return null;
-                      return matches.slice(0, 8).map((t, i) => (
-                        <button
-                          key={t.id ?? i}
-                          type="button"
-                          className="rec-driver-option"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setDriverName(t.driver_name || "");
-                            setDriverPhone(t.driver_phone || "");
-                            setTransporter(t.transporter || t.truck_no || "");
-                            setShowDriverDropdown(false);
-                          }}
-                        >
-                          <span className="rec-driver-name">{t.driver_name}</span>
-                          <span className="rec-driver-meta">
-                            {t.driver_phone && <span>{t.driver_phone}</span>}
-                            {t.truck_no && <span>· {t.truck_no}</span>}
-                            {t.transporter && <span>· {t.transporter}</span>}
-                          </span>
-                        </button>
-                      ));
-                    })()}
-                  </div>
-                )}
-              </div>
-
-              {/* Driver Phone — auto-filled from driver selection */}
-              <div className="form-field">
-                <label>Driver Phone</label>
-                <input className="form-input" placeholder="Auto-filled from driver" value={driverPhone} onChange={(e) => setDriverPhone(e.target.value)} />
-              </div>
-
-              {/* Truck / Transporter — searches transports table by truck_no */}
-              <div className="form-field" style={{ gridColumn: "span 2", position: "relative" }} ref={truckDropdownRef}>
-                <label>Truck / Transporter</label>
-                <input
-                  className="form-input"
-                  placeholder="Type truck no or transporter…"
-                  value={transporter}
-                  onChange={(e) => {
-                    setTransporter(e.target.value);
-                    setShowTruckDropdown(true);
-                  }}
-                  onFocus={() => setShowTruckDropdown(true)}
-                  onBlur={() => {
-                    // Auto-populate driver fields from matching truck on tab away
-                    const q = transporter.trim().toLowerCase();
-                    if (q) {
-                      const match = truckSuggestions.find(
-                        (t) => t.truck_no.toLowerCase() === q || (t.transporter && t.transporter.toLowerCase() === q)
-                      );
-                      if (match) {
-                        if (match.driver_name) setDriverName(match.driver_name);
-                        if (match.driver_phone) setDriverPhone(match.driver_phone);
-                      }
-                    }
-                    setTimeout(() => setShowTruckDropdown(false), 150);
-                  }}
-                  autoComplete="off"
-                />
-                {showTruckDropdown && (
-                  <div className="rec-driver-dropdown">
-                    {(() => {
-                      const q = transporter.trim().toLowerCase();
-                      const matches = q
-                        ? truckSuggestions.filter((t) =>
-                            t.truck_no.toLowerCase().includes(q) ||
-                            (t.transporter && t.transporter.toLowerCase().includes(q)) ||
-                            (t.name && t.name.toLowerCase().includes(q))
-                          )
-                        : truckSuggestions;
-                      if (matches.length === 0) return null;
-                      return matches.slice(0, 10).map((t, i) => (
-                        <button
-                          key={t.id ?? i}
-                          type="button"
-                          className="rec-driver-option"
-                          onMouseDown={(e) => {
-                            e.preventDefault();
-                            setTransporter(t.transporter || t.truck_no || "");
-                            if (t.driver_name) setDriverName(t.driver_name);
-                            if (t.driver_phone) setDriverPhone(t.driver_phone);
-                            setShowTruckDropdown(false);
-                          }}
-                        >
-                          <span className="rec-driver-name">{t.truck_no}</span>
-                          <span className="rec-driver-meta">
-                            {t.name && <span>{t.name}</span>}
-                            {t.transporter && <span>· {t.transporter}</span>}
-                            {t.driver_name && <span>· {t.driver_name}</span>}
-                          </span>
-                        </button>
-                      ));
-                    })()}
-                  </div>
-                )}
-              </div>
-
-              {/* Default Route */}
-              <div className="form-field">
-                <label>Default Putaway Route</label>
-                <select className="form-input" value={defaultRoute} onChange={(e) => setDefaultRoute(e.target.value)}>
-                  <option value="INCOMING-01">INCOMING-01</option>
-                  <option value="QUALITY_INSPECTION-01">QUALITY INSPECTION-01</option>
-                  <option value="REJECT-01">REJECT-01</option>
-                </select>
-              </div>
-            </div>
-
-            {importSummary && (
-              <div style={{ marginBottom: 16, padding: 12, background: "var(--gray-50)", borderRadius: 6, border: "1px solid var(--gray-200)", fontSize: 13, color: "var(--text-muted)" }}>
-                <strong style={{ color: "var(--text-color)" }}>Last import:</strong>{" "}
-                {importSummary.rows_imported} rows · {importSummary.total_boxes} boxes · {importSummary.total_qty} pcs · {importSummary.dealer}
-              </div>
-            )}
-
-            <div className="rec-btn-group">
-              <button type="submit" className="rec-btn rec-btn-primary" disabled={loading || !file}>
-                {loading ? "Importing…" : "📤 Import & Start Receiving"}
+              <button
+                className="rw-btn rw-btn-primary"
+                onClick={handleStartFromPackingList}
+                disabled={loading}
+                style={{ width: "100%" }}
+              >
+                {loading ? "Starting..." : "Start Receiving"}
               </button>
             </div>
-          </form>
+          )}
+
+          {/* PO selection mode */}
+          <div className="rw-card">
+            <div className="rw-section-title">Select a PO to receive</div>
+              {pendingPOs.length === 0 ? (
+                <div className="rw-empty-state">
+                  <div className="rw-empty-icon">📦</div>
+                  <div className="rw-empty-title">No pending purchase orders</div>
+                  <div className="rw-empty-msg">Create POs in your ERP to start receiving</div>
+                </div>
+              ) : (
+                <div>
+                  {pendingPOs.map((po) => (
+                    <div key={po.id} className="rw-queue-item" onClick={() => handleSelectPO(po)} style={{ cursor: "pointer" }}>
+                      <div className="rw-queue-item-info">
+                        <div className="rw-queue-item-code">{po.name}</div>
+                        <div className="rw-queue-item-name">{po.supplier_name}</div>
+                        <div className="rw-queue-item-qty">
+                          {po.item_count} items · {po.total_qty} units
+                          {po.schedule_date && <> · {new Date(po.schedule_date).toLocaleDateString()}</>}
+                        </div>
+                      </div>
+                      <div className="rw-queue-item-actions">
+                        {po.open_sessions > 0 ? (
+                          <span className="rw-status-badge rw-picked">Resume</span>
+                        ) : (
+                          <span className="rw-status-badge rw-suggested">Start</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
         </div>
       )}
 
-      {/* ─── Step 2: Select Invoice / DN ─── */}
-      {step === "select" && (
-        <div className="erpnext-card p-4">
-          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Filter Inbound Shipments</h2>
-          <div className="rec-container form-grid" style={{ marginBottom: 16 }}>
-            <div className="form-field">
-              <label>Invoice Number</label>
-              <select className="form-input" value={selectedInvoice} onChange={(e) => handleInvoiceChange(e.target.value)}>
-                <option value="">— Choose Invoice —</option>
-                {invoices.map((inv) => (
-                  <option key={inv.invoice_no} value={inv.invoice_no}>{inv.invoice_no} ({inv.box_count} boxes · {inv.total_qty} pcs)</option>
-                ))}
-              </select>
-            </div>
-            <div className="form-field">
-              <label>Delivery Note (DN)</label>
-              <select className="form-input" value={selectedDN} onChange={(e) => setSelectedDN(e.target.value)} disabled={!selectedInvoice}>
-                <option value="">— Choose DN —</option>
-                {deliveryNotes.map((dn) => (
-                  <option key={dn.delivery_no} value={dn.delivery_no}>{dn.delivery_no} · {dn.box_count} boxes</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="rec-btn-group">
-            <button className="rec-btn rec-btn-secondary" onClick={() => setStep("import")}>← Back</button>
-            <button className="rec-btn rec-btn-primary" onClick={startReceiving} disabled={!selectedDN}>▶ Start Receiving →</button>
-          </div>
-        </div>
-      )}
-
-      {/* ─── Step 3: Scan ─── */}
-      {step === "scan" && (
-        <div className="scan-layout">
+      {/* ═══ Step 2: Scan Box ═══ */}
+      {step === "scan_box" && (
+        <div className="rw-content">
           {/* Progress */}
-          <div className="erpnext-card p-4">
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, fontSize: 13, color: "var(--text-muted)" }}>
-              <span>DN: <strong style={{ color: "var(--text-color)" }}>{selectedDN}</strong></span>
-              <span>{stats ? `${stats.boxes_received} / ${stats.total_boxes} boxes received` : "Loading…"}</span>
+          {stats && (
+            <div className="rw-putaway-progress">
+              <div className="rw-progress-text">{stats.boxes_received} / {stats.total_boxes} boxes</div>
+              <div className="rw-progress-bar">
+                <div className="rw-progress-fill" style={{ width: `${stats.overall_progress_pct}%` }} />
+              </div>
+              <div className="rw-progress-pct">{stats.overall_progress_pct}%</div>
             </div>
-            <div className="rec-progress-wrap">
-              <div className="rec-progress-container">
-                <div className="rec-progress-bar" style={{ width: `${stats ? stats.overall_progress_pct : 0}%` }} />
-              </div>
-              <span className="rec-progress-label">{stats ? `${stats.overall_progress_pct}%` : ""}</span>
-            </div>
-          </div>
+          )}
 
-          {/* Scanner input */}
-          <div className="erpnext-card p-4">
-            <label className="erpnext-label" style={{ marginBottom: 6 }}>
-              {currentBox ? `Scanning items — Box ${currentBox.box_number}` : "Scan Box Barcode"}
-            </label>
-            <form onSubmit={handleScanSubmit}>
-              <div className="scan-input-wrapper">
-                <input type="text" className="scan-input" ref={scanInputRef} value={scanInput} onChange={(e) => setScanInput(e.target.value)}
-                  placeholder={currentBox ? "Scan item QR code…" : "Scan Box Barcode…"} />
-                <button type="submit" className="rec-btn rec-btn-primary" style={{ height: 28, padding: "2px 12px", flexShrink: 0 }}>Enter</button>
-              </div>
-            </form>
-          </div>
-
-          {/* Multi-item panel */}
-          {currentBox && (
-            <div className="inline-multi-panel">
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>📦 Box {currentBox.box_number}</h3>
-                <span className={`badge ${currentBox.items.every((it) => it.scanned_qty === it.expected_qty) ? "full_match" : "pending"}`}>
-                  {currentBox.items.filter((it) => it.scanned_qty === it.expected_qty).length} / {currentBox.items.length} matched
-                </span>
-              </div>
-              <div>
-                {currentBox.items.map((it) => (
-                  <div key={it.part_code} className={`item-list-row ${it.scanned_qty === it.expected_qty ? "verified" : ""}`}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 550, fontSize: 13 }}>{it.part_code}</div>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{it.part_name}</div>
+          {/* Suggested boxes to scan */}
+          {suggestedBoxes.length > 0 && (
+            <div className="rw-card" style={{ marginBottom: 16, border: "2px solid var(--accent)" }}>
+              <div className="rw-section-title" style={{ marginBottom: 12 }}>🎯 Suggested Boxes — Tap to Scan</div>
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {suggestedBoxes.map((box: any, i: number) => (
+                  <button
+                    key={box.id || box.box_number || box.carton_no}
+                    className="rw-btn"
+                    style={{
+                      flex: "1 1 150px",
+                      padding: "16px",
+                      border: "2px solid var(--accent)",
+                      borderRadius: 12,
+                      background: "var(--panel)",
+                      textAlign: "center",
+                      cursor: "pointer",
+                    }}
+                    onClick={() => {
+                      const boxNo = box.box_number || box.carton_no;
+                      setScanInput(boxNo);
+                      // Auto-submit the box scan with the explicit number
+                      handleBoxScanSubmit({ preventDefault: () => {} } as any, boxNo);
+                    }}
+                  >
+                    <div style={{ fontSize: 24, marginBottom: 4 }}>📦</div>
+                    <div className="font-bold text-lg">{box.box_number || box.carton_no}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 4 }}>
+                      {box.item_count || 0} items · {box.is_single_item ? "Single" : "Multi"}
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
-                      <span style={{ fontSize: 13, fontVariantNumeric: "tabular-nums", color: "var(--text-muted)" }}>{it.scanned_qty} / {it.expected_qty}</span>
-                      <span className={`item-badge ${it.status}`}>{it.status === "full_match" ? "✓ done" : it.status === "shortage" ? "⏳ short" : it.status === "excess" ? "⚠ excess" : "pending"}</span>
+                    <div style={{ marginTop: 8 }}>
+                      <span className="rw-btn rw-btn-primary" style={{ fontSize: 12, padding: "4px 12px" }}>
+                        📷 Scan Now
+                      </span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
-              <div className="rec-btn-group" style={{ marginTop: 16 }}>
-                <button className="rec-btn rec-btn-secondary" onClick={() => setCurrentBox(null)}>✕ Close Box</button>
-                <button className="rec-btn rec-btn-primary" onClick={completeMultiItemBox}>✓ Complete Box</button>
-              </div>
+            </div>
+          )}
+
+          {/* Scan input with camera */}
+          <div className="rw-scan-section">
+            <div className="rw-scan-section-title">📦 Enter or scan box number</div>
+            <ScannerInput
+              onScan={(code) => {
+                setScanInput(code);
+                // Auto-submit immediately with the scanned value
+                if (sessionId) {
+                  handleBoxScanSubmit({ preventDefault: () => {} } as any, code);
+                }
+              }}
+              placeholder="Box number (type or scan QR/barcode)"
+              autoFocus={true}
+              showTorch={true}
+              suggestions={suggestedBoxes.map((b: any) => ({
+                code: b.box_number || b.carton_no,
+                name: `${b.item_count || 0} items`,
+                qty: b.total_qty,
+              }))}
+              onSelectSuggestion={(code) => {
+                setScanInput(code);
+                handleBoxScanSubmit({ preventDefault: () => {} } as any, code);
+              }}
+            />
+            <div className="rw-scan-hint">Tap 📷 to open camera, or type box number + Enter</div>
+          </div>
+
+          {/* Last route */}
+          {lastRoute && (
+            <div className="rw-route-banner">
+              📍 Routed to <strong>{lastRoute}</strong>
             </div>
           )}
 
           {/* Scan history */}
-          <div className="erpnext-card p-4">
-            <h3 style={{ fontSize: 13, fontWeight: 500, color: "var(--text-muted)", marginBottom: 8 }}>Scan Activity</h3>
+          <div className="rw-scan-history">
+            <div className="rw-scan-history-title">Recent Scans</div>
             {scanHistory.length === 0 ? (
-              <div style={{ color: "var(--text-muted)", fontStyle: "italic", fontSize: 13 }}>No scans yet — scan a box to begin.</div>
+              <div className="rw-scan-history-empty">No scans yet — scan a box to begin</div>
             ) : (
-              <div className="feed-container">
-                {scanHistory.map((h, i) => (
-                  <div key={i} className="feed-item">
-                    <span style={{ fontWeight: 500 }}>{h.box_number}</span>
-                    <span style={{ flex: 1, marginLeft: 8, fontSize: 13 }}>{h.message}</span>
-                    <span className="feed-time">{h.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-                  </div>
-                ))}
-              </div>
+              scanHistory.map((h, i) => (
+                <div key={i} className={`rw-scan-history-item ${h.status}`}>
+                  <span className="rw-history-box">{h.box_number}</span>
+                  <span className="rw-history-msg">{h.message}</span>
+                  <span className="rw-history-time">{h.timestamp.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+                </div>
+              ))
             )}
           </div>
 
+          {/* Exception banner */}
+          {exceptions.length > 0 && (
+            <div className="rw-flash warning">
+              ⚠ {exceptions.length} open exception{exceptions.length !== 1 ? "s" : ""} — {exceptions.slice(0, 2).map((e: any) => e.part_no || e.type).join(", ")}{exceptions.length > 2 ? ` +${exceptions.length - 2} more` : ""}
+            </div>
+          )}
+
           {/* Actions */}
-          <div className="rec-btn-group">
-            <button className="rec-btn rec-btn-secondary" onClick={() => setStep("select")}>← Back</button>
-            <button className="rec-btn rec-btn-primary" onClick={() => setStep("complete")}>✓ Done — Complete Session</button>
+          <div className="rw-actions">
+            <button className="rw-btn rw-btn-secondary" onClick={() => setStep("select_po")}>← Back</button>
+            <button className="rw-btn rw-btn-primary" onClick={() => setStep("complete")}>✓ Done</button>
           </div>
         </div>
       )}
 
-      {/* ─── Step 4: Complete ─── */}
-      {step === "complete" && (
-        <div className="erpnext-card p-4">
-          <h2 style={{ fontSize: 18, fontWeight: 600, color: "var(--dark-green-600)", marginBottom: 16 }}>✅ Delivery Receiving Complete</h2>
+      {/* ═══ Step 3: Scan Items ═══ */}
+      {step === "scan_items" && currentBox && (
+        <div className="rw-content">
+          {/* Box header */}
+          <div className="rw-tote-section">
+            <div className="rw-tote-header">
+              <div className="rw-tote-title">
+                📦 {currentBox.box_number}
+              </div>
+              <span className="rw-tote-count-badge">
+                {currentBox.items.filter((it) => it.scanned_qty === it.expected_qty).length} / {currentBox.items.length}
+              </span>
+            </div>
 
-          <div className="rec-summary-grid" style={{ marginBottom: 20 }}>
-            <div className="rec-summary-item">
-              <span className="rec-summary-value">{stats ? stats.boxes_received : 0}</span>
-              <span className="rec-summary-label">Boxes Received</span>
+            {/* Scan input */}
+            <div style={{ marginBottom: 12 }}>
+              <form onSubmit={handleItemScanSubmit}>
+                <div className="rw-scan-input-row">
+                  <input
+                    type="text"
+                    className="rw-scan-field"
+                    ref={scanInputRef}
+                    value={scanInput}
+                    onChange={(e) => setScanInput(e.target.value)}
+                    placeholder="Scan item QR code or type item code"
+                    autoComplete="off"
+                    inputMode="text"
+                  />
+                  <button type="submit" className="rw-btn rw-btn-primary" disabled={loading || !scanInput.trim()}>
+                    {loading ? <span className="rw-spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> : "GO"}
+                  </button>
+                </div>
+                <div className="rw-scan-hint">Scan QR code or type item code + Enter</div>
+              </form>
             </div>
-            <div className="rec-summary-item">
-              <span className="rec-summary-value">{stats ? stats.total_qty_scanned : 0}</span>
-              <span className="rec-summary-label">Total Qty Scanned</span>
-            </div>
-            <div className="rec-summary-item">
-              <span className="rec-summary-value">{stats ? stats.items_full_match : 0}</span>
-              <span className="rec-summary-label">Full Match Items</span>
-            </div>
-            <div className="rec-summary-item">
-              <span className="rec-summary-value">{stats ? formatDuration(stats.elapsed_time_sec) : "0m"}</span>
-              <span className="rec-summary-label">Elapsed Time</span>
-            </div>
+
+            {/* Item list */}
+            {currentBox.items.map((it) => (
+              <div key={it.part_code} className={`rw-tote-item ${it.scanned_qty === it.expected_qty ? "matched" : it.status === "excess" ? "excess" : ""}`}>
+                <div className="rw-tote-item-info">
+                  <div className="rw-tote-item-top">
+                    <span className="rw-tote-item-code">{it.part_code}</span>
+                  </div>
+                  <div className="rw-tote-item-bottom">
+                    {it.part_name}
+                  </div>
+                </div>
+                <div className="rw-qty-badge rw-qty-badge-lg">
+                  <span className={it.scanned_qty >= it.expected_qty ? "rw-qty-done" : ""}>{it.scanned_qty}</span>
+                  <span className="rw-qty-sep">/</span>
+                  <span>{it.expected_qty}</span>
+                </div>
+                {it.scanned_qty === it.expected_qty ? (
+                  <span className="rw-status-badge rw-placed">✓</span>
+                ) : it.status === "excess" ? (
+                  <span className="rw-status-badge rw-picked">⚠</span>
+                ) : null}
+              </div>
+            ))}
           </div>
 
-          {stats && stats.exceptions_open > 0 && (
-            <div className="rec-flash warning" style={{ marginBottom: 16 }}>⚠ {stats.exceptions_open} open exceptions — supervisor review needed.</div>
+          {/* Actions */}
+          <div className="rw-actions">
+            <button className="rw-btn rw-btn-secondary" onClick={() => { setCurrentBox(null); setStep("scan_box"); }}>✕ Close Box</button>
+            <button className="rw-btn rw-btn-primary" onClick={completeBox}>✓ Complete Box</button>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ Step 4: Complete ═══ */}
+      {step === "complete" && (
+        <div className="rw-complete-card">
+          <div className="rw-complete-icon">✓</div>
+          <div className="rw-complete-title">Receiving Complete</div>
+
+          {stats && (
+            <div className="rw-complete-stats">
+              <div className="rw-complete-stat">
+                <div className="rw-complete-stat-value">{stats.boxes_received}</div>
+                <div className="rw-complete-stat-label">Boxes Received</div>
+              </div>
+              <div className="rw-complete-stat">
+                <div className="rw-complete-stat-value">{stats.total_qty_scanned}</div>
+                <div className="rw-complete-stat-label">Units Scanned</div>
+              </div>
+              <div className="rw-complete-stat">
+                <div className="rw-complete-stat-value">{stats.items_full_match}</div>
+                <div className="rw-complete-stat-label">Full Match</div>
+              </div>
+              <div className="rw-complete-stat">
+                <div className="rw-complete-stat-value">{formatDuration(stats.elapsed_time_sec)}</div>
+                <div className="rw-complete-stat-label">Elapsed</div>
+              </div>
+            </div>
           )}
 
-          <div style={{ marginBottom: 12, fontSize: 13, color: "var(--text-muted)" }}>
-            Delivery Note: <strong style={{ color: "var(--text-color)" }}>{selectedDN}</strong>
-            {" · "}
-            Single-item boxes (auto): <strong>{stats ? stats.single_item_boxes : 0}</strong>
-            {" · "}
-            Multi-item boxes (manual): <strong>{stats ? stats.multi_item_boxes : 0}</strong>
-          </div>
+          {stats && stats.exceptions_open > 0 && (
+            <div className="rw-flash warning">⚠ {stats.exceptions_open} open exceptions — supervisor review needed</div>
+          )}
 
-          <div className="rec-btn-group">
-            <a href="/grn" className="rec-btn rec-btn-primary" style={{ textDecoration: "none" }}>→ View GRN Page</a>
-            <button className="rec-btn rec-btn-secondary" onClick={() => {
-              setStep("import"); setSessionId(null); setSessionNo(""); setStats(null); setScanHistory([]); setFile(null);
-            }}>→ Start New Inbound</button>
+          <div className="rw-actions" style={{ justifyContent: "center", marginTop: 16 }}>
+            <a href="/grn" className="rw-btn rw-btn-primary" style={{ textDecoration: "none" }}>View Full Report →</a>
+            <button className="rw-btn rw-btn-secondary" onClick={() => {
+              setStep("select_po"); setSessionId(null); setSelectedPO(null); setStats(null); setScanHistory([]); setCurrentBox(null); setLastRoute(null);
+            }}>Start New Receiving</button>
           </div>
         </div>
       )}
