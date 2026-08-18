@@ -1198,46 +1198,83 @@ export default function ReceivingManagement() {
                 )}
               </div>
 
-              {/* Per-column filter row */}
-              {!detailLoading && selectedList.items && selectedList.items.length > 0 && (
-                <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap", alignItems: "center" }}>
-                  <select
-                    className="rw-select"
-                    style={{ fontSize: 12, padding: "4px 8px" }}
-                    value={statusFilterDetail}
-                    onChange={(e) => setStatusFilterDetail(e.target.value)}
-                  >
-                    <option value="all">All Status</option>
-                    <option value="pending">Pending</option>
-                    <option value="received">Received</option>
-                    <option value="completed">Completed</option>
-                    <option value="exception">Exception</option>
-                  </select>
-                  {detailCols.map((col) => (
-                    <input
-                      key={col.key}
-                      className="rw-input"
-                      style={{ fontSize: 12, padding: "4px 6px", width: 110 }}
-                      placeholder={`Filter ${col.label}...`}
-                      value={colFilters[col.key] || ""}
-                      onChange={(e) => setColFilters((prev) => ({ ...prev, [col.key]: e.target.value }))}
-                    />
-                  ))}
-                </div>
-              )}
-
               <div style={{ overflowX: "auto" }}>
                 <table className="erpnext-table" style={{ width: "100%", minWidth: 900 }}>
                   <thead>
                     <tr style={{ background: "var(--panel-2)" }}>
-                      <th>Box Number</th>
-                      <th>Part Code</th>
+                      <th style={{ width: 100 }}>Box Number</th>
+                      <th style={{ width: 110 }}>Part Code</th>
                       <th>Part Name</th>
-                      <th className="text-right">Expected</th>
-                      <th className="text-right">Scanned</th>
-                      <th>Status</th>
-                      <th>Current Location</th>
+                      <th className="text-right" style={{ width: 80 }}>Expected</th>
+                      <th className="text-right" style={{ width: 80 }}>Scanned</th>
+                      <th style={{ width: 90 }}>Status</th>
+                      <th style={{ width: 130 }}>Current Location</th>
                     </tr>
+                    {!detailLoading && selectedList.items && selectedList.items.length > 0 && (
+                      <tr style={{ background: "var(--bg-2, #f9fafb)" }}>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.box_number || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, box_number: e.target.value }))}
+                          />
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.part_code || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, part_code: e.target.value }))}
+                          />
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.part_name || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, part_name: e.target.value }))}
+                          />
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.expected_qty || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, expected_qty: e.target.value }))}
+                          />
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.scanned_qty || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, scanned_qty: e.target.value }))}
+                          />
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <select
+                            className="rw-col-filter-select"
+                            value={statusFilterDetail}
+                            onChange={(e) => setStatusFilterDetail(e.target.value)}
+                          >
+                            <option value="all">All</option>
+                            <option value="pending">Pending</option>
+                            <option value="received">Received</option>
+                            <option value="completed">Completed</option>
+                            <option value="exception">Exception</option>
+                          </select>
+                        </th>
+                        <th style={{ padding: "4px 6px" }}>
+                          <input
+                            className="rw-col-filter"
+                            placeholder="Filter..."
+                            value={colFilters.route_location || ""}
+                            onChange={(e) => setColFilters((prev) => ({ ...prev, route_location: e.target.value }))}
+                          />
+                        </th>
+                      </tr>
+                    )}
                   </thead>
                   <tbody>
                     {filteredDetailItems.map((item: any) => (
