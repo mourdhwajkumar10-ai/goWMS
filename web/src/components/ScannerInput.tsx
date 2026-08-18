@@ -8,6 +8,7 @@ interface ScannerInputProps {
   suggestions?: Array<{ code: string; name: string; qty?: number }>
   onSelectSuggestion?: (code: string) => void
   showTorch?: boolean
+  showCamera?: boolean
   autoFocus?: boolean
 }
 
@@ -17,6 +18,7 @@ export default function ScannerInput({
   suggestions = [],
   onSelectSuggestion,
   showTorch = false,
+  showCamera = true,
   autoFocus = false,
 }: ScannerInputProps) {
   const [query, setQuery] = useState('')
@@ -183,25 +185,29 @@ export default function ScannerInput({
   return (
     <div ref={ref} className="relative">
       <div className="flex gap-2">
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="hidden"
-          onChange={handleFileChange}
-        />
-        <button
-          type="button"
-          className="scanner-trigger erpnext-btn-secondary"
-          onClick={() => fileRef.current?.click()}
-          aria-label="Open camera"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-            <circle cx="12" cy="13" r="4" />
-          </svg>
-        </button>
+        {showCamera && (
+          <>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={handleFileChange}
+            />
+            <button
+              type="button"
+              className="scanner-trigger erpnext-btn-secondary"
+              onClick={() => fileRef.current?.click()}
+              aria-label="Open camera"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+            </button>
+          </>
+        )}
         {showTorch && (
           <button
             type="button"

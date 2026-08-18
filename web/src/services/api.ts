@@ -497,6 +497,7 @@ export const api = {
   receivingConfirmBox: (data: { session_id: number; box_number: string; condition: string }) => post<any>("/receiving/confirm-box", data),
   receivingSignOffBoxes: (data: { session_id: number }) => post<any>("/receiving/sign-off-boxes", data),
   receivingScanItem: (data: { session_id: number; box_number: string; qr_raw: string }) => post<any>("/receiving/scan-item", data),
+  receivingRejectItem: (data: { session_id: number; box_number: string; item_code: string }) => post<any>("/receiving/reject-item", data),
   receivingCompleteBox: (data: { session_id: number; box_number: string; default_route?: string }) => post<any>("/receiving/complete-box", data),
   receivingRouteException: (data: { session_id: number; routes: { grn_line_id: number; location: string }[] }) => post<any>("/receiving/route-exception", data),
   receivingStats: (sessionId: number) => get<any>(`/receiving/stats?session_id=${sessionId}`),

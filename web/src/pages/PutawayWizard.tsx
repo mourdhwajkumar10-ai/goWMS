@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ScannerInput from '../components/ScannerInput'
+import CameraScanner from '../components/CameraScanner'
 import ButtonPress from '../components/ButtonPress'
 import { useHaptic } from '../hooks/useHaptic'
 import '../styles/putaway-wizard.css'
@@ -233,13 +234,13 @@ export default function PutawayWizard() {
     return session?.id ?? null
   }, [session, queue, selectedZone])
 
-  const handlePick = useCallback(async (q: QueueRow) => {
+  const handlePick = useCallback(async (q: QueueRow): Promise<boolean> => {
     setPickingItemId(q.id)
     try {
       const sid = await ensureSession()
       if (!sid) {
         notify({ type: 'error', title: 'Error', message: 'Failed to create session. Try again.' })
-        return
+        return false
       }
       const r = await api.post(`/putaway/sessions/${sid}/pick`, {
         item_code: q.item_code,
@@ -261,26 +262,35 @@ export default function PutawayWizard() {
         setZones(prev => prev.map(z => z.zone === q.zone ? { ...z, count: z.count - 1 } : z).filter(z => z.count > 0))
         haptic(20)
         notify({ type: 'success', title: 'Picked', message: `${q.item_code} × ${q.qty} added to tote` })
-      } else {
-        notify({ type: 'error', title: 'Pick failed', message: r.error || 'Could not pick this item' })
+        return true
       }
+      notify({ type: 'error', title: 'Pick failed', message: r.error || 'Could not pick this item' })
+      return false
     } catch {
       notify({ type: 'error', title: 'Network error', message: 'Check your connection and try again' })
+      return false
     } finally {
       setPickingItemId(null)
     }
   }, [ensureSession, haptic])
 
-  const handleScanPick = useCallback((code: string) => {
-    if (!code) return
+  const handleScanPick = useCallback(async (code: string): Promise<boolean> => {
+    if (!code) return false
     const q = code.trim().toLowerCase()
+    const inTote = toteItems.find(t => t.item_code.toLowerCase() === q && t.status === 'picked')
+    if (inTote) {
+      setSelectedToteItemId(inTote.id)
+      haptic(20)
+      navigate('putaway', 'forward')
+      return true
+    }
     const match = queue.find(item => item.item_code.toLowerCase() === q)
     if (match) {
-      void handlePick(match)
-    } else {
-      notify({ type: 'warning', title: 'Not found', message: `"${code}" is not in the staging queue` })
+      return handlePick(match)
     }
-  }, [queue, handlePick])
+    notify({ type: 'warning', title: 'Not found', message: `"${code}" is not in the staging queue` })
+    return false
+  }, [queue, toteItems, handlePick, haptic, navigate])
 
   const handleToteScan = useCallback((code: string) => {
     if (!code) return
@@ -302,9 +312,9 @@ export default function PutawayWizard() {
     return toteItems.find(i => i.status === 'picked') || null
   }
 
-  const doPlace = useCallback(async (targetId: number, isOverride = false, placeQty?: number, targetCode?: string) => {
+  const doPlace = useCallback(async (targetId: number, isOverride = false, placeQty?: number, targetCode?: string): Promise<boolean> => {
     const item = currentToteItem()
-    if (!item) return
+    if (!item) return false
     const code = targetCode || ''
     const body: any = { target_location_id: targetId, is_override: isOverride }
     if (placeQty && placeQty > 0) body.qty = placeQty
@@ -332,60 +342,48 @@ export default function PutawayWizard() {
       } else if (toteItems.filter(i => i.status === 'picked').length <= 1) {
         navigate('complete', 'forward')
       }
-    } else {
-      const errType = r.errorType || (r.data as any)?.error_type || 'unknown'
-      setPutawayError({ type: errType, message: r.error || 'Could not place item', data: r.data as any })
-      setShowLocationSuggestions(false)
-      notify({ type: 'error', title: 'Place failed', message: r.error || 'Could not place item' })
+      return true
     }
+    const errType = r.errorType || (r.data as any)?.error_type || 'unknown'
+    setPutawayError({ type: errType, message: r.error || 'Could not place item', data: r.data as any })
+    setShowLocationSuggestions(false)
+    notify({ type: 'error', title: 'Place failed', message: r.error || 'Could not place item' })
+    return false
   }, [session, usedLocationIds, toteItems, selectedToteItemId, haptic, navigate])
 
-  function handleLocationConfirm(code: string, locationId?: number) {
+  async function placeFromScan(code: string, locationId?: number): Promise<boolean> {
     const item = currentToteItem()
+    if (!item) return false
     const qty = suggestion?.max_fit_qty != null && suggestion.max_fit_qty < (item?.qty || 0)
       ? (placeQty ?? suggestion.max_fit_qty)
       : (item?.qty || 0)
     const codeU = (code || '').toUpperCase()
 
     if (suggestion && (codeU === (suggestion.location_code || '').toUpperCase() || locationId === suggestion.location_id)) {
-      setConfirmPlace({
-        targetId: suggestion.location_id,
-        targetCode: suggestion.location_code,
-        qty,
-        isOverride: false
-      })
-      return
+      return doPlace(suggestion.location_id, false, qty, suggestion.location_code)
     }
     const candidate = suggestion?.candidates?.find((c: any) =>
       (c.location_code || '').toUpperCase() === codeU || c.location_id === locationId)
     if (candidate) {
-      setConfirmPlace({
-        targetId: candidate.location_id,
-        targetCode: candidate.location_code,
-        qty: item?.qty || 0,
-        isOverride: true
-      })
-      return
+      return doPlace(candidate.location_id, true, item?.qty || 0, candidate.location_code)
     }
-    void (async () => {
-      let locId = locationId
-      let locCode = code
-      if (!locId) {
-        const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
-        if (!r.ok || !r.data) {
-          notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
-          return
-        }
-        const loc = r.data.find((l: any) => l.code?.toUpperCase() === codeU)
-        if (!loc) {
-          notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
-          return
-        }
-        locId = loc.id
-        locCode = loc.code
+    let locId = locationId
+    let locCode = code
+    if (!locId) {
+      const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
+      if (!r.ok || !r.data) {
+        notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
+        return false
       }
-      setConfirmPlace({ targetId: locId, targetCode: locCode, qty: item?.qty || 0, isOverride: true })
-    })()
+      const loc = r.data.find((l: any) => l.code?.toUpperCase() === codeU)
+      if (!loc) {
+        notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
+        return false
+      }
+      locId = loc.id
+      locCode = loc.code
+    }
+    return doPlace(locId, true, item?.qty || 0, locCode)
   }
 
   const allCandidates = suggestion?.candidates || []
@@ -576,11 +574,19 @@ export default function PutawayWizard() {
 
         <div className="pw-scan-section">
           <div className="pw-scan-section-title">⇩ Scan or Pick Items from Staging</div>
-          <ScannerInput
+          <CameraScanner
+            embedded
+            open={true}
+            onClose={() => {}}
+            title="QR Code Scanner"
             onScan={handleScanPick}
-            placeholder="Scan item barcode or type item code..."
+          />
+          <ScannerInput
+            onScan={(code) => { void handleScanPick(code) }}
+            placeholder="Paste or type item code, then Enter"
             suggestions={queue.map(q => ({ code: q.item_code, name: q.item_name || '', qty: q.qty }))}
             showTorch={false}
+            showCamera={false}
             autoFocus={false}
           />
         </div>
@@ -751,17 +757,25 @@ export default function PutawayWizard() {
             )}
 
             <div className="pw-location-scan-section">
-              <div className="pw-scan-section-title">⇨ Scan or type location to confirm</div>
+              <div className="pw-scan-section-title">⇨ Scan location to place</div>
+              <CameraScanner
+                embedded
+                open={true}
+                onClose={() => {}}
+                title="QR Code Scanner"
+                onScan={placeFromScan}
+              />
               <ScannerInput
-                onScan={(code) => handleLocationConfirm(code)}
-                placeholder="Scan bin barcode or type location..."
+                onScan={(code) => { void placeFromScan(code) }}
+                placeholder="Paste or type location, then Enter"
                 suggestions={allCandidates.map((c: any) => ({
                   code: c.location_code,
                   name: c.reason,
                 }))}
-                onSelectSuggestion={(code) => handleLocationConfirm(code)}
-                autoFocus={true}
+                onSelectSuggestion={(code) => { void placeFromScan(code) }}
+                autoFocus={false}
                 showTorch={false}
+                showCamera={false}
               />
               <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
                 {suggestion && (suggestion.max_fit_qty == null || suggestion.max_fit_qty >= (cti?.qty || 0)) && (

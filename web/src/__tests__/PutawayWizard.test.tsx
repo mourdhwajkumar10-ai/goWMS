@@ -35,6 +35,10 @@ vi.mock('../components/ButtonPress', () => ({
   ),
 }))
 
+vi.mock('../components/CameraScanner', () => ({
+  default: () => null,
+}))
+
 vi.mock('../hooks/useHaptic', () => ({
   useHaptic: () => vi.fn(),
 }))
@@ -174,16 +178,12 @@ describe('PutawayWizard', () => {
     await waitFor(() => {
       expect(screen.getAllByText('BIN-2').length).toBeGreaterThanOrEqual(1)
     })
-    // Scan opens confirmation modal
+    // Scan places immediately — no confirmation popup
     mockApi.post.mockResolvedValue({ ok: true, data: {} })
-    const scanInput = screen.getByPlaceholderText('Scan bin barcode or type location...')
+    const scanInput = screen.getByPlaceholderText('Paste or type location, then Enter')
     fireEvent.change(scanInput, { target: { value: 'BIN-2' } })
     await waitFor(() => {
-      expect(screen.getByText('Confirm Placement')).toBeInTheDocument()
-    })
-    // Click confirm button
-    fireEvent.click(screen.getByText(/✓ Place/))
-    await waitFor(() => {
+      expect(screen.queryByText('Confirm Placement')).not.toBeInTheDocument()
       expect(screen.getByText('Putaway Complete')).toBeInTheDocument()
     })
   })

@@ -22,6 +22,7 @@ func RegisterRFScan(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/confirm-box", confirmBoxHandler(db))
 	r.Post("/sign-off-boxes", signOffBoxesHandler(db))
 	r.Post("/scan-item", scanItemHandler(db))
+	r.Post("/reject-item", rejectItemHandler(db))
 	r.Post("/complete-box", completeBoxHandler(db))
 	r.Post("/route-exception", routeExceptionHandler(db))
 	r.Post("/override-route", overrideRouteHandler(db))
@@ -657,6 +658,92 @@ func scanItemHandler(db *pgxpool.Pool) fiber.Handler {
 			},
 			"box_complete": boxComplete,
 			"next_action":  nextAction,
+		})
+	}
+}
+
+func rejectItemHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			SessionID int    `json:"session_id"`
+			BoxNumber string `json:"box_number"`
+			ItemCode  string `json:"item_code"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.SessionID == 0 || strings.TrimSpace(body.BoxNumber) == "" || strings.TrimSpace(body.ItemCode) == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "session_id, box_number, and item_code are required")
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var sessStatus string
+		err = tx.QueryRow(c.Context(),
+			`SELECT status FROM grn_sessions WHERE id=$1 FOR UPDATE`, body.SessionID).Scan(&sessStatus)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if !sessionWritable(sessStatus) {
+			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
+		}
+
+		var cartonID int
+		var cartonNo string
+		err = tx.QueryRow(c.Context(), `
+			SELECT id, carton_no FROM grn_cartons
+			WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))
+			FOR UPDATE`,
+			body.SessionID, strings.TrimSpace(body.BoxNumber),
+		).Scan(&cartonID, &cartonNo)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "Box not found")
+		}
+
+		tag, err := tx.Exec(c.Context(), `
+			UPDATE grn_lines SET
+				status = 'damage',
+				route_location = 'REJECT-01',
+				routed_at = NOW()
+			WHERE grn_carton_id = $1 AND lower(btrim(item_code)) = lower(btrim($2))`,
+			cartonID, strings.TrimSpace(body.ItemCode),
+		)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "Item not in this box")
+		}
+
+		_, err = tx.Exec(c.Context(), `
+			INSERT INTO grn_events (grn_session_id, event_type, box_no, part_no, actor_id, device)
+			VALUES ($1, 'ITEM_REJECTED', $2, $3, $4, $5)`,
+			body.SessionID, cartonNo, strings.TrimSpace(body.ItemCode), nullableUserID(c), requestDevice(c),
+		)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to log reject: "+err.Error())
+		}
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		writeException(db, c, body.SessionID, "damage", fiber.Map{
+			"box_no":  cartonNo,
+			"part_no": strings.TrimSpace(body.ItemCode),
+			"route":   "REJECT-01",
+		})
+
+		return shared.OK(c, fiber.Map{
+			"box_number":     cartonNo,
+			"item_code":      strings.TrimSpace(body.ItemCode),
+			"status":         "damage",
+			"route_location": "REJECT-01",
+			"message":        strings.TrimSpace(body.ItemCode) + " rejected → REJECT-01",
 		})
 	}
 }
