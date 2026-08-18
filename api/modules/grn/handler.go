@@ -167,6 +167,16 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 		writeEvent(db, c, id, "GRN_CREATED", fiber.Map{
 			"payload": fiber.Map{"receiving_mode": mode, "truck_no": body.TruckNo, "status": status},
 		})
+		plNo := strings.Replace(sessionNo, "GRN-", "PL-", 1)
+		poID := body.PurchaseOrderID
+		if poID == 0 && strings.TrimSpace(body.PurchaseReceiptNo) != "" {
+			_ = db.QueryRow(c.Context(), `SELECT id FROM purchase_orders WHERE name=$1`, body.PurchaseReceiptNo).Scan(&poID)
+		}
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_sessions SET
+				packing_list_no = COALESCE(NULLIF(packing_list_no,''), $2),
+				purchase_order_id = COALESCE(NULLIF($3,0), purchase_order_id)
+			WHERE id=$1`, id, plNo, poID)
 		if mode == "invoice_only" {
 			autoSeedInvoiceExpected(c, db, id, body.PurchaseOrderID, body.InvoiceNos)
 		}
@@ -208,6 +218,7 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(s.receiving_mode,'packing_list'), COALESCE(s.truck_no,''),
 				COALESCE(s.is_followup,false), COALESCE(s.parent_grn_id,0),
 				COALESCE(s.delivery_no,''),
+				COALESCE(s.packing_list_no,''), COALESCE(s.packing_list_filename,''), COALESCE(s.purchase_order_id,0),
 				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id) AS box_count,
 				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id AND c.status IN ('verified','received')) AS boxes_received,
 				(SELECT COUNT(*) FROM grn_lines l JOIN grn_cartons c ON c.id = l.grn_carton_id WHERE c.grn_session_id = s.id) AS item_count,
@@ -232,19 +243,27 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 			var sessionNo, status string
 			var supplier, receipt *string
 			var created time.Time
-			var mode, truck, deliveryNo string
+			var mode, truck, deliveryNo, packingListNo, packingListFile string
 			var isFollowup bool
-			var parentID, boxCount, boxesReceived, itemCount, exceptionsOpen int
+			var parentID, poID, boxCount, boxesReceived, itemCount, exceptionsOpen int
 			var itemsScanned float64
 			if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created,
 				&mode, &truck, &isFollowup, &parentID, &deliveryNo,
+				&packingListNo, &packingListFile, &poID,
 				&boxCount, &boxesReceived, &itemCount, &itemsScanned, &exceptionsOpen); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
+			poNo := ""
+			if receipt != nil {
+				poNo = *receipt
+			}
 			list = append(list, fiber.Map{
 				"id": id, "session_no": sessionNo, "supplier": supplier,
-				"purchase_receipt_no": receipt, "status": canonicalStatus(status),
-				"status_label": specStatusLabel(status), "created_at": created,
+				"purchase_receipt_no": receipt, "po_no": poNo,
+				"packing_list_no": packingListNo, "packing_list_filename": packingListFile,
+				"purchase_order_id": poID,
+				"status":            canonicalStatus(status),
+				"status_label":      specStatusLabel(status), "created_at": created,
 				"receiving_mode": mode, "truck_no": truck,
 				"is_followup": isFollowup, "parent_grn_id": parentID,
 				"delivery_no": deliveryNo,

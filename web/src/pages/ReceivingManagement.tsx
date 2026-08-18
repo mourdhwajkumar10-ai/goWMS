@@ -88,7 +88,31 @@ interface PackingList {
   transporter: string;
   created_at: string;
   created_by: string;
+  po_no?: string;
+  packing_list_no?: string;
+  packing_list_filename?: string;
   items: PackingListItem[];
+}
+
+function InboundDocMap({ po, packingList, grn, file }: { po?: string; packingList?: string; grn?: string; file?: string }) {
+  return (
+    <div className="rw-doc-map">
+      <span className="rw-doc-chip" data-kind="po">
+        <span className="rw-doc-chip-label">PO</span>
+        <span className="rw-doc-chip-value">{po || "—"}</span>
+      </span>
+      <span className="rw-doc-arrow">→</span>
+      <span className="rw-doc-chip" data-kind="pl">
+        <span className="rw-doc-chip-label">Packing list{file ? ` · ${file}` : ""}</span>
+        <span className="rw-doc-chip-value">{packingList || "—"}</span>
+      </span>
+      <span className="rw-doc-arrow">→</span>
+      <span className="rw-doc-chip" data-kind="grn">
+        <span className="rw-doc-chip-label">GRN</span>
+        <span className="rw-doc-chip-value">{grn || "—"}</span>
+      </span>
+    </div>
+  );
 }
 
 interface PackingListItem {
@@ -152,6 +176,11 @@ export default function ReceivingManagement() {
 
   // Driver/transport
   const [supplierName, setSupplierName] = useState("");
+  const [poName, setPoName] = useState("");
+  const [poSuggestions, setPoSuggestions] = useState<any[]>([]);
+  const [showPoDropdown, setShowPoDropdown] = useState(false);
+  const [poFilter, setPoFilter] = useState("");
+  const poDropdownRef = useRef<HTMLDivElement>(null);
   const [driverName, setDriverName] = useState("");
   const [driverPhone, setDriverPhone] = useState("");
   const [transporter, setTransporter] = useState("");
@@ -197,6 +226,9 @@ export default function ReceivingManagement() {
     loadTransports();
     api.supplierList().then((r) => {
       if (r.ok) setSupplierSuggestions(r.data || []);
+    });
+    api.poList().then((r) => {
+      if (r.ok) setPoSuggestions(r.data || []);
     });
   }, []);
 
@@ -429,7 +461,8 @@ export default function ReceivingManagement() {
         driverName,
         driverPhone,
         transporter,
-        supplierName
+        supplierName,
+        poName
       );
       setLoading(false);
       if (!res.ok) {
@@ -437,11 +470,17 @@ export default function ReceivingManagement() {
         return;
       }
       setImportSummary(res.data);
-      showFlash(`Packing list imported successfully`, "success");
+      showFlash(
+        res.data?.packing_list_no
+          ? `Mapped ${res.data.po_name || poName || "PO"} → ${res.data.packing_list_no} → ${res.data.session_no}`
+          : "Packing list imported successfully",
+        "success"
+      );
       loadGRNSessions();
       setShowUpload(false);
       setPackingFile(null);
       setSupplierName("");
+      setPoName("");
       setDriverName("");
       setDriverPhone("");
       setTransporter("");
@@ -522,7 +561,9 @@ export default function ReceivingManagement() {
     return grnSessions.filter((s: any) => {
       const matchesSearch = !q ||
         (s.session_no || "").toLowerCase().includes(q) ||
-        (s.purchase_receipt_no || "").toLowerCase().includes(q) ||
+        (s.purchase_receipt_no || s.po_no || "").toLowerCase().includes(q) ||
+        (s.packing_list_no || "").toLowerCase().includes(q) ||
+        (s.packing_list_filename || "").toLowerCase().includes(q) ||
         (s.supplier_name || s.supplier || "").toLowerCase().includes(q);
       const matchesStatus = statusFilter === "all" || (s.status || "") === statusFilter;
       return matchesSearch && matchesStatus;
@@ -642,6 +683,44 @@ export default function ReceivingManagement() {
               <div className="rw-modal-body">
                 {/* Delivery details */}
                 <div className="rw-section-title" style={{ marginBottom: 12 }}>🚚 Delivery Details</div>
+                <div className="rw-form-grid">
+                  <div className="rw-field" ref={poDropdownRef}>
+                    <label className="rw-label">Purchase Order</label>
+                    <input
+                      className="rw-input"
+                      placeholder="Type to search PO..."
+                      value={poName}
+                      onChange={(e) => { setPoName(e.target.value); setPoFilter(e.target.value); setShowPoDropdown(true); }}
+                      onFocus={() => setShowPoDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowPoDropdown(false), 200)}
+                      autoComplete="off"
+                    />
+                    {showPoDropdown && poSuggestions.length > 0 && (
+                      <div className="rw-dropdown" style={{ maxHeight: 200, overflowY: "auto" }}>
+                        {poSuggestions
+                          .filter((p: any) => !poFilter || (p.name || "").toLowerCase().includes(poFilter.toLowerCase()) || (p.supplier_name || "").toLowerCase().includes(poFilter.toLowerCase()))
+                          .slice(0, 10)
+                          .map((p: any) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              className="rw-dropdown-item"
+                              style={{ textAlign: "left", padding: "8px 12px" }}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setPoName(p.name || "");
+                                if (p.supplier_name) setSupplierName(p.supplier_name);
+                                setShowPoDropdown(false);
+                              }}
+                            >
+                              <div style={{ fontWeight: 500 }}>{p.name}</div>
+                              <div style={{ fontSize: 11, color: "var(--rw-text-dim)" }}>{p.supplier_name || ""} · {p.status || ""}</div>
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
                 <div className="rw-form-grid">
                   <div className="rw-field" ref={supplierDropdownRef}>
                     <label className="rw-label">Supplier *</label>
@@ -1068,7 +1147,7 @@ export default function ReceivingManagement() {
           </select>
           <input
             className="rw-input"
-            placeholder="Search session, PO, supplier..."
+            placeholder="Search GRN, packing list, PO, supplier..."
             value={search}
             onChange={(e) => { setSearch(e.target.value); setGrnPage(1); }}
             style={{ flex: 1, minWidth: 220 }}
@@ -1092,8 +1171,9 @@ export default function ReceivingManagement() {
               <table className="erpnext-table" style={{ width: "100%" }}>
                 <thead>
                   <tr style={{ background: "var(--panel-2)" }}>
-                    <th>Session</th>
-                    <th>PO / Receipt</th>
+                    <th>PO</th>
+                    <th>Packing List</th>
+                    <th>GRN</th>
                     <th>Supplier</th>
                     <th>Status</th>
                     <th>Boxes</th>
@@ -1110,8 +1190,12 @@ export default function ReceivingManagement() {
                       style={{ cursor: "pointer" }}
                       onClick={() => openDetail({ id: s.id, name: s.session_no, supplier_name: s.supplier_name || s.supplier || "", status: s.status, driver_name: s.driver_name || "", total_boxes: s.box_count || s.boxes_total || 0, total_items: s.item_count || 0, total_qty: 0, created_at: s.created_at, driver_phone: "", transporter: "", created_by: "", items: [] } as any)}
                     >
+                      <td>{s.po_no || s.purchase_receipt_no || "—"}</td>
+                      <td>
+                        <div>{s.packing_list_no || "—"}</div>
+                        {s.packing_list_filename ? <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{s.packing_list_filename}</div> : null}
+                      </td>
                       <td className="font-medium" style={{ color: "var(--accent)" }}>{s.session_no}</td>
-                      <td>{s.purchase_receipt_no || "—"}</td>
                       <td>{s.supplier_name || s.supplier || "—"}</td>
                       <td>
                         <span className={`erpnext-badge ${
@@ -1187,6 +1271,12 @@ export default function ReceivingManagement() {
               </div>
               <button className="rw-modal-close" onClick={closeDetail}>✕</button>
             </div>
+            <InboundDocMap
+              po={selectedList.po_no}
+              packingList={selectedList.packing_list_no}
+              grn={selectedList.name}
+              file={selectedList.packing_list_filename}
+            />
             <div className="rw-modal-body">
               {/* Summary Stats */}
               <div className="rw-info-grid" style={{ marginBottom: 20 }}>

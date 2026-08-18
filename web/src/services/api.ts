@@ -94,13 +94,14 @@ export const api = {
   packingListList: () => get<any[]>("/packing-list/list"),
   packingListGet: (id: number) => get<any>(`/packing-list/${id}`),
   packingListApprove: (id: number) => post<any>(`/packing-list/${id}/approve`, {}),
-  packingListImportFile: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, supplierName?: string) => {
+  packingListImportFile: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, supplierName?: string, poName?: string) => {
     const fd = new FormData();
     fd.append("file", file);
     if (driverName) fd.append("driver_name", driverName);
     if (driverPhone) fd.append("driver_phone", driverPhone);
     if (transporter) fd.append("transporter", transporter);
     if (supplierName) fd.append("supplier_name", supplierName);
+    if (poName) fd.append("po_name", poName);
     const headers: Record<string, string> = {};
     const token = getToken();
     if (token) headers["Authorization"] = `Bearer ${token}`;

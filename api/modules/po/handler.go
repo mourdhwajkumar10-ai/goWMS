@@ -106,7 +106,9 @@ func listPOs(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(NULLIF(po.total_qty, 0), (SELECT COALESCE(SUM(qty),0) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id)) AS total_qty,
 			       po.schedule_date::text, po.set_warehouse, po.cost_center, po.transaction_date::text,
 			       COALESCE((SELECT SUM(received_qty) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id), 0) AS total_received,
-			       COALESCE((SELECT COUNT(*) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id), 0) AS item_count
+			       COALESCE((SELECT COUNT(*) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id), 0) AS item_count,
+			       COALESCE((SELECT gs.session_no FROM grn_sessions gs WHERE gs.purchase_order_id = po.id OR gs.purchase_receipt_no = po.name ORDER BY gs.id DESC LIMIT 1), '') AS grn_no,
+			       COALESCE((SELECT gs.packing_list_no FROM grn_sessions gs WHERE gs.purchase_order_id = po.id OR gs.purchase_receipt_no = po.name ORDER BY gs.id DESC LIMIT 1), '') AS packing_list_no
 			FROM purchase_orders po
 			ORDER BY po.id DESC LIMIT 100`)
 		if err != nil {
@@ -132,6 +134,8 @@ func listPOs(db *pgxpool.Pool) fiber.Handler {
 			TransactionDate *string  `json:"transaction_date"`
 			TotalReceived   float64  `json:"total_received"`
 			ItemCount       int      `json:"item_count"`
+			GrnNo           string   `json:"grn_no"`
+			PackingListNo   string   `json:"packing_list_no"`
 		}
 
 		var list []poRow
@@ -139,7 +143,7 @@ func listPOs(db *pgxpool.Pool) fiber.Handler {
 			var p poRow
 			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.PerReceived, &p.PerBilled,
 				&p.Company, &p.Currency, &p.GrandTotal, &p.NetTotal, &p.TotalQty,
-				&p.ScheduleDate, &p.SetWarehouse, &p.CostCenter, &p.TransactionDate, &p.TotalReceived, &p.ItemCount); err != nil {
+				&p.ScheduleDate, &p.SetWarehouse, &p.CostCenter, &p.TransactionDate, &p.TotalReceived, &p.ItemCount, &p.GrnNo, &p.PackingListNo); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, p)

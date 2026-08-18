@@ -201,6 +201,12 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
+		filename := ""
+		if hasFile && fileHeader != nil {
+			filename = fileHeader.Filename
+		}
+		mapInboundDocs(c.Context(), tx, sessionID, poName, filename)
+
 		// If no file uploaded, auto-create expected boxes from the linked PO items
 		// (so RF workers have box numbers to scan and the wizard can suggest top boxes)
 		if !hasFile {
@@ -505,9 +511,16 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 			dealerStr = parsedRows[0].dealerName
 		}
 
+		var plNo, poNo string
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(packing_list_no,''), COALESCE(purchase_receipt_no,'')
+			FROM grn_sessions WHERE id=$1`, sessionID).Scan(&plNo, &poNo)
+
 		return shared.OK(c, fiber.Map{
-			"grn_session_id": sessionID,
-			"session_no":     sessionNo,
+			"grn_session_id":  sessionID,
+			"session_no":      sessionNo,
+			"packing_list_no": plNo,
+			"po_name":         poNo,
 			"import_summary": fiber.Map{
 				"total_rows":          len(rows) - 1,
 				"rows_imported":       len(parsedRows),

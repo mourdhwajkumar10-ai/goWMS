@@ -801,14 +801,14 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session_id required")
 		}
 
-		var deliveryNo, sessionNo, poName string
+		var deliveryNo, sessionNo, poName, packingListNo, packingListFile string
 		var boxesTotal, boxesReceived int
 		var createdAt time.Time
 		err := db.QueryRow(c.Context(), `
 			SELECT COALESCE(delivery_no, ''), COALESCE(session_no, ''), COALESCE(boxes_total,0), COALESCE(boxes_received,0), created_at,
-			       COALESCE(purchase_receipt_no, '')
+			       COALESCE(purchase_receipt_no, ''), COALESCE(packing_list_no, ''), COALESCE(packing_list_filename, '')
 			FROM grn_sessions WHERE id = $1`, sessionID,
-		).Scan(&deliveryNo, &sessionNo, &boxesTotal, &boxesReceived, &createdAt, &poName)
+		).Scan(&deliveryNo, &sessionNo, &boxesTotal, &boxesReceived, &createdAt, &poName, &packingListNo, &packingListFile)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
 		}
@@ -868,25 +868,27 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		return shared.OK(c, fiber.Map{
-			"session_id":           sessionID,
-			"session_no":           sessionNo,
-			"delivery_no":          deliveryNo,
-			"total_boxes":          boxesTotal,
-			"boxes_received":       boxesReceived,
-			"single_item_boxes":    singleItemCount,
-			"multi_item_boxes":     multiItemCount,
-			"overall_progress_pct": progressPct,
-			"total_items":          itemsCount,
-			"items_full_match":     itemsFullMatch,
-			"items_shortage":       itemsShortage,
-			"items_excess":         itemsExcess,
-			"items_unknown":        itemsUnknown,
-			"total_qty_expected":   totalQtyExpected,
-			"total_qty_scanned":    totalQtyScanned,
-			"exceptions_open":      exceptionsOpen,
-			"elapsed_time_sec":     elapsedSec,
-			"est_remaining_sec":    estRemainingSec,
-			"po_name":              poName,
+			"session_id":            sessionID,
+			"session_no":            sessionNo,
+			"delivery_no":           deliveryNo,
+			"total_boxes":           boxesTotal,
+			"boxes_received":        boxesReceived,
+			"single_item_boxes":     singleItemCount,
+			"multi_item_boxes":      multiItemCount,
+			"overall_progress_pct":  progressPct,
+			"total_items":           itemsCount,
+			"items_full_match":      itemsFullMatch,
+			"items_shortage":        itemsShortage,
+			"items_excess":          itemsExcess,
+			"items_unknown":         itemsUnknown,
+			"total_qty_expected":    totalQtyExpected,
+			"total_qty_scanned":     totalQtyScanned,
+			"exceptions_open":       exceptionsOpen,
+			"elapsed_time_sec":      elapsedSec,
+			"est_remaining_sec":     estRemainingSec,
+			"po_name":               poName,
+			"packing_list_no":       packingListNo,
+			"packing_list_filename": packingListFile,
 		})
 	}
 }

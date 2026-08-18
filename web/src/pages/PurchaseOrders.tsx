@@ -678,6 +678,8 @@ export default function PurchaseOrders() {
               <thead>
                 <tr style={{ background: 'var(--panel-2)' }}>
                   <th>PO No</th>
+                  <th>Packing List</th>
+                  <th>GRN</th>
                   <th>Supplier</th>
                   <th>Company</th>
                   <th>Status</th>
@@ -697,6 +699,8 @@ export default function PurchaseOrders() {
                     >
                       {po.name}
                     </td>
+                    <td>{po.packing_list_no || "—"}</td>
+                    <td>{po.grn_no || "—"}</td>
                     <td>{po.supplier_name}</td>
                     <td>{po.company || '-'}</td>
                     <td>

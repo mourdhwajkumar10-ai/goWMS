@@ -194,7 +194,8 @@ export default function GRN() {
         !searchQuery ||
         (s.session_no || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
         (s.supplier_name || s.supplier || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (s.purchase_receipt_no || "").toLowerCase().includes(searchQuery.toLowerCase());
+        (s.purchase_receipt_no || s.po_no || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (s.packing_list_no || "").toLowerCase().includes(searchQuery.toLowerCase());
       const matchesStatus =
         statusFilter === "all" || (s.status || "").toLowerCase() === statusFilter;
       return matchesSearch && matchesStatus;
@@ -327,7 +328,9 @@ export default function GRN() {
           <table className="erpnext-table text-sm">
             <thead>
               <tr style={{ background: "var(--panel-2)" }}>
-                <th>Session</th>
+                <th>PO</th>
+                <th>Packing List</th>
+                <th>GRN</th>
                 <th>Supplier</th>
                 <th>Driver</th>
                 <th className="text-right">Boxes</th>
@@ -340,6 +343,8 @@ export default function GRN() {
             <tbody>
               {sessionPager.pageItems.map((s: any) => (
                 <tr key={s.id}>
+                  <td>{s.po_no || s.purchase_receipt_no || "—"}</td>
+                  <td>{s.packing_list_no || "—"}</td>
                   <td className="font-medium" style={{ color: "var(--accent)" }}>
                     {s.session_no}
                   </td>
@@ -389,7 +394,7 @@ export default function GRN() {
               ))}
               {sessionPager.total === 0 && (
                 <tr>
-                  <td colSpan={8} className="text-center py-12" style={{ color: "var(--text-dim)" }}>
+                  <td colSpan={10} className="text-center py-12" style={{ color: "var(--text-dim)" }}>
                     <div className="text-lg mb-2">No packing lists found</div>
                     <div className="text-sm">
                       Click "+ Upload Packing List" to get started

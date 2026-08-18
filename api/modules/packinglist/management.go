@@ -36,7 +36,11 @@ func listPackingLists(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(gs.driver_phone, '') as driver_phone,
 				COALESCE(gs.transporter, '') as transporter,
 				gs.created_at,
-				COALESCE(gs.created_by, 0) as created_by
+				COALESCE(gs.created_by, 0) as created_by,
+				COALESCE(gs.purchase_receipt_no, '') as po_no,
+				COALESCE(gs.packing_list_no, '') as packing_list_no,
+				COALESCE(gs.packing_list_filename, '') as packing_list_filename,
+				COALESCE(gs.purchase_order_id, 0) as purchase_order_id
 			FROM grn_sessions gs
 			WHERE (
 			   gs.receiving_mode = 'packing_list'
@@ -56,18 +60,22 @@ func listPackingLists(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type packingListInfo struct {
-			ID           int       `json:"id"`
-			Name         string    `json:"name"`
-			SupplierName string    `json:"supplier_name"`
-			Status       string    `json:"status"`
-			TotalBoxes   int       `json:"total_boxes"`
-			TotalItems   int       `json:"total_items"`
-			TotalQty     float64   `json:"total_qty"`
-			DriverName   string    `json:"driver_name"`
-			DriverPhone  string    `json:"driver_phone"`
-			Transporter  string    `json:"transporter"`
-			CreatedAt    time.Time `json:"created_at"`
-			CreatedBy    int       `json:"created_by"`
+			ID                  int       `json:"id"`
+			Name                string    `json:"name"`
+			SupplierName        string    `json:"supplier_name"`
+			Status              string    `json:"status"`
+			TotalBoxes          int       `json:"total_boxes"`
+			TotalItems          int       `json:"total_items"`
+			TotalQty            float64   `json:"total_qty"`
+			DriverName          string    `json:"driver_name"`
+			DriverPhone         string    `json:"driver_phone"`
+			Transporter         string    `json:"transporter"`
+			CreatedAt           time.Time `json:"created_at"`
+			CreatedBy           int       `json:"created_by"`
+			PoNo                string    `json:"po_no"`
+			PackingListNo       string    `json:"packing_list_no"`
+			PackingListFilename string    `json:"packing_list_filename"`
+			PurchaseOrderID     int       `json:"purchase_order_id"`
 		}
 
 		var list []packingListInfo
@@ -75,7 +83,7 @@ func listPackingLists(db *pgxpool.Pool) fiber.Handler {
 			var p packingListInfo
 			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.TotalBoxes,
 				&p.TotalItems, &p.TotalQty, &p.DriverName, &p.DriverPhone, &p.Transporter,
-				&p.CreatedAt, &p.CreatedBy); err != nil {
+				&p.CreatedAt, &p.CreatedBy, &p.PoNo, &p.PackingListNo, &p.PackingListFilename, &p.PurchaseOrderID); err != nil {
 				continue
 			}
 			list = append(list, p)
@@ -114,18 +122,22 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 
 		// Get session info
 		var session struct {
-			ID           int       `json:"id"`
-			Name         string    `json:"name"`
-			SupplierName string    `json:"supplier_name"`
-			Status       string    `json:"status"`
-			TotalBoxes   int       `json:"total_boxes"`
-			TotalItems   int       `json:"total_items"`
-			TotalQty     float64   `json:"total_qty"`
-			DriverName   string    `json:"driver_name"`
-			DriverPhone  string    `json:"driver_phone"`
-			Transporter  string    `json:"transporter"`
-			CreatedAt    time.Time `json:"created_at"`
-			CreatedBy    int       `json:"created_by"`
+			ID                  int       `json:"id"`
+			Name                string    `json:"name"`
+			SupplierName        string    `json:"supplier_name"`
+			Status              string    `json:"status"`
+			TotalBoxes          int       `json:"total_boxes"`
+			TotalItems          int       `json:"total_items"`
+			TotalQty            float64   `json:"total_qty"`
+			DriverName          string    `json:"driver_name"`
+			DriverPhone         string    `json:"driver_phone"`
+			Transporter         string    `json:"transporter"`
+			CreatedAt           time.Time `json:"created_at"`
+			CreatedBy           int       `json:"created_by"`
+			PoNo                string    `json:"po_no"`
+			PackingListNo       string    `json:"packing_list_no"`
+			PackingListFilename string    `json:"packing_list_filename"`
+			PurchaseOrderID     int       `json:"purchase_order_id"`
 		}
 
 		err = db.QueryRow(c.Context(), `
@@ -141,12 +153,17 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(gs.driver_phone, '') as driver_phone,
 				COALESCE(gs.transporter, '') as transporter,
 				gs.created_at,
-				COALESCE(gs.created_by, 0) as created_by
+				COALESCE(gs.created_by, 0) as created_by,
+				COALESCE(gs.purchase_receipt_no, ''),
+				COALESCE(gs.packing_list_no, ''),
+				COALESCE(gs.packing_list_filename, ''),
+				COALESCE(gs.purchase_order_id, 0)
 			FROM grn_sessions gs
 			WHERE gs.id = $1`, id).Scan(
 			&session.ID, &session.Name, &session.SupplierName, &session.Status, &session.TotalBoxes,
 			&session.TotalItems, &session.TotalQty, &session.DriverName, &session.DriverPhone,
-			&session.Transporter, &session.CreatedAt, &session.CreatedBy)
+			&session.Transporter, &session.CreatedAt, &session.CreatedBy,
+			&session.PoNo, &session.PackingListNo, &session.PackingListFilename, &session.PurchaseOrderID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "packing list not found")
 		}
@@ -224,19 +241,25 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		return shared.OK(c, fiber.Map{
-			"id":            session.ID,
-			"name":          session.Name,
-			"supplier_name": session.SupplierName,
-			"status":        session.Status,
-			"total_boxes":   session.TotalBoxes,
-			"total_items":   session.TotalItems,
-			"total_qty":     session.TotalQty,
-			"driver_name":   session.DriverName,
-			"driver_phone":  session.DriverPhone,
-			"transporter":   session.Transporter,
-			"created_at":    session.CreatedAt,
-			"created_by":    session.CreatedBy,
-			"items":         items,
+			"id":                    session.ID,
+			"name":                  session.Name,
+			"session_no":            session.Name,
+			"supplier_name":         session.SupplierName,
+			"status":                session.Status,
+			"total_boxes":           session.TotalBoxes,
+			"total_items":           session.TotalItems,
+			"total_qty":             session.TotalQty,
+			"driver_name":           session.DriverName,
+			"driver_phone":          session.DriverPhone,
+			"transporter":           session.Transporter,
+			"created_at":            session.CreatedAt,
+			"created_by":            session.CreatedBy,
+			"po_no":                 session.PoNo,
+			"purchase_receipt_no":   session.PoNo,
+			"packing_list_no":       session.PackingListNo,
+			"packing_list_filename": session.PackingListFilename,
+			"purchase_order_id":     session.PurchaseOrderID,
+			"items":                 items,
 		})
 	}
 }
@@ -280,6 +303,7 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 		driverPhone := strings.TrimSpace(c.FormValue("driver_phone"))
 		transporter := strings.TrimSpace(c.FormValue("transporter"))
 		supplierName := strings.TrimSpace(c.FormValue("supplier_name"))
+		poName := strings.TrimSpace(c.FormValue("po_name"))
 
 		fileHeader, err := c.FormFile("file")
 		if err != nil {
@@ -381,6 +405,7 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to create session: "+err.Error())
 		}
+		mapInboundDocs(c.Context(), tx, sessionID, poName, fileHeader.Filename)
 
 		// Parse and insert rows
 		boxItemCount := map[string]int{}
@@ -482,8 +507,10 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		return shared.OK(c, fiber.Map{
-			"grn_session_id": sessionID,
-			"session_no":     sessionNo,
+			"grn_session_id":  sessionID,
+			"session_no":      sessionNo,
+			"packing_list_no": strings.Replace(sessionNo, "GRN-", "PL-", 1),
+			"po_name":         poName,
 			"import_summary": fiber.Map{
 				"rows_imported": parsedRows,
 				"rows_skipped":  skippedRows,

@@ -8,7 +8,7 @@ import "../styles/receiving-wizard.css";
 interface POInfo { id: number; name: string; supplier_name: string; status: string; grand_total: number; schedule_date: string; item_count: number; total_qty: number; received_qty: number; open_sessions: number; resume_session_id?: number | null; }
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string; }
 interface ScanResult { box_number: string; auto_completed: boolean; message: string; timestamp: Date; status: "success" | "warning" | "error"; }
-interface StatsData { session_id: number; session_no?: string; delivery_no: string; po_name?: string; total_boxes: number; boxes_received: number; single_item_boxes: number; multi_item_boxes: number; overall_progress_pct: number; total_items: number; items_full_match: number; items_shortage: number; items_excess: number; items_unknown: number; total_qty_expected: number; total_qty_scanned: number; exceptions_open: number; elapsed_time_sec: number; est_remaining_sec: number; }
+interface StatsData { session_id: number; session_no?: string; delivery_no: string; po_name?: string; packing_list_no?: string; packing_list_filename?: string; total_boxes: number; boxes_received: number; single_item_boxes: number; multi_item_boxes: number; overall_progress_pct: number; total_items: number; items_full_match: number; items_shortage: number; items_excess: number; items_unknown: number; total_qty_expected: number; total_qty_scanned: number; exceptions_open: number; elapsed_time_sec: number; est_remaining_sec: number; }
 
 const playBeep = (freq = 800, dur = 0.15) => { try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.type = "sine"; o.frequency.value = freq; g.gain.setValueAtTime(0.1, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur); o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + dur); } catch {} };
 const triggerVibrate = (p: number | number[] = 200) => { if (navigator.vibrate) navigator.vibrate(p); };
@@ -224,6 +224,13 @@ export default function ReceivingWizard() {
           </div>
           <Ring pct={pct} />
         </div>
+        <div className="rw-doc-map">
+          <span className="rw-doc-chip" data-kind="po"><span className="rw-doc-chip-label">PO</span><span className="rw-doc-chip-value">{stats?.po_name || selPO?.name || "—"}</span></span>
+          <span className="rw-doc-arrow">→</span>
+          <span className="rw-doc-chip" data-kind="pl"><span className="rw-doc-chip-label">Packing list</span><span className="rw-doc-chip-value">{stats?.packing_list_no || "—"}</span></span>
+          <span className="rw-doc-arrow">→</span>
+          <span className="rw-doc-chip" data-kind="grn"><span className="rw-doc-chip-label">GRN</span><span className="rw-doc-chip-value">{sNo || "—"}</span></span>
+        </div>
 
         <CameraScanner
           open={camOpen}
@@ -298,6 +305,13 @@ export default function ReceivingWizard() {
               <div className="rw-header-session">{cut(curBox.box_number, 24)} · {matched}/{total} items</div>
             </div>
             <Ring pct={boxPct} />
+          </div>
+          <div className="rw-doc-map">
+            <span className="rw-doc-chip" data-kind="po"><span className="rw-doc-chip-label">PO</span><span className="rw-doc-chip-value">{stats?.po_name || selPO?.name || "—"}</span></span>
+            <span className="rw-doc-arrow">→</span>
+            <span className="rw-doc-chip" data-kind="pl"><span className="rw-doc-chip-label">Packing list</span><span className="rw-doc-chip-value">{stats?.packing_list_no || "—"}</span></span>
+            <span className="rw-doc-arrow">→</span>
+            <span className="rw-doc-chip" data-kind="grn"><span className="rw-doc-chip-label">GRN</span><span className="rw-doc-chip-value">{sNo || "—"}</span></span>
           </div>
           <CameraScanner
             open={itemCamOpen}
