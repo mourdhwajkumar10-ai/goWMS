@@ -91,6 +91,29 @@ export const api = {
   // Packing list import
   packingListTemplates: () => get<any[]>("/packing-list/templates"),
   packingListImport: (data: any) => post<any>("/packing-list/import", data),
+  packingListList: () => get<any[]>("/packing-list/list"),
+  packingListGet: (id: number) => get<any>(`/packing-list/${id}`),
+  packingListApprove: (id: number) => post<any>(`/packing-list/${id}/approve`, {}),
+  packingListImportFile: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, supplierName?: string) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (driverName) fd.append("driver_name", driverName);
+    if (driverPhone) fd.append("driver_phone", driverPhone);
+    if (transporter) fd.append("transporter", transporter);
+    if (supplierName) fd.append("supplier_name", supplierName);
+    const headers: Record<string, string> = {};
+    const token = getToken();
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    if (typeof navigator !== "undefined" && navigator.userAgent) {
+      headers["X-Device"] = navigator.userAgent.slice(0, 100);
+    }
+    const res = await fetch(`${BASE}/packing-list/import-file`, { method: "POST", headers, body: fd });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok || payload.ok === false) {
+      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` };
+    }
+    return { ok: true as const, data: payload.data };
+  },
 
   // Employees
   employeeList: () => get<any[]>("/employees/list"),
@@ -278,6 +301,17 @@ export const api = {
   grnCreateException: (id: number, data: any) => post<any>(`/grn/session/${id}/exceptions`, data),
   grnSupportingDoc: (id: number, attachmentId: number) =>
     post<any>(`/grn/session/${id}/supporting-doc`, { attachment_id: attachmentId }),
+  grnImportPackingList: async (sessionId: number, file: File) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    const headers: Record<string, string> = {}
+    const token = getToken()
+    if (token) headers.Authorization = `Bearer ${token}`
+    const res = await fetch(`${BASE}/grn/${sessionId}/import-packing-list`, { method: 'POST', headers, body: fd })
+    const payload = await res.json().catch(() => ({}))
+    if (!res.ok || payload.ok === false) return { ok: false as const, error: payload.error || `Import failed (${res.status})` }
+    return { ok: true as const, data: payload.data }
+  },
 
   // Picking
   pickLists: () => get<any[]>("/picking/lists"),
@@ -443,14 +477,16 @@ export const api = {
   reportsSummary: () => get<any>("/reports/summary"),
 
   // Receiving Wizard
-  receivingImport: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, defaultRoute?: string, grnSessionId?: number) => {
+  receivingImport: async (file?: File | null, driverName?: string, driverPhone?: string, transporter?: string, defaultRoute?: string, grnSessionId?: number, poName?: string, supplierName?: string) => {
     const fd = new FormData()
-    fd.append("file", file)
+    if (file && file.size > 0) fd.append("file", file)
     if (driverName) fd.append("driver_name", driverName)
     if (driverPhone) fd.append("driver_phone", driverPhone)
     if (transporter) fd.append("transporter", transporter)
     if (defaultRoute) fd.append("default_route", defaultRoute)
     if (grnSessionId) fd.append("grn_session_id", String(grnSessionId))
+    if (poName) fd.append("po_name", poName)
+    if (supplierName) fd.append("supplier_name", supplierName)
     const headers: Record<string, string> = {}
     const token = getToken()
     if (token) headers.Authorization = `Bearer ${token}`
@@ -468,11 +504,14 @@ export const api = {
   receivingDNs: (sessionId: number, invoiceNo?: string) => get<any[]>(`/receiving/delivery-notes?session_id=${sessionId}${invoiceNo ? `&invoice_no=${encodeURIComponent(invoiceNo)}` : ""}`),
   receivingBoxes: (sessionId: number, deliveryNo?: string) => get<any>(`/receiving/boxes?session_id=${sessionId}${deliveryNo ? `&delivery_no=${encodeURIComponent(deliveryNo)}` : ""}`),
   receivingScanBox: (data: { session_id: number; box_number: string; auto_complete_single: boolean; default_route?: string }) => post<any>("/receiving/scan-box", data),
-  receivingScanItem: (data: { session_id: number; box_number: string; qr_raw: string; qty_override?: number }) => post<any>("/receiving/scan-item", data),
+  receivingScanItem: (data: { session_id: number; box_number: string; qr_raw: string }) => post<any>("/receiving/scan-item", data),
   receivingCompleteBox: (data: { session_id: number; box_number: string; default_route?: string }) => post<any>("/receiving/complete-box", data),
   receivingRouteException: (data: { session_id: number; routes: { grn_line_id: number; location: string }[] }) => post<any>("/receiving/route-exception", data),
   receivingStats: (sessionId: number) => get<any>(`/receiving/stats?session_id=${sessionId}`),
   receivingDrivers: (q?: string) => get<any[]>(`/receiving/drivers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  receivingPendingPOs: () => get<any[]>("/receiving/pending-pos"),
+  receivingOverrideRoute: (data: { session_id: number; box_number: string; new_route: string; line_ids?: number[] }) => post<any>("/receiving/override-route", data),
+  receivingExceptions: (sessionId: number) => get<any[]>(`/receiving/exceptions?session_id=${sessionId}`),
 };
 
 export default api;

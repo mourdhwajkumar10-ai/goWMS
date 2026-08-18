@@ -203,19 +203,26 @@ func nullEmpty(s string) any {
 func listSessions(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT id, session_no, supplier_name, purchase_receipt_no, status, created_at,
-			       COALESCE(receiving_mode,'packing_list'), COALESCE(truck_no,''),
-			       COALESCE(is_followup,false), COALESCE(parent_grn_id,0)
-			FROM grn_sessions ORDER BY created_at DESC LIMIT 50`)
+			SELECT
+				s.id, s.session_no, s.supplier_name, s.purchase_receipt_no, s.status, s.created_at,
+				COALESCE(s.receiving_mode,'packing_list'), COALESCE(s.truck_no,''),
+				COALESCE(s.is_followup,false), COALESCE(s.parent_grn_id,0),
+				COALESCE(s.delivery_no,''),
+				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id) AS box_count,
+				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id AND c.status IN ('verified','received')) AS boxes_received,
+				(SELECT COUNT(*) FROM grn_lines l JOIN grn_cartons c ON c.id = l.grn_carton_id WHERE c.grn_session_id = s.id) AS item_count,
+				(SELECT COALESCE(SUM(l.scanned_qty),0) FROM grn_lines l JOIN grn_cartons c ON c.id = l.grn_carton_id WHERE c.grn_session_id = s.id) AS items_scanned,
+				(SELECT COUNT(*) FROM grn_exceptions e WHERE e.grn_session_id = s.id AND e.status = 'open') AS exceptions_open
+			FROM grn_sessions s
+			WHERE EXISTS (SELECT 1 FROM grn_cartons c WHERE c.grn_session_id = s.id)
+			   OR EXISTS (
+				SELECT 1 FROM grn_lines l
+				WHERE l.grn_session_id = s.id
+				  AND COALESCE(l.expected_qty,0) + COALESCE(l.scanned_qty,0) > 0
+			   )
+			ORDER BY s.created_at DESC LIMIT 100`)
 		if err != nil {
-			if strings.Contains(err.Error(), "receiving_mode") || strings.Contains(err.Error(), "is_followup") {
-				rows, err = db.Query(c.Context(), `
-					SELECT id, session_no, supplier_name, purchase_receipt_no, status, created_at
-					FROM grn_sessions ORDER BY created_at DESC LIMIT 50`)
-			}
-			if err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-			}
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
 
@@ -225,23 +232,14 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 			var sessionNo, status string
 			var supplier, receipt *string
 			var created time.Time
-			var mode, truck string
+			var mode, truck, deliveryNo string
 			var isFollowup bool
-			var parentID int
-			cols := rows.FieldDescriptions()
-			if len(cols) >= 10 {
-				if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created, &mode, &truck, &isFollowup, &parentID); err != nil {
-					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-				}
-			} else if len(cols) >= 8 {
-				if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created, &mode, &truck); err != nil {
-					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-				}
-			} else {
-				if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created); err != nil {
-					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-				}
-				mode = "packing_list"
+			var parentID, boxCount, boxesReceived, itemCount, exceptionsOpen int
+			var itemsScanned float64
+			if err := rows.Scan(&id, &sessionNo, &supplier, &receipt, &status, &created,
+				&mode, &truck, &isFollowup, &parentID, &deliveryNo,
+				&boxCount, &boxesReceived, &itemCount, &itemsScanned, &exceptionsOpen); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, fiber.Map{
 				"id": id, "session_no": sessionNo, "supplier": supplier,
@@ -249,6 +247,10 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 				"status_label": specStatusLabel(status), "created_at": created,
 				"receiving_mode": mode, "truck_no": truck,
 				"is_followup": isFollowup, "parent_grn_id": parentID,
+				"delivery_no": deliveryNo,
+				"box_count":   boxCount, "boxes_received": boxesReceived,
+				"item_count": itemCount, "items_scanned": int(itemsScanned),
+				"exceptions_open": exceptionsOpen,
 			})
 		}
 		return shared.OK(c, list)
@@ -728,11 +730,17 @@ func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
 		JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND poi.item_code = $1
 		WHERE gc.id = $2 LIMIT 1`, itemCode, in.CartonID).Scan(&maxPct)
 
+	// Default 10% over-receipt tolerance when PO item has no explicit limit.
+	const defaultOverReceiptPct = 10.0
+	if maxPct <= 0 && in.ExpQty > 0 {
+		maxPct = defaultOverReceiptPct
+	}
+
 	if maxPct > 0 && in.ExpQty > 0 {
 		over := (in.ScanQty - in.ExpQty) / in.ExpQty * 100
 		if over > maxPct {
 			return shared.Err(c, fiber.StatusBadRequest,
-				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%%", over, maxPct))
+				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", over, maxPct, defaultOverReceiptPct))
 		}
 	}
 
@@ -852,6 +860,16 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	dmgID, dmgCode, err := shared.EnsureLocation(c.Context(), db, wid, "DAMAGED-01", "damaged")
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, "damaged location: "+err.Error())
+	}
+
+	claim, err := db.Exec(c.Context(),
+		`UPDATE grn_sessions SET stock_posted_at=now()
+		 WHERE id=$1 AND stock_posted_at IS NULL AND status NOT IN ('closed','completed')`, sessionID)
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	if claim.RowsAffected() == 0 {
+		return shared.Err(c, fiber.StatusBadRequest, "stock already posted")
 	}
 
 	// Per-line posting so batch / damage / QI routing is preserved.

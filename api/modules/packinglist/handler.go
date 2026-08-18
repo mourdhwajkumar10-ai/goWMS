@@ -18,6 +18,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/templates", createTemplate(db))
 	r.Post("/import", importIntoGRN(db))
 	RegisterXLSX(r, db)
+	RegisterManagement(r, db)
 }
 
 // RegisterGRNAlias mounts docs/QA paths under /grn/:id/...

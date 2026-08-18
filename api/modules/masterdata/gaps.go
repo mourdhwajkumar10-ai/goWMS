@@ -205,6 +205,13 @@ func importItemRows(ctx context.Context, db *pgxpool.Pool, rows []map[string]str
 		desc := itemNameFrom(row)
 		moq := parseFloatKey(row, "min_order_qty", "moq", "MOQ", "VEH_DLR Set Qty")
 		weight := parseFloatKey(row, "weight_per_unit", "weight", "Weight")
+		velocityTier := strings.ToLower(firstKey(row, "velocity_tier", "Velocity Tier", "velocity"))
+		if velocityTier != "" && velocityTier != "fast" && velocityTier != "medium" && velocityTier != "slow" {
+			velocityTier = "medium"
+		}
+		if velocityTier == "" {
+			velocityTier = "medium"
+		}
 		if carton == 0 {
 			if v := firstKey(row, "Distributor Set Qty", "carton_qty", "Carton Qty"); v != "" {
 				carton, _ = strconv.Atoi(strings.Split(v, ".")[0])
@@ -219,14 +226,14 @@ func importItemRows(ctx context.Context, db *pgxpool.Pool, rows []map[string]str
 					safety_stock, master_complete, valuation_rate,
 					mrp, standard_rate, hsn_no, gst_percentage, vech, make, uom, product_group, category,
 					parts_movement, parts_pbo, threshold_value, max_rate_discount, remark,
-					description, min_order_qty, weight_per_unit
+					description, min_order_qty, weight_per_unit, velocity_tier
 				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,
-				          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)`,
+				          $15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)`,
 			code, name, nullIfEmpty(brand), hasSerial, hasBatch, hasExpiry,
 			packType, controlMode, nullIfEmpty(barcode), carton, shelf, safety, complete, costPrice,
 			mrp, standardRate, nullIfEmpty(hsn), gst, nullIfEmpty(vech), nullIfEmpty(make), uom,
 			nullIfEmpty(productGroup), nullIfEmpty(category), nullIfEmpty(partsMovement), nullIfEmpty(partsPBO),
-			threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight)
+			threshold, maxDisc, nullIfEmpty(remark), nullIfEmpty(desc), moq, weight, velocityTier)
 		if ierr != nil {
 			if len(errors) < 50 {
 				errors = append(errors, code+": "+ierr.Error())

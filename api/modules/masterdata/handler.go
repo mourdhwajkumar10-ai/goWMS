@@ -180,7 +180,8 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
 			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
-			       COALESCE(standard_rate,0), max_qty_per_bin, COALESCE(requires_qi,false)
+			       COALESCE(standard_rate,0), max_qty_per_bin, COALESCE(requires_qi,false),
+			       COALESCE(velocity_tier,'medium')
 			FROM items ` + where + order + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
 
 		rows, err := db.Query(c.Context(), sql, args...)
@@ -226,6 +227,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			StandardRate    float64  `json:"standard_rate"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 			RequiresQI      bool     `json:"requires_qi"`
+			VelocityTier    string   `json:"velocity_tier"`
 		}
 		list := []item{}
 		for rows.Next() {
@@ -237,7 +239,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 				&i.CartonQty, &i.ShelfLifeDays,
 				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.ProductGroup, &i.Category,
 				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
-				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin, &i.RequiresQI); err != nil {
+				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin, &i.RequiresQI, &i.VelocityTier); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			i.ItemGroup = groupID

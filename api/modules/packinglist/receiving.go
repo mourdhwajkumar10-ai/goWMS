@@ -1,7 +1,9 @@
 package packinglist
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"strconv"
 	"strings"
@@ -10,6 +12,7 @@ import (
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/xuri/excelize/v2"
 )
@@ -21,6 +24,7 @@ func RegisterReceiving(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/delivery-notes", listReceivingDeliveryNotes(db))
 	r.Get("/boxes", listReceivingBoxes(db))
 	r.Get("/drivers", listDrivers(db))
+	r.Get("/pending-pos", listPendingPOs(db))
 }
 
 func importReceiving(db *pgxpool.Pool) fiber.Handler {
@@ -34,44 +38,52 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 		if defaultRoute == "" {
 			defaultRoute = "INCOMING-01"
 		}
+		poName := strings.TrimSpace(c.FormValue("po_name"))
+		supplierName := strings.TrimSpace(c.FormValue("supplier_name"))
 
-		// 2. Open the file
-		fileHeader, err := c.FormFile("file")
-		if err != nil {
-			return shared.Err(c, fiber.StatusBadRequest, "file required (.xlsx)")
-		}
-		f, err := fileHeader.Open()
-		if err != nil {
-			return shared.Err(c, fiber.StatusBadRequest, "failed to open file: "+err.Error())
-		}
-		defer f.Close()
+		// 2. Open the file (optional — when no file is sent, just create an empty session for PO-based receiving)
+		fileHeader, fileErr := c.FormFile("file")
+		hasFile := fileErr == nil && fileHeader != nil && fileHeader.Size > 0
 
-		xlsx, err := excelize.OpenReader(f)
-		if err != nil {
-			return shared.Err(c, fiber.StatusBadRequest, "invalid xlsx format: "+err.Error())
-		}
-		defer xlsx.Close()
+		var rows [][]string
+		if hasFile {
+			f, err := fileHeader.Open()
+			if err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, "failed to open file: "+err.Error())
+			}
+			defer f.Close()
 
-		sheets := xlsx.GetSheetList()
-		if len(sheets) == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "workbook has no sheets")
-		}
-		rows, err := xlsx.GetRows(sheets[0])
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, "failed to read rows: "+err.Error())
-		}
-		if len(rows) < 2 {
-			return shared.Err(c, fiber.StatusBadRequest, "no data rows")
-		}
+			xlsx, err := excelize.OpenReader(f)
+			if err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, "invalid xlsx format: "+err.Error())
+			}
+			defer xlsx.Close()
 
-		// 3. Setup header mappings
-		headers := rows[0]
-		colIdx := map[string]int{}
-		for i, h := range headers {
-			colIdx[strings.TrimSpace(h)] = i
+			sheets := xlsx.GetSheetList()
+			if len(sheets) == 0 {
+				return shared.Err(c, fiber.StatusBadRequest, "workbook has no sheets")
+			}
+			rows, err = xlsx.GetRows(sheets[0])
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, "failed to read rows: "+err.Error())
+			}
+			if len(rows) < 2 {
+				return shared.Err(c, fiber.StatusBadRequest, "no data rows")
+			}
 		}
 
-		colMap := map[string]string{
+		// 3. Setup header mappings (only when file data is present)
+		var colIdx map[string]int
+		var colMap map[string]string
+		if hasFile && len(rows) > 0 {
+			headers := rows[0]
+			colIdx = map[string]int{}
+			for i, h := range headers {
+				colIdx[strings.TrimSpace(h)] = i
+			}
+		}
+
+		colMap = map[string]string{
 			"part_code":     "Part Code",
 			"part_name":     "Part Name",
 			"qty":           "Qty",
@@ -90,6 +102,9 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		getCell := func(row []string, logical string) string {
+			if colIdx == nil {
+				return ""
+			}
 			key := colMap[logical]
 			if key == "" {
 				key = logical
@@ -136,6 +151,7 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 		// Generate or verify grn_session
 		var sessionNo string
 		var warehouseID int
+		createdNew := false
 		if sessionID > 0 {
 			err = tx.QueryRow(c.Context(), `
 				SELECT session_no, warehouse_id FROM grn_sessions WHERE id=$1`, sessionID).Scan(&sessionNo, &warehouseID)
@@ -143,25 +159,78 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusNotFound, "grn session not found")
 			}
 		} else {
-			// Find default warehouse
-			warehouseID, err = shared.EnsureDefaultWarehouse(c.Context(), db)
-			if err != nil {
-				warehouseID = 1 // fallback
+			// Single session per receiving: if an open session already exists for this
+			// PO, reuse it instead of creating a duplicate.
+			if poName != "" {
+				var existingID int
+				err = tx.QueryRow(c.Context(), `
+					SELECT id FROM grn_sessions
+					WHERE purchase_receipt_no = $1 AND status NOT IN ('closed','completed')
+					ORDER BY id DESC LIMIT 1`, poName).Scan(&existingID)
+				if err == nil {
+					sessionID = existingID
+					err = tx.QueryRow(c.Context(), `SELECT session_no FROM grn_sessions WHERE id=$1`, existingID).Scan(&sessionNo)
+					if err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, "failed to load session: "+err.Error())
+					}
+				}
 			}
-			err = tx.QueryRow(c.Context(), `
-				INSERT INTO grn_sessions (
-					session_no, warehouse_id, status, receiving_mode, packing_list_available,
-					driver_name, driver_phone, transporter, default_route_location, arrival_at
-				) VALUES (
-					'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
-					$1, 'open', 'packing_list', true,
-					NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, NOW()
-				) RETURNING id, session_no`,
-				warehouseID, driverName, driverPhone, transporter, defaultRoute,
-			).Scan(&sessionID, &sessionNo)
-			if err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, "failed to create session: "+err.Error())
+			if sessionID == 0 {
+				warehouseID, err = shared.EnsureDefaultWarehouse(c.Context(), db)
+				if err != nil {
+					warehouseID = 1
+				}
+				err = tx.QueryRow(c.Context(), `
+					INSERT INTO grn_sessions (
+						session_no, warehouse_id, status, receiving_mode, packing_list_available,
+						driver_name, driver_phone, transporter, default_route_location, arrival_at,
+						purchase_receipt_no, supplier_name
+					) VALUES (
+						'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
+						$1, 'open', 'packing_list', $6,
+						NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, NOW(),
+						NULLIF($7, ''), NULLIF($8, '')
+					) RETURNING id, session_no`,
+					warehouseID, driverName, driverPhone, transporter, defaultRoute,
+					hasFile, poName, supplierName,
+				).Scan(&sessionID, &sessionNo)
+				if err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, "failed to create session: "+err.Error())
+				}
+				createdNew = true
 			}
+		}
+
+		// If no file uploaded, auto-create expected boxes from the linked PO items
+		// (so RF workers have box numbers to scan and the wizard can suggest top boxes)
+		if !hasFile {
+			createdBoxes, createdLines := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+			if createdBoxes == 0 {
+				if createdNew {
+					_, _ = tx.Exec(c.Context(), `DELETE FROM grn_sessions WHERE id=$1`, sessionID)
+				}
+				return shared.Err(c, fiber.StatusBadRequest, "this PO has no packing list or quantity to receive")
+			}
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_sessions SET
+					supplier_name = COALESCE(NULLIF($2,''), supplier_name),
+					purchase_receipt_no = COALESCE(NULLIF($3,''), purchase_receipt_no),
+					boxes_total = $4
+				WHERE id=$1`, sessionID, supplierName, poName, createdBoxes)
+
+			if err := tx.Commit(c.Context()); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			return shared.OK(c, fiber.Map{
+				"grn_session_id": sessionID,
+				"session_no":     sessionNo,
+				"import_summary": fiber.Map{
+					"rows_imported": createdLines,
+					"rows_skipped":  0,
+					"total_boxes":   createdBoxes,
+					"total_qty":     0,
+				},
+			})
 		}
 
 		uniqueInvoices := map[string]bool{}
@@ -259,6 +328,59 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		// Insert cartons and lines
+		if len(parsedRows) == 0 {
+			if createdNew {
+				return shared.Err(c, fiber.StatusBadRequest, "packing list has no quantity to import")
+			}
+			return shared.Err(c, fiber.StatusBadRequest, "no data rows")
+		}
+
+		// Reuse an open GRN that already has these box numbers instead of
+		// creating another copy of the same packing list.
+		var sampleBox string
+		for boxNo := range boxItemCount {
+			sampleBox = boxNo
+			break
+		}
+		if sampleBox != "" {
+			var existingID int
+			var existingNo string
+			err = tx.QueryRow(c.Context(), `
+				SELECT gs.id, gs.session_no
+				FROM grn_cartons c
+				JOIN grn_sessions gs ON gs.id = c.grn_session_id
+				WHERE c.carton_no = $1 AND gs.status NOT IN ('closed','completed') AND gs.id <> $2
+				ORDER BY gs.id DESC LIMIT 1`, sampleBox, sessionID).Scan(&existingID, &existingNo)
+			if err == nil && existingID > 0 {
+				if createdNew {
+					if _, delErr := tx.Exec(c.Context(), `DELETE FROM grn_sessions WHERE id=$1`, sessionID); delErr != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, delErr.Error())
+					}
+				}
+				sessionID = existingID
+				sessionNo = existingNo
+				createdNew = false
+				var existingCartons int
+				_ = tx.QueryRow(c.Context(), `SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&existingCartons)
+				if existingCartons > 0 {
+					if err = tx.Commit(c.Context()); err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+					return shared.OK(c, fiber.Map{
+						"grn_session_id": sessionID,
+						"session_no":     sessionNo,
+						"reused":         true,
+						"import_summary": fiber.Map{
+							"rows_imported": 0,
+							"rows_skipped":  skippedRows,
+							"total_boxes":   existingCartons,
+							"total_qty":     totalQtyParsed,
+						},
+					})
+				}
+			}
+		}
+
 		cartonIDs := map[string]int{}
 		for boxNo, itemCnt := range boxItemCount {
 			var cartonID int
@@ -338,10 +460,17 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 			"delivery_no":     mainDelivery,
 		})
 		payload := string(payloadBytes)
+		device := strings.TrimSpace(c.Get("X-Device"))
+		if device == "" {
+			device = strings.TrimSpace(c.Get("User-Agent"))
+		}
+		if len(device) > 100 {
+			device = device[:100]
+		}
 		_, _ = tx.Exec(c.Context(), `
 			INSERT INTO grn_events (grn_session_id, event_type, actor_id, device, payload)
-			VALUES ($1, 'PACKING_LIST_IMPORTED', $2, 'RF-GUN', $3::jsonb)`,
-			sessionID, userID(c), payload,
+			VALUES ($1, 'PACKING_LIST_IMPORTED', $2, $3, $4::jsonb)`,
+			sessionID, userID(c), device, payload,
 		)
 
 		if err = tx.Commit(c.Context()); err != nil {
@@ -521,10 +650,28 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session_id required")
 		}
 
+		var poName string
+		var cartonCount int
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(purchase_receipt_no, ''),
+			       (SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = gs.id)
+			FROM grn_sessions gs WHERE gs.id=$1`, sessionID).Scan(&poName, &cartonCount)
+		if cartonCount == 0 && poName != "" {
+			if tx, txErr := db.Begin(c.Context()); txErr == nil {
+				n, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+				if n > 0 {
+					_, _ = tx.Exec(c.Context(), `UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1 AND COALESCE(boxes_total,0) < $2`, sessionID, n)
+					_ = tx.Commit(c.Context())
+				} else {
+					_ = tx.Rollback(c.Context())
+				}
+			}
+		}
+
 		// 1. Get box list
 		q := `
 			SELECT 
-				c.id, c.carton_no, c.box_type, c.status,
+				c.id, c.carton_no, COALESCE(c.box_type, '') as box_type, COALESCE(c.status, '') as status,
 				COUNT(l.id) as item_count,
 				COALESCE(SUM(l.expected_qty), 0) as total_qty,
 				COALESCE(SUM(l.scanned_qty), 0) as scanned_qty
@@ -556,15 +703,15 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		type boxInfo struct {
-			ID                 int        `json:"id"`
-			BoxNumber          string     `json:"box_number"`
-			BoxType            string     `json:"box_type"`
-			Status             string     `json:"status"`
-			ItemCount          int        `json:"item_count"`
-			IsSingleItem       bool       `json:"is_single_item"`
-			TotalQty           float64    `json:"total_qty"`
-			ScannedQty         float64    `json:"scanned_qty"`
-			Items              []itemInfo `json:"items"`
+			ID           int        `json:"id"`
+			BoxNumber    string     `json:"box_number"`
+			BoxType      string     `json:"box_type"`
+			Status       string     `json:"status"`
+			ItemCount    int        `json:"item_count"`
+			IsSingleItem bool       `json:"is_single_item"`
+			TotalQty     float64    `json:"total_qty"`
+			ScannedQty   float64    `json:"scanned_qty"`
+			Items        []itemInfo `json:"items"`
 		}
 
 		var boxes []boxInfo
@@ -587,7 +734,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 			// standard pgx batching / helper
 			itemsMap := map[int][]itemInfo{}
 			itemRows, err := db.Query(c.Context(), `
-				SELECT grn_carton_id, item_code, COALESCE(part_name, ''), expected_qty, scanned_qty, COALESCE(unit_weight_kg, 0), status
+				SELECT grn_carton_id, item_code, COALESCE(part_name, ''), expected_qty, scanned_qty, COALESCE(unit_weight_kg, 0), COALESCE(status, '')
 				FROM grn_lines
 				WHERE grn_carton_id = ANY($1)`, boxIDs)
 			if err == nil {
@@ -615,7 +762,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 		totalBoxes := len(boxes)
 		boxesReceived := 0
 		for _, b := range boxes {
-			if b.Status == "verified" || b.Status == "received" {
+			if b.Status == "verified" {
 				boxesReceived++
 			}
 		}
@@ -655,10 +802,10 @@ func listDrivers(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type driverInfo struct {
-			Name         string  `json:"name"`
-			Phone        string  `json:"phone"`
-			Transporter  string  `json:"transporter"`
-			LastUsed     string  `json:"last_used"`
+			Name        string `json:"name"`
+			Phone       string `json:"phone"`
+			Transporter string `json:"transporter"`
+			LastUsed    string `json:"last_used"`
 		}
 
 		var drivers []driverInfo
@@ -687,4 +834,143 @@ func listDrivers(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		rows, err := db.Query(c.Context(), `
+			SELECT
+				po.id, po.name, po.supplier_name, po.status,
+				COALESCE(po.grand_total, 0) AS grand_total,
+				COALESCE(po.schedule_date::text, '') AS schedule_date,
+				(SELECT COUNT(*) FROM purchase_order_items WHERE purchase_order_id = po.id) AS item_count,
+				(SELECT COALESCE(SUM(qty), 0) FROM purchase_order_items WHERE purchase_order_id = po.id) AS total_qty,
+				(SELECT COALESCE(SUM(received_qty), 0) FROM purchase_order_items WHERE purchase_order_id = po.id) AS received_qty,
+				(SELECT COUNT(*) FROM grn_sessions gs WHERE gs.purchase_receipt_no = po.name AND gs.status NOT IN ('closed','completed')) AS open_sessions,
+				(SELECT gs.id FROM grn_sessions gs WHERE gs.purchase_receipt_no = po.name AND gs.status NOT IN ('closed','completed') ORDER BY gs.id DESC LIMIT 1) AS resume_session_id
+			FROM purchase_orders po
+			WHERE po.status IN ('draft','submitted','To Receive and Bill','To Receive','Partially Received')
+			  AND COALESCE(po.per_received, 0) < 100
+			  AND EXISTS (
+				SELECT 1 FROM purchase_order_items poi
+				WHERE poi.purchase_order_id = po.id AND COALESCE(poi.qty,0) > 0
+			  )
+			ORDER BY po.schedule_date ASC NULLS LAST, po.name ASC
+			LIMIT 100`)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer rows.Close()
 
+		type poInfo struct {
+			ID              int     `json:"id"`
+			Name            string  `json:"name"`
+			SupplierName    string  `json:"supplier_name"`
+			Status          string  `json:"status"`
+			GrandTotal      float64 `json:"grand_total"`
+			ScheduleDate    string  `json:"schedule_date"`
+			ItemCount       int     `json:"item_count"`
+			TotalQty        float64 `json:"total_qty"`
+			ReceivedQty     float64 `json:"received_qty"`
+			OpenSessions    int     `json:"open_sessions"`
+			ResumeSessionID *int    `json:"resume_session_id"`
+		}
+
+		var list []poInfo
+		for rows.Next() {
+			var p poInfo
+			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.GrandTotal,
+				&p.ScheduleDate, &p.ItemCount, &p.TotalQty, &p.ReceivedQty, &p.OpenSessions, &p.ResumeSessionID); err != nil {
+				continue
+			}
+			list = append(list, p)
+		}
+		if list == nil {
+			list = []poInfo{}
+		}
+		return shared.OK(c, list)
+	}
+}
+
+// backfillBoxesFromPO creates one expected carton per PO item for sessions that
+// were started from a PO without a packing-list file. It is idempotent: sessions
+// that already have cartons are left untouched. Returns (createdBoxes, createdLines).
+func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName string) (int, int) {
+	var existingCartons int
+	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&existingCartons)
+	if existingCartons > 0 {
+		return existingCartons, 0
+	}
+	if poName == "" {
+		return 0, 0
+	}
+	var poID int
+	if err := tx.QueryRow(ctx, `SELECT id FROM purchase_orders WHERE name=$1`, poName).Scan(&poID); err != nil {
+		return 0, 0
+	}
+
+	itemRows, err := tx.Query(ctx, `
+		SELECT item_code, COALESCE(item_name, ''), qty
+		FROM purchase_order_items
+		WHERE purchase_order_id=$1 AND qty > 0
+		ORDER BY id`, poID)
+	if err != nil {
+		return 0, 0
+	}
+	type poItem struct {
+		code, name string
+		qty        float64
+	}
+	var items []poItem
+	for itemRows.Next() {
+		var it poItem
+		if err := itemRows.Scan(&it.code, &it.name, &it.qty); err != nil {
+			continue
+		}
+		items = append(items, it)
+	}
+	itemRows.Close()
+	if err := itemRows.Err(); err != nil || len(items) == 0 {
+		return 0, 0
+	}
+
+	createdBoxes, createdLines := 0, 0
+	for i, it := range items {
+		boxNo := fmt.Sprintf("%s-B%03d", poName, i+1)
+		var cartonID int
+		err := tx.QueryRow(ctx, `
+			SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`, sessionID, boxNo).Scan(&cartonID)
+		if err != nil {
+			err = tx.QueryRow(ctx, `
+				INSERT INTO grn_cartons (grn_session_id, carton_no, status, is_expected)
+				VALUES ($1,$2,'expected',true) RETURNING id`,
+				sessionID, boxNo).Scan(&cartonID)
+			if err != nil {
+				continue
+			}
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO grn_lines (
+				grn_carton_id, item_code, expected_qty, scanned_qty, status,
+				verification_method, grn_session_id, part_name
+			)
+			SELECT $1,$2,$3,0,'pending','po-import',$4,$5
+			WHERE NOT EXISTS (
+				SELECT 1 FROM grn_lines WHERE grn_carton_id=$1 AND UPPER(item_code)=UPPER($2)
+			)`, cartonID, it.code, it.qty, sessionID, it.name)
+		if err != nil {
+			tag, err = tx.Exec(ctx, `
+				INSERT INTO grn_lines (
+					grn_carton_id, item_code, expected_qty, scanned_qty, status,
+					verification_method, grn_session_id
+				)
+				SELECT $1,$2,$3,0,'pending','po-import',$4
+				WHERE NOT EXISTS (
+					SELECT 1 FROM grn_lines WHERE grn_carton_id=$1 AND UPPER(item_code)=UPPER($2)
+				)`, cartonID, it.code, it.qty, sessionID)
+		}
+		if err == nil && tag.RowsAffected() > 0 {
+			createdLines++
+		}
+		createdBoxes++
+	}
+	return createdBoxes, createdLines
+}

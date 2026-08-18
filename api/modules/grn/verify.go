@@ -2,6 +2,7 @@ package grn
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -239,7 +240,7 @@ func verifyItemScan(db *pgxpool.Pool) fiber.Handler {
 				body.UnitPrice = label.UnitPrice
 			}
 		} else if body.Qty <= 0 {
-			body.Qty = 1
+			return shared.Err(c, fiber.StatusBadRequest, "quantity must be at least 1")
 		}
 
 		var mode string
@@ -313,21 +314,32 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 
 	hasPackingList := cartonHasPackingListLines(c, db, cartonID)
 
+	tx, txErr := db.Begin(c.Context())
+	if txErr != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, txErr.Error())
+	}
+	defer tx.Rollback(c.Context())
+
 	var lineID int
 	var expected, scanned float64
 	var lineMethod string
-	err := db.QueryRow(c.Context(), `
+	err := tx.QueryRow(c.Context(), `
 		SELECT id, COALESCE(expected_qty,0), COALESCE(scanned_qty,0), COALESCE(verification_method,'')
 		FROM grn_lines WHERE grn_carton_id=$1 AND UPPER(item_code)=UPPER($2)
 		ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
-		LIMIT 1`, cartonID, itemCode).Scan(&lineID, &expected, &scanned, &lineMethod)
+		LIMIT 1
+		FOR UPDATE`, cartonID, itemCode).Scan(&lineID, &expected, &scanned, &lineMethod)
+	if err != nil && err != pgx.ErrNoRows {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
 	if err == nil {
-		_, _ = db.Exec(c.Context(), `
+		_, _ = tx.Exec(c.Context(), `
 			UPDATE grn_lines SET requires_qi=true
 			WHERE id=$1 AND EXISTS (SELECT 1 FROM items WHERE UPPER(code)=UPPER($2) AND COALESCE(requires_qi,false)=true)`,
 			lineID, itemCode)
 	}
 	if err == pgx.ErrNoRows {
+		_ = tx.Rollback(c.Context())
 		onThisPO := itemOnThisGRNPO(c, db, sessionID, itemCode)
 		otherPO, onOther := otherPOForItem(c, db, sessionID, itemCode)
 		switch decideMissingBoxLine(hasPackingList, extra.Substitute, onThisPO, onOther) {
@@ -401,6 +413,28 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 			newStatus = "excess"
 		}
 	}
+
+	// Default over-receipt tolerance: block if scanned > expected * (1 + tolerance%)
+	// unless the PO item has an explicit max_overreceipt_pct set.
+	const defaultOverReceiptPct = 10.0
+	if expected > 0 && newScanned > expected {
+		var maxPct float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(poi.max_overreceipt_pct, 0)
+			FROM grn_sessions gs
+			JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
+			JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND UPPER(poi.item_code)=UPPER($2)
+			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPct)
+		tolerance := maxPct
+		if tolerance <= 0 {
+			tolerance = defaultOverReceiptPct
+		}
+		overPct := (newScanned - expected) / expected * 100
+		if overPct > tolerance {
+			return shared.Err(c, fiber.StatusBadRequest,
+				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", overPct, tolerance, defaultOverReceiptPct))
+		}
+	}
 	if excess > 0 {
 		writeEvent(db, c, sessionID, "ITEM_EXCESS_DETECTED", fiber.Map{
 			"box_no": boxNo, "part_no": itemCode, "quantity": qty, "result": "excess",
@@ -411,16 +445,19 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status='exception' WHERE id=$1 AND status <> 'verified'`, cartonID)
 	}
 
-	_, err = db.Exec(c.Context(), `
+	_, err = tx.Exec(c.Context(), `
 		UPDATE grn_lines SET scanned_qty=$2, status=$3,
 			qty_short = GREATEST(COALESCE(expected_qty,0)-$2,0),
 			qty_excess = GREATEST($2-COALESCE(expected_qty,0),0)
 		WHERE id=$1`, lineID, newScanned, newStatus)
 	if err != nil {
-		_, err = db.Exec(c.Context(), `UPDATE grn_lines SET scanned_qty=$2, status=$3 WHERE id=$1`, lineID, newScanned, newStatus)
+		_, err = tx.Exec(c.Context(), `UPDATE grn_lines SET scanned_qty=$2, status=$3 WHERE id=$1`, lineID, newScanned, newStatus)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+	}
+	if err = tx.Commit(c.Context()); err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
 
 	savePriceFromLabel(c, db, lineID, extra)
@@ -806,6 +843,34 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
 	newScanned := scanned + qty
+
+	// Default over-receipt tolerance: block if total scanned for this item
+	// exceeds the PO line qty * (1 + tolerance%).
+	const defaultOverReceiptPct = 10.0
+	po := lookupPOItemForSession(c, db, sessionID, itemCode)
+	poQty := expected
+	if po.OnPO && po.Remaining+scanned > 0 {
+		poQty = po.Remaining + scanned // total PO line qty for this item
+	}
+	if poQty > 0 && newScanned > poQty {
+		var maxPct float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(poi.max_overreceipt_pct, 0)
+			FROM grn_sessions gs
+			JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
+			JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND UPPER(poi.item_code)=UPPER($2)
+			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPct)
+		tolerance := maxPct
+		if tolerance <= 0 {
+			tolerance = defaultOverReceiptPct
+		}
+		overPct := (newScanned - poQty) / poQty * 100
+		if overPct > tolerance {
+			return shared.Err(c, fiber.StatusBadRequest,
+				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", overPct, tolerance, defaultOverReceiptPct))
+		}
+	}
+
 	st := "full_match"
 	if expected > 0 && newScanned < expected {
 		st = "pending"

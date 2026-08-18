@@ -352,7 +352,7 @@ func reconcileSessionAgainstPO(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (s
 		_ = db.QueryRow(c.Context(), `
 			SELECT COUNT(*) FROM grn_lines
 			WHERE grn_session_id=$1 AND UPPER(item_code)=UPPER($2)
-			  AND COALESCE(expected_qty,0) > 0
+			  AND (COALESCE(expected_qty,0) > 0 OR COALESCE(scanned_qty,0) > 0)
 			  AND COALESCE(verification_method,'') NOT IN ('po_fallback')`, sessionID, part).Scan(&mapped)
 		if mapped > 0 {
 			continue

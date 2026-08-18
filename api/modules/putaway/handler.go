@@ -146,23 +146,23 @@ func listLogs(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type logEntry struct {
-			ID                 int      `json:"id"`
-			LogNo              string   `json:"log_no"`
-			ItemCode           string   `json:"item_code"`
-			ItemName           *string  `json:"item_name"`
-			Quantity           float64  `json:"quantity"`
-			SourceLocationCode string   `json:"source_location_code"`
-			SourceAisle        string   `json:"source_aisle"`
-			SourceShelf        string   `json:"source_shelf"`
-			SourceLevel        string   `json:"source_level"`
-			TargetLocationCode string   `json:"target_location_code"`
-			TargetAisle        string   `json:"target_aisle"`
-			TargetShelf        string   `json:"target_shelf"`
-			TargetLevel        string   `json:"target_level"`
-			PlacedBy           string   `json:"placed_by"`
-			PlacedAt           string   `json:"placed_at"`
-			ExceptionReason    string   `json:"exception_reason"`
-			IsOverride         bool     `json:"is_override"`
+			ID                 int     `json:"id"`
+			LogNo              string  `json:"log_no"`
+			ItemCode           string  `json:"item_code"`
+			ItemName           *string `json:"item_name"`
+			Quantity           float64 `json:"quantity"`
+			SourceLocationCode string  `json:"source_location_code"`
+			SourceAisle        string  `json:"source_aisle"`
+			SourceShelf        string  `json:"source_shelf"`
+			SourceLevel        string  `json:"source_level"`
+			TargetLocationCode string  `json:"target_location_code"`
+			TargetAisle        string  `json:"target_aisle"`
+			TargetShelf        string  `json:"target_shelf"`
+			TargetLevel        string  `json:"target_level"`
+			PlacedBy           string  `json:"placed_by"`
+			PlacedAt           string  `json:"placed_at"`
+			ExceptionReason    string  `json:"exception_reason"`
+			IsOverride         bool    `json:"is_override"`
 		}
 
 		list := []logEntry{}
@@ -284,24 +284,24 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		type cand struct {
-			LocationID   int      `json:"location_id"`
-			LocationCode string   `json:"location_code"`
-			WarehouseID  int      `json:"warehouse_id"`
-			Reason       string   `json:"reason"`
-			FreeCapacity *float64 `json:"free_capacity"`
-			OnHandQty    float64  `json:"on_hand_qty"`
-			Aisle        string   `json:"aisle"`
-			Bay          string   `json:"bay"`
-			Level        string   `json:"level"`
-			LocationType string   `json:"location_type"`
-			SameBay      bool     `json:"same_bay"`
-			Zone         string   `json:"zone"`
-		MaxFitQty       float64 `json:"max_fit_qty"`
-		RequiresSplit   bool    `json:"requires_split"`
-		ProximityScore  int     `json:"proximity_score"`
-		LastPickedBy    string  `json:"last_picked_by"`
-		LastPickedAt    string  `json:"last_picked_at"`
-	}
+			LocationID     int      `json:"location_id"`
+			LocationCode   string   `json:"location_code"`
+			WarehouseID    int      `json:"warehouse_id"`
+			Reason         string   `json:"reason"`
+			FreeCapacity   *float64 `json:"free_capacity"`
+			OnHandQty      float64  `json:"on_hand_qty"`
+			Aisle          string   `json:"aisle"`
+			Bay            string   `json:"bay"`
+			Level          string   `json:"level"`
+			LocationType   string   `json:"location_type"`
+			SameBay        bool     `json:"same_bay"`
+			Zone           string   `json:"zone"`
+			MaxFitQty      float64  `json:"max_fit_qty"`
+			RequiresSplit  bool     `json:"requires_split"`
+			ProximityScore int      `json:"proximity_score"`
+			LastPickedBy   string   `json:"last_picked_by"`
+			LastPickedAt   string   `json:"last_picked_at"`
+		}
 
 		joins := `
 				LEFT JOIN LATERAL (
@@ -362,29 +362,29 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 					&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt) != nil {
 					continue
 				}
-			if cap != nil {
-				free := *cap - s.OnHandQty
-				s.FreeCapacity = &free
-			} else {
-				// Apply default capacity when none configured
-				defCap := 50.0
-				free := defCap - s.OnHandQty
-				s.FreeCapacity = &free
-			}
+				if cap != nil {
+					free := *cap - s.OnHandQty
+					s.FreeCapacity = &free
+				} else {
+					// Apply default capacity when none configured
+					defCap := 50.0
+					free := defCap - s.OnHandQty
+					s.FreeCapacity = &free
+				}
 				freeCap := 0.0
 				if s.FreeCapacity != nil {
 					freeCap = *s.FreeCapacity
 				}
-			s.MaxFitQty = math.Min(freeCap, requestedQty)
-			s.RequiresSplit = s.MaxFitQty < requestedQty
-			s.Zone = zone
-			s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
-			s.Reason = reason
-			// Skip bins with no room at all
-			if freeCap <= 0 {
-				continue
-			}
-			out = append(out, s)
+				s.MaxFitQty = math.Min(freeCap, requestedQty)
+				s.RequiresSplit = s.MaxFitQty < requestedQty
+				s.Zone = zone
+				s.SameBay = prefAisle != "" && strings.EqualFold(s.Aisle, prefAisle) && s.Bay == prefBay
+				s.Reason = reason
+				// Skip bins with no room at all
+				if freeCap <= 0 {
+					continue
+				}
+				out = append(out, s)
 			}
 			return out
 		}
@@ -519,17 +519,17 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			"aisle": best.Aisle, "bay": best.Bay, "level": best.Level,
 			"location_type": best.LocationType, "zone": best.Zone, "same_bay": best.SameBay,
 			"preferred_aisle": prefAisle, "preferred_bay": prefBay,
-			"control_mode": controlMode,
-			"velocity_tier": velocityTier,
-			"shelf_band":    velocityShelfBand(velocityTier),
-			"strategy":      []string{"home_bin", "consolidate_same_item", "empty_pick_face", "empty_storage"},
-			"candidates":    candidates,
-			"requested_qty":  requestedQty,
-			"max_fit_qty":    best.MaxFitQty,
-			"requires_split": best.RequiresSplit,
+			"control_mode":        controlMode,
+			"velocity_tier":       velocityTier,
+			"shelf_band":          velocityShelfBand(velocityTier),
+			"strategy":            []string{"home_bin", "consolidate_same_item", "empty_pick_face", "empty_storage"},
+			"candidates":          candidates,
+			"requested_qty":       requestedQty,
+			"max_fit_qty":         best.MaxFitQty,
+			"requires_split":      best.RequiresSplit,
 			"remaining_after_fit": requestedQty - best.MaxFitQty,
-			"last_picked_by": best.LastPickedBy,
-			"last_picked_at": best.LastPickedAt,
+			"last_picked_by":      best.LastPickedBy,
+			"last_picked_at":      best.LastPickedAt,
 		}
 		if homeID != nil {
 			out["home_location_id"] = *homeID
@@ -597,18 +597,18 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 
 		type row struct {
-			ID                   int      `json:"id"`
-			ItemCode             string   `json:"item_code"`
-			ItemName             *string  `json:"item_name"`
-			WarehouseID          int      `json:"warehouse_id"`
-			WarehouseCode        string   `json:"warehouse_code"`
-			LocationID           int      `json:"location_id"`
-			LocationCode         string   `json:"location_code"`
-			BatchNo              string   `json:"batch_no"`
-			Qty                  float64  `json:"qty"`
-			LocationType         string   `json:"location_type"`
-			Zone                 string   `json:"zone"`
-			SuggestedLocationID  *int     `json:"suggested_location_id"`
+			ID                    int     `json:"id"`
+			ItemCode              string  `json:"item_code"`
+			ItemName              *string `json:"item_name"`
+			WarehouseID           int     `json:"warehouse_id"`
+			WarehouseCode         string  `json:"warehouse_code"`
+			LocationID            int     `json:"location_id"`
+			LocationCode          string  `json:"location_code"`
+			BatchNo               string  `json:"batch_no"`
+			Qty                   float64 `json:"qty"`
+			LocationType          string  `json:"location_type"`
+			Zone                  string  `json:"zone"`
+			SuggestedLocationID   *int    `json:"suggested_location_id"`
 			SuggestedLocationCode *string `json:"suggested_location_code"`
 		}
 		list := []row{}
@@ -712,14 +712,16 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 		if body.TargetLocationID > 0 {
 			err = tx.QueryRow(c.Context(), `
 				SELECT id, code, warehouse_id FROM warehouse_locations
-				WHERE id=$1 AND COALESCE(disabled,false)=false`, body.TargetLocationID).
+				WHERE id=$1 AND COALESCE(disabled,false)=false
+				FOR UPDATE`, body.TargetLocationID).
 				Scan(&targetID, &targetCode, &warehouseID)
 		} else {
 			err = tx.QueryRow(c.Context(), `
 				SELECT id, code, warehouse_id FROM warehouse_locations
 				WHERE code=$1 AND COALESCE(disabled,false)=false
 				  AND ($2=0 OR warehouse_id=$2)
-				ORDER BY id LIMIT 1`, body.TargetLocation, body.WarehouseID).
+				ORDER BY id LIMIT 1
+				FOR UPDATE`, body.TargetLocation, body.WarehouseID).
 				Scan(&targetID, &targetCode, &warehouseID)
 		}
 		if err != nil {
@@ -790,11 +792,19 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 					*cap, onHand, body.Quantity))
 		}
 
-		_, _ = tx.Exec(c.Context(), `
+		srcTag, srcErr := tx.Exec(c.Context(), `
 			UPDATE stock_location_balances
-			SET actual_qty = GREATEST(actual_qty - $1, 0), updated_at=now()
-			WHERE location_id=$2 AND item_code=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
+			SET actual_qty = actual_qty - $1, updated_at=now()
+			WHERE location_id=$2 AND item_code=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')
+			  AND actual_qty >= $1 - 1e-9
+			  AND (actual_qty - COALESCE(reserved_qty,0)) >= $1 - 1e-9`,
 			body.Quantity, *sourceID, body.ItemCode, nullBatch(batch))
+		if srcErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, srcErr.Error())
+		}
+		if srcTag.RowsAffected() != 1 {
+			return shared.Err(c, fiber.StatusConflict, "insufficient stock at source")
+		}
 
 		// Increase target location balance (manual upsert — expression unique index).
 		var existingID int

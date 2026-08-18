@@ -30,14 +30,32 @@ export function notify({ type, title, message, duration = 4000 }: NotifyOpts) {
 
   const toast = document.createElement('div')
   toast.className = `toast toast-${type}`
-  toast.innerHTML = `
-    <span class="toast-icon">${icons[type]}</span>
-    <div class="toast-body">
-      <div class="toast-title">${title}</div>
-      ${message ? `<div class="toast-message">${message}</div>` : ''}
-    </div>
-    <button class="toast-close">✕</button>
-  `
+
+  const icon = document.createElement('span')
+  icon.className = 'toast-icon'
+  icon.textContent = icons[type]
+
+  const body = document.createElement('div')
+  body.className = 'toast-body'
+  const titleEl = document.createElement('div')
+  titleEl.className = 'toast-title'
+  titleEl.textContent = title
+  body.appendChild(titleEl)
+  if (message) {
+    const msgEl = document.createElement('div')
+    msgEl.className = 'toast-message'
+    msgEl.textContent = message
+    body.appendChild(msgEl)
+  }
+
+  const closeBtn = document.createElement('button')
+  closeBtn.className = 'toast-close'
+  closeBtn.type = 'button'
+  closeBtn.textContent = '✕'
+
+  toast.appendChild(icon)
+  toast.appendChild(body)
+  toast.appendChild(closeBtn)
 
   const close = () => {
     toast.style.opacity = '0'
@@ -46,7 +64,7 @@ export function notify({ type, title, message, duration = 4000 }: NotifyOpts) {
     setTimeout(() => toast.remove(), 200)
   }
 
-  toast.querySelector('.toast-close')?.addEventListener('click', close)
+  closeBtn.addEventListener('click', close)
   c.appendChild(toast)
 
   if (duration > 0) {

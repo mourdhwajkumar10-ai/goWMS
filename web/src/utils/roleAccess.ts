@@ -5,7 +5,7 @@ export function isDeskRole(role?: string | null) {
 }
 
 const FLOOR_NAV: Record<string, string[]> = {
-  qi: ['/grn', '/exceptions', '/follow-up', '/qi', '/notifications'],
+  qi: ['/grn', '/receiving', '/receiving-management', '/exceptions', '/follow-up', '/qi', '/notifications'],
   picker: ['/pick', '/stock-scan', '/cycle-count', '/notifications'],
   packer: ['/pack', '/notifications'],
   dispatcher: ['/dispatch', '/delivery-notes', '/notifications'],

@@ -139,6 +139,7 @@ export default function PutawayWizard() {
   const [usedLocationIds, setUsedLocationIds] = useState<number[]>([])
   const [placeQty, setPlaceQty] = useState<number | null>(null)
   const [confirmPlace, setConfirmPlace] = useState<{ targetId: number; targetCode: string; qty: number; isOverride: boolean } | null>(null)
+  const [selectedToteItemId, setSelectedToteItemId] = useState<number | null>(null)
 
   const haptic = useHaptic()
 
@@ -277,15 +278,7 @@ export default function PutawayWizard() {
     if (match) {
       void handlePick(match)
     } else {
-      const partial = queue.find(item =>
-        item.item_code.toLowerCase().includes(q) ||
-        (item.item_name && item.item_name.toLowerCase().includes(q))
-      )
-      if (partial) {
-        void handlePick(partial)
-      } else {
-        notify({ type: 'warning', title: 'Not found', message: `"${code}" is not in the staging queue` })
-      }
+      notify({ type: 'warning', title: 'Not found', message: `"${code}" is not in the staging queue` })
     }
   }, [queue, handlePick])
 
@@ -293,6 +286,7 @@ export default function PutawayWizard() {
     if (!code) return
     const match = toteItems.find(t => t.item_code.toLowerCase() === code.toLowerCase() && t.status === 'picked')
     if (match) {
+      setSelectedToteItemId(match.id)
       haptic(20)
       navigate('putaway', 'forward')
     } else {
@@ -301,6 +295,10 @@ export default function PutawayWizard() {
   }, [toteItems, haptic, navigate])
 
   function currentToteItem() {
+    if (selectedToteItemId != null) {
+      const sel = toteItems.find(i => i.id === selectedToteItemId && i.status === 'picked')
+      if (sel) return sel
+    }
     return toteItems.find(i => i.status === 'picked') || null
   }
 
@@ -340,59 +338,54 @@ export default function PutawayWizard() {
       setShowLocationSuggestions(false)
       notify({ type: 'error', title: 'Place failed', message: r.error || 'Could not place item' })
     }
-  }, [session, usedLocationIds, toteItems, haptic, navigate])
+  }, [session, usedLocationIds, toteItems, selectedToteItemId, haptic, navigate])
 
   function handleLocationConfirm(code: string, locationId?: number) {
-    if (suggestion && (code === suggestion.location_code || locationId === suggestion.location_id)) {
+    const item = currentToteItem()
+    const qty = suggestion?.max_fit_qty != null && suggestion.max_fit_qty < (item?.qty || 0)
+      ? (placeQty ?? suggestion.max_fit_qty)
+      : (item?.qty || 0)
+    const codeU = (code || '').toUpperCase()
+
+    if (suggestion && (codeU === (suggestion.location_code || '').toUpperCase() || locationId === suggestion.location_id)) {
       setConfirmPlace({
         targetId: suggestion.location_id,
         targetCode: suggestion.location_code,
-        qty: suggestion.max_fit_qty != null && suggestion.max_fit_qty < (currentToteItem()?.qty || 0)
-          ? (placeQty ?? suggestion.max_fit_qty)
-          : (currentToteItem()?.qty || 0),
+        qty,
         isOverride: false
       })
-    } else if (suggestion?.candidates) {
-      const candidate = suggestion.candidates.find((c: any) => c.location_code === code || c.location_id === locationId)
-      if (candidate) {
-        setConfirmPlace({
-          targetId: candidate.location_id,
-          targetCode: candidate.location_code,
-          qty: currentToteItem()?.qty || 0,
-          isOverride: true
-        })
-      } else if (locationId) {
-        void doPlace(locationId, true)
-      } else {
-        void (async () => {
-          const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
-          if (r.ok && r.data) {
-            const loc = r.data.find((l: any) => l.code?.toUpperCase() === code.toUpperCase())
-            if (loc) {
-              void doPlace(loc.id, true)
-            } else {
-              notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
-            }
-          } else {
-            notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
-          }
-        })()
-      }
-    } else {
-      void (async () => {
-        const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
-        if (r.ok && r.data) {
-          const loc = r.data.find((l: any) => l.code?.toUpperCase() === code.toUpperCase())
-          if (loc) {
-            void doPlace(loc.id, true)
-          } else {
-            notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
-          }
-        } else {
-          notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
-        }
-      })()
+      return
     }
+    const candidate = suggestion?.candidates?.find((c: any) =>
+      (c.location_code || '').toUpperCase() === codeU || c.location_id === locationId)
+    if (candidate) {
+      setConfirmPlace({
+        targetId: candidate.location_id,
+        targetCode: candidate.location_code,
+        qty: item?.qty || 0,
+        isOverride: true
+      })
+      return
+    }
+    void (async () => {
+      let locId = locationId
+      let locCode = code
+      if (!locId) {
+        const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
+        if (!r.ok || !r.data) {
+          notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
+          return
+        }
+        const loc = r.data.find((l: any) => l.code?.toUpperCase() === codeU)
+        if (!loc) {
+          notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
+          return
+        }
+        locId = loc.id
+        locCode = loc.code
+      }
+      setConfirmPlace({ targetId: locId, targetCode: locCode, qty: item?.qty || 0, isOverride: true })
+    })()
   }
 
   const allCandidates = suggestion?.candidates || []
@@ -1019,15 +1012,30 @@ export default function PutawayWizard() {
                   return
                 }
 
-                const targetId = fitOverrideId || suggestion?.location_id
+                // Resolve typed override code to location_id if not from dropdown
+                let resolvedTargetId = fitOverrideId || suggestion?.location_id
+                let resolvedTargetCode = fitOverride || suggestion?.location_code
+                if (!fitOverrideId && fitOverride) {
+                  const lr = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
+                  const loc = lr.ok && lr.data
+                    ? lr.data.find((l: any) => l.code?.toUpperCase() === fitOverride.toUpperCase())
+                    : undefined
+                  if (!loc) {
+                    notify({ type: 'error', title: 'Location not found', message: `No location matching "${fitOverride}"` })
+                    return
+                  }
+                  resolvedTargetId = loc.id
+                  resolvedTargetCode = loc.code
+                }
+
                 let placeR: any = { ok: false }
-                if (fits > 0 && targetId) {
+                if (fits > 0 && resolvedTargetId) {
                   placeR = await api.post(`/putaway/sessions/${session?.id}/place/${cti.id}`, {
-                    target_location_id: targetId, is_override: !!fitOverrideId, qty: fits
+                    target_location_id: resolvedTargetId, is_override: true, qty: fits
                   })
                   if (placeR.ok) {
                     haptic(20)
-                    notify({ type: 'success', title: 'Partial placed', message: `${fits} × ${cti.item_code} placed at ${fitOverride || suggestion?.location_code}` })
+                    notify({ type: 'success', title: 'Partial placed', message: `${fits} × ${cti.item_code} placed at ${resolvedTargetCode}` })
                   } else {
                     notify({ type: 'warning', title: 'Place failed', message: placeR.error || 'Could not place partial qty' })
                   }
@@ -1036,7 +1044,7 @@ export default function PutawayWizard() {
                 const actualRemaining = (placeR.ok && placeR.data?.remaining != null)
                   ? placeR.data.remaining : remaining
 
-                const newUsedIds = fits > 0 && targetId ? [...usedLocationIds, targetId] : usedLocationIds
+                const newUsedIds = fits > 0 && resolvedTargetId ? [...usedLocationIds, resolvedTargetId] : usedLocationIds
                 setUsedLocationIds(newUsedIds)
 
                 if (actualRemaining > 0) {

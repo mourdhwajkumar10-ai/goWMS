@@ -1,7 +1,7 @@
-import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { clearSession, getRole } from "../services/api";
-import { deskLabel, navPathsForRole } from "../utils/roleAccess";
+import { deskLabel, navPathsForRole, canOpenPath, homePathForRole } from "../utils/roleAccess";
 
 const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean; supervisorOnly?: boolean }[] }[] = [
   {
@@ -118,10 +118,13 @@ export default function Layout() {
     if (location.pathname && location.pathname !== "/login") {
       localStorage.setItem("gowms_last_path", location.pathname);
     }
+    if (!canOpenPath(role, location.pathname)) {
+      navigate(homePathForRole(role), { replace: true });
+    }
     setMobileOpen(false);
     setNavOpen(false);
     setNavQuery("");
-  }, [location.pathname]);
+  }, [location.pathname, role, navigate]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -240,7 +243,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="content">
-          <Outlet />
+          {canOpenPath(getRole(), location.pathname) ? <Outlet /> : <Navigate to={homePathForRole(getRole())} replace />}
         </main>
       </div>
     </div>

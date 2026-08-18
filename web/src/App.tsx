@@ -3,6 +3,8 @@ import Layout from "./components/Layout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import GRN from "./pages/GRN";
+import ReceivingWizard from "./pages/ReceivingWizard";
+import ReceivingManagement from "./pages/ReceivingManagement";
 import GRNExceptions from "./pages/GRNExceptions";
 import GRNFollowUps from "./pages/GRNFollowUps";
 import GRNAudit from "./pages/GRNAudit";
@@ -69,6 +71,8 @@ export default function App() {
         <Route path="analytics" element={<Analytics />} />
         <Route path="grn" element={<GRN />} />
         <Route path="grn/:id" element={<GRN />} />
+        <Route path="receiving" element={<ReceivingWizard />} />
+        <Route path="receiving-management" element={<ReceivingManagement />} />
         <Route path="exceptions" element={<GRNExceptions />} />
         <Route path="grn-exceptions" element={<GRNExceptions />} />
         <Route path="follow-up" element={<GRNFollowUps />} />

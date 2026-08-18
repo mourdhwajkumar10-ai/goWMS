@@ -1,7 +1,9 @@
 package putaway
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -30,17 +32,42 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			userID = v
 		}
 
-		// Cancel any stale sessions for this user first
-		_, _ = db.Exec(c.Context(),
-			`UPDATE putaway_sessions SET status='cancelled', completed_at=now()
-			 WHERE user_id=$1 AND status='picking'`, userID)
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		rows, err := tx.Query(c.Context(),
+			`SELECT id FROM putaway_sessions WHERE user_id=$1 AND status='picking' FOR UPDATE`, userID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		for rows.Next() {
+		}
+		rows.Close()
+		if err = rows.Err(); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if err = releasePickedReservationsForUser(c.Context(), tx, userID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if _, err = tx.Exec(c.Context(),
+			`UPDATE putaway_sessions SET status='cancelled', completed_at=now(), updated_at=now()
+			 WHERE user_id=$1 AND status='picking'`, userID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 
 		var id int
-		err := db.QueryRow(c.Context(),
+		err = tx.QueryRow(c.Context(),
 			`INSERT INTO putaway_sessions (user_id, warehouse_id, zone, status)
 			 VALUES ($1, $2, NULLIF($3,''), 'picking') RETURNING id`,
 			userID, body.WarehouseID, body.Zone).Scan(&id)
 		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err = tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "status": "picking"})
@@ -117,7 +144,13 @@ func cancelSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
 
-		tag, err := db.Exec(c.Context(),
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		tag, err := tx.Exec(c.Context(),
 			`UPDATE putaway_sessions SET status='cancelled', completed_at=now(), updated_at=now()
 			 WHERE id=$1 AND status='picking'`, sessionID)
 		if err != nil {
@@ -127,14 +160,13 @@ func cancelSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusNotFound, "session not found or already completed")
 		}
 
-		_, _ = db.Exec(c.Context(), `
-			UPDATE warehouse_locations wl
-			SET last_picked_by_user_id = NULL, updated_at = now()
-			FROM putaway_session_items psi
-			WHERE psi.session_id = $1
-				AND psi.source_location_id = wl.id
-				AND psi.status = 'picked'`, sessionID)
+		if err = releasePickedReservations(c.Context(), tx, sessionID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 		return shared.OK(c, fiber.Map{"status": "cancelled"})
 	}
 }
@@ -175,49 +207,85 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code, source_location_id, qty required")
 		}
 
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
 		var status string
-		err = db.QueryRow(c.Context(),
-			`SELECT status FROM putaway_sessions WHERE id=$1`, sessionID).Scan(&status)
+		err = tx.QueryRow(c.Context(),
+			`SELECT status FROM putaway_sessions WHERE id=$1 FOR UPDATE`, sessionID).Scan(&status)
 		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		if status != "picking" {
 			return shared.Err(c, fiber.StatusBadRequest, "session is not in picking status")
 		}
 
-		var avail float64
-		_ = db.QueryRow(c.Context(),
-			`SELECT COALESCE(SUM(actual_qty - reserved_qty),0)
+		var balID int
+		var actual, reserved float64
+		err = tx.QueryRow(c.Context(),
+			`SELECT id, actual_qty, COALESCE(reserved_qty,0)
 			 FROM stock_location_balances
-			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)`,
-			body.SourceLocationID, body.ItemCode).Scan(&avail)
-		if avail < body.Qty {
+			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+			 FOR UPDATE`,
+			body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusBadRequest, "no stock at source location")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		avail := actual - reserved
+		if avail+1e-9 < body.Qty {
 			return shared.Err(c, fiber.StatusBadRequest,
 				fmt.Sprintf("insufficient stock at source (available %.0f, requested %.0f)", avail, body.Qty))
 		}
 
+		tag, err := tx.Exec(c.Context(), `
+			UPDATE stock_location_balances
+			SET reserved_qty = reserved_qty + $1, updated_at=now()
+			WHERE id=$2 AND (actual_qty - reserved_qty) >= $1 - 1e-9`, body.Qty, balID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() != 1 {
+			return shared.Err(c, fiber.StatusConflict, "could not reserve source qty")
+		}
+
+		var picker any
+		if uid := userID(c); uid > 0 {
+			picker = uid
+		}
 		var id int
-		err = db.QueryRow(c.Context(),
-			`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status)
-			 VALUES ($1, $2, $3, $4, 'picked') RETURNING id`,
-			sessionID, body.ItemCode, body.SourceLocationID, body.Qty).Scan(&id)
+		err = tx.QueryRow(c.Context(),
+			`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status, picked_by_user_id)
+			 VALUES ($1, $2, $3, $4, 'picked', $5) RETURNING id`,
+			sessionID, body.ItemCode, body.SourceLocationID, body.Qty, picker).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		_, _ = db.Exec(c.Context(),
-			`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
+		if _, err = tx.Exec(c.Context(),
+			`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if picker != nil {
+			if _, err = tx.Exec(c.Context(), `
+				UPDATE warehouse_locations
+				SET last_picked_by_user_id = $1, last_picked_at = now(), updated_at = now()
+				WHERE id = $2`, picker, body.SourceLocationID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		}
 
-		_, _ = db.Exec(c.Context(), `
-			UPDATE putaway_session_items 
-			SET picked_by_user_id = $1 
-			WHERE id = $2`, userID(c), id)
-
-		_, _ = db.Exec(c.Context(), `
-			UPDATE warehouse_locations 
-			SET last_picked_by_user_id = $1, last_picked_at = now(), updated_at = now() 
-			WHERE id = $2`, userID(c), body.SourceLocationID)
-
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 		return shared.OK(c, fiber.Map{"id": id, "status": "picked"})
 	}
 }
@@ -233,7 +301,27 @@ func removeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid item id")
 		}
 
-		tag, err := db.Exec(c.Context(),
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var removeQty float64
+		var removeSourceID int
+		var itemCode string
+		err = tx.QueryRow(c.Context(),
+			`SELECT qty, source_location_id, item_code FROM putaway_session_items
+			 WHERE id=$1 AND session_id=$2 AND status='picked' FOR UPDATE`,
+			itemID, sessionID).Scan(&removeQty, &removeSourceID, &itemCode)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "item not found or already placed")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		tag, err := tx.Exec(c.Context(),
 			`DELETE FROM putaway_session_items WHERE id=$1 AND session_id=$2 AND status='picked'`,
 			itemID, sessionID)
 		if err != nil {
@@ -243,9 +331,24 @@ func removeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusNotFound, "item not found or already placed")
 		}
 
-		_, _ = db.Exec(c.Context(),
-			`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
+		if removeSourceID > 0 && removeQty > 0 {
+			if _, err = tx.Exec(c.Context(), `
+				UPDATE stock_location_balances
+				SET reserved_qty = GREATEST(reserved_qty - $1, 0), updated_at=now()
+				WHERE location_id=$2 AND UPPER(item_code)=UPPER($3)`,
+				removeQty, removeSourceID, itemCode); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		}
 
+		if _, err = tx.Exec(c.Context(),
+			`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 		return shared.OK(c, fiber.Map{"status": "removed"})
 	}
 }
@@ -264,7 +367,7 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		var body struct {
 			TargetLocationID int     `json:"target_location_id"`
 			IsOverride       bool    `json:"is_override"`
-			Qty              float64 `json:"qty"` // actual qty to place (for splits)
+			Qty              float64 `json:"qty"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -273,183 +376,228 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "target_location_id required")
 		}
 
+		tx, txErr := db.Begin(c.Context())
+		if txErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, txErr.Error())
+		}
+		defer tx.Rollback(c.Context())
+
 		var itemCode string
 		var sessionQty float64
-		err = db.QueryRow(c.Context(),
-			`SELECT item_code, qty FROM putaway_session_items
-			 WHERE id=$1 AND session_id=$2 AND status='picked'`, itemID, sessionID).Scan(&itemCode, &sessionQty)
+		var sourceLocationID int
+		err = tx.QueryRow(c.Context(),
+			`SELECT item_code, qty, source_location_id FROM putaway_session_items
+			 WHERE id=$1 AND session_id=$2 AND status='picked' FOR UPDATE`,
+			itemID, sessionID).Scan(&itemCode, &sessionQty, &sourceLocationID)
 		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "item not found or already placed")
 		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		// Use requested qty if provided, otherwise use full session qty
+
 		qty := sessionQty
 		if body.Qty > 0 && body.Qty <= sessionQty {
 			qty = body.Qty
 		}
-		// Also cap to bin capacity if available
-		testCap, _ := shared.ItemBinCapacity(c.Context(), db, itemCode, body.TargetLocationID)
-		var testOnHand float64
-		_ = db.QueryRow(c.Context(),
-			`SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
-			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)`, body.TargetLocationID, itemCode).Scan(&testOnHand)
-		if testCap != nil && qty > *testCap-testOnHand+1e-9 {
-			capped := *testCap - testOnHand
-			if capped > 0 {
-				qty = capped
-			} else {
-				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-					"ok": false,
-					"error": fmt.Sprintf("bin is full (max %.0f, already %.0f)", *testCap, testOnHand),
-					"error_type": "bin_full",
-					"data": fiber.Map{"bin_capacity": *testCap, "bin_on_hand": testOnHand, "trying_to_add": body.Qty},
-				})
-			}
+
+		var locOK int
+		err = tx.QueryRow(c.Context(),
+			`SELECT id FROM warehouse_locations WHERE id=$1 FOR UPDATE`, body.TargetLocationID).Scan(&locOK)
+		if err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusBadRequest, "target location not found")
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		cap, _ := shared.ItemBinCapacity(c.Context(), db, itemCode, body.TargetLocationID)
-		var onHand float64
-		_ = db.QueryRow(c.Context(),
-			`SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
-			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)`,
-			body.TargetLocationID, itemCode).Scan(&onHand)
-
-		// Check for mixed items
-		if err := shared.RejectMixedPutaway(c.Context(), db, itemCode, body.TargetLocationID); err != nil {
+		if err := shared.RejectMixedPutaway(c.Context(), tx, itemCode, body.TargetLocationID); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"ok": false,
-				"error": err.Error(),
-				"error_type": "mixed_items",
+				"ok": false, "error": err.Error(), "error_type": "mixed_items",
 			})
 		}
 
+		cap, capErr := shared.ItemBinCapacity(c.Context(), tx, itemCode, body.TargetLocationID)
+		if capErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, capErr.Error())
+		}
+		var onHand float64
+		_ = tx.QueryRow(c.Context(),
+			`SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
+			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)`,
+			body.TargetLocationID, itemCode).Scan(&onHand)
 		if cap != nil && onHand+qty > *cap+1e-9 {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-				"ok": false,
-				"error": fmt.Sprintf("bin holds max %.0f of this item (already %.0f, trying to add %.0f)", *cap, onHand, qty),
+				"ok":         false,
+				"error":      fmt.Sprintf("bin holds max %.0f of this item (already %.0f, trying to add %.0f)", *cap, onHand, qty),
 				"error_type": "bin_full",
 				"data": fiber.Map{
-					"bin_capacity": *cap,
-					"bin_on_hand": onHand,
-					"trying_to_add": qty,
+					"bin_capacity": *cap, "bin_on_hand": onHand, "trying_to_add": qty,
 				},
 			})
 		}
 
-		// --- Move stock: decrement source, increment target ---
-	var sourceLocationID int
-	err = db.QueryRow(c.Context(),
-		`SELECT source_location_id FROM putaway_session_items
-		 WHERE id=$1 AND session_id=$2`, itemID, sessionID).Scan(&sourceLocationID)
-	if err != nil {
-		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-	}
-
-	var warehouseID int
-	_ = db.QueryRow(c.Context(),
-		`SELECT warehouse_id FROM putaway_sessions WHERE id=$1`, sessionID).Scan(&warehouseID)
-	if warehouseID < 1 {
-		if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
-			warehouseID = wid
+		var warehouseID int
+		_ = tx.QueryRow(c.Context(),
+			`SELECT warehouse_id FROM putaway_sessions WHERE id=$1`, sessionID).Scan(&warehouseID)
+		if warehouseID < 1 {
+			if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
+				warehouseID = wid
+			}
 		}
-	}
 
-	// Warehouse rule capacity warning (non-blocking)
-	var warehouseWarning string
-	rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
-	if rule != nil && rule.StockCapacity > 0 && rule.CurrentQty+qty > rule.StockCapacity+1e-9 {
-		warehouseWarning = fmt.Sprintf("Warehouse cap %.0f exceeded (current %.0f + placing %.0f)", rule.StockCapacity, rule.CurrentQty, qty)
-	}
+		var warehouseWarning string
+		rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
+		if rule != nil && rule.StockCapacity > 0 {
+			if rule.CurrentQty+qty > rule.StockCapacity+1e-9 {
+				warehouseWarning = "warehouse_cap_exceeded"
+				log.Printf("WAREHOUSE CAP WARNING: item %s in warehouse %s would exceed cap %.0f (current %.0f, adding %.0f)",
+					itemCode, rule.Warehouse, rule.StockCapacity, rule.CurrentQty, qty)
+			}
+		}
 
-	// Decrement source location
-	_, _ = db.Exec(c.Context(), `
-		UPDATE stock_location_balances
-		SET actual_qty = GREATEST(actual_qty - $1, 0), updated_at=now()
-		WHERE location_id=$2 AND UPPER(item_code)=UPPER($3)`, qty, sourceLocationID, itemCode)
-
-	// Increment target location (upsert)
-	var existingID int
-	err = db.QueryRow(c.Context(),
-		`SELECT id FROM stock_location_balances
-		 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)`, body.TargetLocationID, itemCode).Scan(&existingID)
-	if err == pgx.ErrNoRows {
-		_, _ = db.Exec(c.Context(), `
-			INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, actual_qty, reserved_qty, allocation_status)
-			VALUES ($1,$2,$3,$4,0,'allocatable')`, itemCode, warehouseID, body.TargetLocationID, qty)
-	} else if err == nil {
-		_, _ = db.Exec(c.Context(), `
+		tag, err := tx.Exec(c.Context(), `
 			UPDATE stock_location_balances
-			SET actual_qty = actual_qty + $1, allocation_status='allocatable', updated_at=now()
-			WHERE id=$2`, qty, existingID)
-	}
+			SET actual_qty = actual_qty - $1,
+			    reserved_qty = CASE WHEN reserved_qty >= $1 THEN reserved_qty - $1 ELSE 0 END,
+			    updated_at=now()
+			WHERE location_id=$2 AND UPPER(item_code)=UPPER($3) AND actual_qty >= $1 - 1e-9`,
+			qty, sourceLocationID, itemCode)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() != 1 {
+			return shared.Err(c, fiber.StatusConflict, "insufficient stock at source")
+		}
 
-	// Mark bin as occupied
-	_, _ = db.Exec(c.Context(),
-		`UPDATE warehouse_locations SET is_occupied=true, current_item=$2, updated_at=now() WHERE id=$1`,
-		body.TargetLocationID, itemCode)
+		var existingID int
+		err = tx.QueryRow(c.Context(),
+			`SELECT id FROM stock_location_balances
+			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2) FOR UPDATE`,
+			body.TargetLocationID, itemCode).Scan(&existingID)
+		if err == pgx.ErrNoRows {
+			if _, err = tx.Exec(c.Context(), `
+				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, actual_qty, reserved_qty, allocation_status)
+				VALUES ($1,$2,$3,$4,0,'allocatable')`, itemCode, warehouseID, body.TargetLocationID, qty); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		} else if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		} else {
+			if _, err = tx.Exec(c.Context(), `
+				UPDATE stock_location_balances
+				SET actual_qty = actual_qty + $1, allocation_status='allocatable', updated_at=now()
+				WHERE id=$2`, qty, existingID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		}
 
-	// Log the putaway
-	var logID int
-	err = db.QueryRow(c.Context(),
-		`INSERT INTO putaway_logs (log_no, item_code, source_warehouse, target_location, quantity, placed_at, placed_by)
-		 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,NOW(),$5)
-		 RETURNING id`,
-		itemCode, fmt.Sprintf("%d", warehouseID), "", qty, userID(c)).Scan(&logID)
-	if err != nil {
-		// Fallback without source_warehouse
-		_ = db.QueryRow(c.Context(),
-			`INSERT INTO putaway_logs (log_no, item_code, quantity, placed_at, placed_by)
-			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,NOW(),$3)
+		if _, err = tx.Exec(c.Context(),
+			`UPDATE warehouse_locations SET is_occupied=true, current_item=$2, updated_at=now() WHERE id=$1`,
+			body.TargetLocationID, itemCode); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		var logID int
+		err = tx.QueryRow(c.Context(),
+			`INSERT INTO putaway_logs (log_no, item_code, source_warehouse, target_location, quantity, placed_at, placed_by)
+			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,NOW(),$5)
 			 RETURNING id`,
-			itemCode, qty, userID(c)).Scan(&logID)
+			itemCode, fmt.Sprintf("%d", warehouseID), "", qty, userID(c)).Scan(&logID)
+		if err != nil {
+			if scanErr := tx.QueryRow(c.Context(),
+				`INSERT INTO putaway_logs (log_no, item_code, quantity, placed_at, placed_by)
+				 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,NOW(),$3)
+				 RETURNING id`,
+				itemCode, qty, userID(c)).Scan(&logID); scanErr != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, scanErr.Error())
+			}
+		}
+
+		remaining := sessionQty - qty
+		if remaining > 1e-9 {
+			tag, err = tx.Exec(c.Context(),
+				`UPDATE putaway_session_items SET qty=$1
+				 WHERE id=$2 AND session_id=$3 AND status='picked'`, remaining, itemID, sessionID)
+		} else {
+			tag, err = tx.Exec(c.Context(),
+				`UPDATE putaway_session_items
+				 SET target_location_id=$1, status='placed', qty=$4
+				 WHERE id=$2 AND session_id=$3 AND status='picked'`, body.TargetLocationID, itemID, sessionID, qty)
+		}
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() != 1 {
+			return shared.Err(c, fiber.StatusConflict, "item already placed")
+		}
+
+		_, _ = tx.Exec(c.Context(),
+			`UPDATE putaway_session_items SET used_location_ids = array_append(used_location_ids, $1) WHERE id = $2`,
+			body.TargetLocationID, itemID)
+		_, _ = tx.Exec(c.Context(),
+			`UPDATE putaway_logs SET source_location_id = $1 WHERE id = $2`, sourceLocationID, logID)
+		if uid := userID(c); uid > 0 {
+			_, _ = tx.Exec(c.Context(),
+				`UPDATE warehouse_locations SET last_picked_by_user_id = $1, last_picked_at = now(), updated_at = now() WHERE id = $2`,
+				uid, body.TargetLocationID)
+		}
+		if remaining <= 1e-9 {
+			_, _ = tx.Exec(c.Context(),
+				`UPDATE warehouse_locations SET last_picked_by_user_id = NULL, updated_at = now() WHERE id = $1`,
+				sourceLocationID)
+		}
+		_, _ = tx.Exec(c.Context(), `UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		return shared.OK(c, fiber.Map{
+			"status": "placed", "item_code": itemCode, "quantity": qty, "remaining": remaining,
+			"source_location_id": sourceLocationID, "target_location_id": body.TargetLocationID,
+			"warning": warehouseWarning,
+		})
 	}
+}
 
-	// Update session item: if partial qty, reduce qty; if full, mark placed
-	remaining := sessionQty - qty
-	if remaining > 1e-9 {
-		// Partial placement — reduce qty, keep as 'picked' for next split
-		_, err = db.Exec(c.Context(),
-			`UPDATE putaway_session_items
-			 SET qty=$1
-			 WHERE id=$2 AND session_id=$3 AND status='picked'`, remaining, itemID, sessionID)
-	} else {
-		// Full placement — mark as placed
-		_, err = db.Exec(c.Context(),
-			`UPDATE putaway_session_items
-			 SET target_location_id=$1, status='placed', qty=$4
-			 WHERE id=$2 AND session_id=$3 AND status='picked'`, body.TargetLocationID, itemID, sessionID, qty)
+func releasePickedReservations(ctx context.Context, tx pgx.Tx, sessionID int) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE stock_location_balances slb
+		SET reserved_qty = GREATEST(slb.reserved_qty - psi.qty, 0), updated_at=now()
+		FROM putaway_session_items psi
+		WHERE psi.session_id = $1 AND psi.status = 'picked'
+		  AND slb.location_id = psi.source_location_id
+		  AND UPPER(slb.item_code) = UPPER(psi.item_code)`, sessionID); err != nil {
+		return err
 	}
-	if err != nil {
-		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	_, err := tx.Exec(ctx, `
+		UPDATE warehouse_locations wl
+		SET last_picked_by_user_id = NULL, updated_at = now()
+		FROM putaway_session_items psi
+		WHERE psi.session_id = $1
+		  AND psi.source_location_id = wl.id
+		  AND psi.status = 'picked'`, sessionID)
+	return err
+}
+
+func releasePickedReservationsForUser(ctx context.Context, tx pgx.Tx, uid int) error {
+	if _, err := tx.Exec(ctx, `
+		UPDATE stock_location_balances slb
+		SET reserved_qty = GREATEST(slb.reserved_qty - psi.qty, 0), updated_at=now()
+		FROM putaway_session_items psi
+		JOIN putaway_sessions ps ON ps.id = psi.session_id
+		WHERE ps.user_id = $1 AND ps.status = 'picking' AND psi.status = 'picked'
+		  AND slb.location_id = psi.source_location_id
+		  AND UPPER(slb.item_code) = UPPER(psi.item_code)`, uid); err != nil {
+		return err
 	}
-
-	_, _ = db.Exec(c.Context(), `
-		UPDATE putaway_session_items 
-		SET used_location_ids = array_append(used_location_ids, $1) 
-		WHERE id = $2`, body.TargetLocationID, itemID)
-
-	_, _ = db.Exec(c.Context(), `
-		UPDATE putaway_logs 
-		SET source_location_id = $1 
-		WHERE id = $2`, sourceLocationID, logID)
-
-	_, _ = db.Exec(c.Context(), `
-		UPDATE warehouse_locations 
-		SET last_picked_by_user_id = $1, last_picked_at = now(), updated_at = now() 
-		WHERE id = $2`, userID(c), body.TargetLocationID)
-
-	if remaining <= 1e-9 {
-		_, _ = db.Exec(c.Context(), `
-			UPDATE warehouse_locations 
-			SET last_picked_by_user_id = NULL, updated_at = now() 
-			WHERE id = $1`, sourceLocationID)
-	}
-
-	_, _ = db.Exec(c.Context(),
-		`UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
-
-	return shared.OK(c, fiber.Map{"status": "placed", "item_code": itemCode, "quantity": qty, "remaining": remaining, "source_location_id": sourceLocationID, "target_location_id": body.TargetLocationID, "warning": warehouseWarning})
-	}
+	_, err := tx.Exec(ctx, `
+		UPDATE warehouse_locations wl
+		SET last_picked_by_user_id = NULL, updated_at = now()
+		FROM putaway_session_items psi
+		JOIN putaway_sessions ps ON ps.id = psi.session_id
+		WHERE ps.user_id = $1 AND ps.status = 'picking' AND psi.status = 'picked'
+		  AND psi.source_location_id = wl.id`, uid)
+	return err
 }

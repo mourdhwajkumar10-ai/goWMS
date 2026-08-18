@@ -1,0 +1,565 @@
+/* GRN Wizard — Responsive Design System
+   Breakpoints: sm 480, md 768, lg 1024
+   Tokens: 8px grid, 12px radius, accent blue #2563eb */
+
+/* ─── Design Tokens ─── */
+:root {
+  --grn-accent: #2563eb;
+  --grn-accent-hover: #1d4ed8;
+  --grn-accent-light: #dbeafe;
+  --grn-bg: #ffffff;
+  --grn-bg-2: #f9fafb;
+  --grn-bg-3: #f3f4f6;
+  --grn-border: #e5e7eb;
+  --grn-border-hover: #d1d5db;
+  --grn-text: #111827;
+  --grn-text-dim: #6b7280;
+  --grn-radius: 12px;
+  --grn-radius-sm: 8px;
+  --grn-radius-xs: 6px;
+  --grn-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --grn-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* ─── Gate Grid (Papers + Problem) ─── */
+.grn-gate-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+@media (max-width: 640px) {
+  .grn-gate-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Arrival Grid (Truck + Boxes + More) ─── */
+.grn-arrival-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) and (min-width: 641px) {
+  .grn-arrival-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .grn-arrival-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Secondary Grid (Driver, PO, etc.) ─── */
+.grn-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+@media (max-width: 900px) and (min-width: 641px) {
+  .grn-secondary-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 640px) {
+  .grn-secondary-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Full Row (spans all columns) ─── */
+.grn-full-row {
+  grid-column: 1 / -1;
+}
+
+/* ─── Start Card ─── */
+.grn-start-card {
+  border: 1px solid var(--grn-border);
+  border-radius: var(--grn-radius);
+  background: var(--grn-bg);
+}
+
+/* ─── More Fields Toggle ─── */
+.grn-more-fields {
+  border: none;
+  margin: 0;
+  padding: 0;
+}
+.grn-more-fields summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--grn-accent);
+  padding: 8px 0;
+  list-style: none;
+}
+.grn-more-fields summary::-webkit-details-marker {
+  display: none;
+}
+.grn-more-fields summary::before {
+  content: '▸ ';
+  transition: transform 120ms ease;
+}
+.grn-more-fields[open] summary::before {
+  content: '▾ ';
+}
+
+/* ─── PO Table (Desktop) ─── */
+.grn-po-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.grn-po-table thead {
+  background: var(--grn-bg-2);
+  border-bottom: 2px solid var(--grn-border);
+}
+.grn-po-table th {
+  padding: 10px 12px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--grn-text-dim);
+}
+.grn-po-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--grn-border);
+  vertical-align: middle;
+}
+.grn-po-table tr:hover {
+  background: var(--grn-bg-2);
+}
+.grn-po-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ─── PO Table (Mobile: Card Layout) ─── */
+@media (max-width: 640px) {
+  .grn-po-table,
+  .grn-po-table tbody {
+    display: block;
+    width: 100%;
+  }
+  .grn-po-table thead {
+    display: none;
+  }
+  .grn-po-table tr {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    border: 1px solid var(--grn-border);
+    border-radius: var(--grn-radius-sm);
+    background: var(--grn-bg);
+    box-shadow: var(--grn-shadow-sm);
+  }
+  .grn-po-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .grn-po-table td {
+    border: 0;
+    padding: 0;
+    white-space: normal;
+  }
+  .grn-po-table td[data-label="PO No"] {
+    grid-column: 2;
+    font-weight: 600;
+  }
+  .grn-po-table td[data-label="Status"] {
+    grid-column: 3;
+    text-align: right;
+  }
+  .grn-po-table td[data-label="Supplier"],
+  .grn-po-table td[data-label="Items"],
+  .grn-po-table td[data-label="Total"],
+  .grn-po-table td[data-label="Action"] {
+    grid-column: 1 / -1;
+  }
+  .grn-po-table td[data-label="Supplier"]::before,
+  .grn-po-table td[data-label="Items"]::before,
+  .grn-po-table td[data-label="Total"]::before {
+    content: attr(data-label) ": ";
+    color: var(--grn-text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .grn-action-cell {
+    display: flex;
+    justify-content: flex-end;
+  }
+}
+
+/* ─── PO Items Table (Desktop) ─── */
+.po-items-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--grn-border);
+  border-radius: var(--grn-radius);
+}
+.po-items-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 800px;
+}
+.po-items-table thead {
+  background: var(--grn-bg-2);
+  border-bottom: 2px solid var(--grn-border);
+}
+.po-items-table th {
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--grn-text-dim);
+  white-space: nowrap;
+}
+.po-items-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--grn-border);
+  vertical-align: middle;
+}
+.po-items-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ─── PO Items Table (Mobile: Card Layout) ─── */
+@media (max-width: 900px) {
+  .po-items-wrap {
+    overflow: visible;
+    border: 0 !important;
+  }
+  .po-items-table,
+  .po-items-table tbody,
+  .po-items-table tr,
+  .po-items-table td {
+    display: block;
+    width: 100%;
+  }
+  .po-items-table thead {
+    display: none;
+  }
+  .po-items-table tr {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px 12px;
+    margin-bottom: 12px;
+    padding: 12px;
+    border: 1px solid var(--grn-border);
+    border-radius: var(--grn-radius-sm);
+    background: var(--grn-bg);
+    box-shadow: var(--grn-shadow-sm);
+  }
+  .po-items-table tr:last-child {
+    margin-bottom: 0;
+  }
+  .po-items-table td {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    align-items: center;
+    gap: 6px;
+    padding: 0;
+    border: 0;
+    white-space: normal;
+    min-width: 0;
+  }
+  .po-items-table td::before {
+    content: attr(data-label);
+    color: var(--grn-text-dim);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .po-items-table td[data-label="Item code"],
+  .po-items-table td[data-label="Item name"] {
+    grid-column: 1 / -1;
+  }
+  .po-items-table td[data-label=""] {
+    display: flex;
+    justify-content: flex-end;
+    grid-column: 1 / -1;
+  }
+  .po-items-table td[data-label=""]::before {
+    display: none;
+  }
+  .po-items-table input,
+  .po-items-table select {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ─── Table Scroll Container ─── */
+.grn-table-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ─── Row Actions ─── */
+.grn-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* ─── Wizard Steps (Desktop) ─── */
+.grn-wizard-steps {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--grn-bg);
+  border-radius: var(--grn-radius);
+  border: 1px solid var(--grn-border);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.grn-wizard-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: var(--grn-radius-xs);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+  color: var(--grn-text-dim);
+  background: transparent;
+  border: none;
+}
+.grn-wizard-step:hover {
+  background: var(--grn-bg-2);
+  color: var(--grn-text);
+}
+.grn-wizard-step.active {
+  background: var(--grn-accent);
+  color: white;
+  font-weight: 600;
+}
+.grn-wizard-step.completed {
+  color: #16a34a;
+}
+.grn-wizard-step-num {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--grn-bg-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+.grn-wizard-step.active .grn-wizard-step-num {
+  background: rgba(255,255,255,0.2);
+}
+.grn-wizard-step.completed .grn-wizard-step-num {
+  background: #dcfce7;
+  color: #16a34a;
+}
+
+/* ─── Wizard Steps (Mobile: Scrollable Pills) ─── */
+@media (max-width: 640px) {
+  .grn-wizard-steps {
+    padding: 6px 8px;
+    gap: 2px;
+  }
+  .grn-wizard-step {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
+  .grn-wizard-step-num {
+    width: 18px;
+    height: 18px;
+    font-size: 10px;
+  }
+}
+
+/* ─── Session Cards (Mobile) ─── */
+@media (max-width: 640px) {
+  .grn-session-card {
+    padding: 12px;
+  }
+  .grn-session-header {
+    flex-direction: column;
+    gap: 8px;
+  }
+}
+
+/* ─── Box Summary Grid ─── */
+.grn-box-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 768px) {
+  .grn-box-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+@media (max-width: 480px) {
+  .grn-box-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ─── Stat Cards ─── */
+.grn-stat-card {
+  padding: 12px 16px;
+  background: var(--grn-bg);
+  border: 1px solid var(--grn-border);
+  border-radius: var(--grn-radius-sm);
+  text-align: center;
+}
+.grn-stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--grn-text);
+  line-height: 1;
+}
+.grn-stat-label {
+  font-size: 11px;
+  color: var(--grn-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 4px;
+}
+
+/* ─── Exception Badge ─── */
+.grn-exception-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.grn-exception-open {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.grn-exception-resolved {
+  background: #dcfce7;
+  color: #166534;
+}
+
+/* ─── Status Badges ─── */
+.grn-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.grn-status-draft {
+  background: #f3f4f6;
+  color: #374151;
+}
+.grn-status-receiving {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.grn-status-completed {
+  background: #dcfce7;
+  color: #166534;
+}
+.grn-status-cancelled {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+/* ─── Animations ─── */
+@keyframes grn-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.grn-animate-in {
+  animation: grn-slide-in 200ms ease-out;
+}
+
+/* ─── Compact Form Fields ─── */
+.grn-field-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.grn-field-compact label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--grn-text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.grn-field-compact input,
+.grn-field-compact select {
+  font-size: 14px;
+  padding: 8px 12px;
+}
+@media (max-width: 480px) {
+  .grn-field-compact input,
+  .grn-field-compact select {
+    font-size: 16px; /* Prevent iOS zoom */
+    padding: 12px;
+  }
+}
+
+/* ─── Quick Action Buttons ─── */
+.grn-quick-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 480px) {
+  .grn-quick-actions {
+    flex-direction: column;
+  }
+  .grn-quick-actions button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ─── Scan Input ─── */
+.grn-scan-input {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.grn-scan-input input {
+  flex: 1;
+  font-size: 16px;
+  padding: 12px;
+}
+.grn-scan-input button {
+  padding: 12px 20px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+@media (max-width: 480px) {
+  .grn-scan-input {
+    flex-direction: column;
+  }
+  .grn-scan-input button {
+    width: 100%;
+  }
+}

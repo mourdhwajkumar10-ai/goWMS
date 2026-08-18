@@ -80,12 +80,11 @@ export default function ScannerInput({
             return
           }
         } catch {
-          // fall through to filename fallback
+          // fall through
         }
       }
 
-      onScan(file.name.replace(/\.[^.]+$/, ''))
-      navigator.vibrate?.(10)
+      navigator.vibrate?.(200)
     },
     [onScan],
   )

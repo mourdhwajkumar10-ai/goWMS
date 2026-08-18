@@ -1,8 +1,53 @@
 import React, { useEffect, useRef, useState, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
 import api from "../services/api";
 import "../styles/receiving-wizard.css";
+
+function ReceivingModal({
+  open,
+  onClose,
+  width = 720,
+  large,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  width?: number;
+  large?: boolean;
+  children: React.ReactNode;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [open, onClose]);
+
+  if (!open) return null;
+  return createPortal(
+    <div className="rw-modal-overlay" onClick={onClose} role="presentation">
+      <div
+        className={`rw-modal${large ? " rw-modal-lg" : ""}`}
+        style={{ width, maxWidth: "95vw" }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+      >
+        {children}
+      </div>
+    </div>,
+    document.body
+  );
+}
 
 /* ─── Row type for preview ─── */
 interface ParsedRow {
@@ -519,6 +564,14 @@ export default function ReceivingManagement() {
     { key: "route_location", label: "Location" },
   ];
 
+  const closeUpload = useCallback(() => setShowUpload(false), []);
+  const closePreview = useCallback(() => {
+    setShowPreview(false);
+    setParsedRows([]);
+    setPackingFile(null);
+  }, []);
+  const closeDetail = useCallback(() => setSelectedList(null), []);
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       {/* Page Head */}
@@ -527,10 +580,11 @@ export default function ReceivingManagement() {
           <div className="rw-page-title">📋 Receiving</div>
           <div className="rw-page-sub">Upload, manage, and approve packing lists for receiving</div>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           <button
             className="rw-btn rw-btn-primary"
             onClick={() => setShowUpload(true)}
+            type="button"
           >
             + Upload Packing List
           </button>
@@ -546,9 +600,7 @@ export default function ReceivingManagement() {
       {error && <div className="rw-flash error">✕ {error}</div>}
 
       {/* Upload Modal */}
-      {showUpload && (
-        <div className="rw-modal-overlay" onClick={() => setShowUpload(false)}>
-          <div className="rw-modal" style={{ width: 720, maxWidth: "95vw" }} onClick={(e) => e.stopPropagation()}>
+      <ReceivingModal open={showUpload} onClose={closeUpload}>
             <div className="rw-modal-header">
               <div>
                 <h2>📦 Add Packing List</h2>
@@ -560,7 +612,7 @@ export default function ReceivingManagement() {
                 <button className="rw-btn rw-btn-secondary" onClick={downloadSample}>
                   ⬇ Sample Format
                 </button>
-                <button className="rw-modal-close" onClick={() => setShowUpload(false)}>✕</button>
+                <button className="rw-modal-close" onClick={closeUpload}>✕</button>
               </div>
             </div>
             {/* Entry mode tabs */}
@@ -814,7 +866,7 @@ export default function ReceivingManagement() {
                 )}
               </div>
               <div className="rw-modal-footer">
-                <button type="button" className="rw-btn rw-btn-secondary" onClick={() => setShowUpload(false)}>
+                <button type="button" className="rw-btn rw-btn-secondary" onClick={closeUpload}>
                   Cancel
                 </button>
                 <button
@@ -827,14 +879,10 @@ export default function ReceivingManagement() {
                 </button>
               </div>
             </form>
-          </div>
-        </div>
-      )}
+      </ReceivingModal>
 
       {/* ═══ Preview Modal — 15 columns ═══ */}
-      {showPreview && (
-        <div className="rw-modal-overlay" onClick={() => setShowPreview(false)}>
-          <div className="rw-modal" style={{ width: 900, maxWidth: "95vw", maxHeight: "90vh" }} onClick={(e) => e.stopPropagation()}>
+      <ReceivingModal open={showPreview} onClose={closePreview} width={900}>
             <div className="rw-modal-header">
               <div>
                 <h2>📋 Review Packing List Before Import</h2>
@@ -842,7 +890,7 @@ export default function ReceivingManagement() {
                   {packingFile?.name} — {parsedRows.length} rows parsed
                 </div>
               </div>
-              <button className="rw-modal-close" onClick={() => { setShowPreview(false); setParsedRows([]); setPackingFile(null); }}>✕</button>
+              <button className="rw-modal-close" onClick={closePreview}>✕</button>
             </div>
 
             {/* Summary Stats */}
@@ -985,7 +1033,7 @@ export default function ReceivingManagement() {
 
             {/* Footer */}
             <div className="rw-modal-footer">
-              <button className="rw-btn rw-btn-secondary" onClick={() => { setShowPreview(false); setParsedRows([]); setPackingFile(null); }}>
+              <button className="rw-btn rw-btn-secondary" onClick={closePreview}>
                 Cancel
               </button>
               <button
@@ -999,9 +1047,7 @@ export default function ReceivingManagement() {
                 {loading ? "Importing..." : `✅ Import ${parsedRows.filter((r) => r._selected).length} Rows`}
               </button>
             </div>
-          </div>
-        </div>
-      )}
+      </ReceivingModal>
 
       {/* Status filter + Search bar on top */}
       <div className="rw-card" style={{ marginBottom: 16 }}>
@@ -1131,8 +1177,7 @@ export default function ReceivingManagement() {
 
       {/* Detail Modal — full rewrite with stats, per-field search, status filter */}
       {selectedList && (
-        <div className="rw-modal-overlay" onClick={() => setSelectedList(null)}>
-          <div className="rw-modal rw-modal-lg" style={{ maxWidth: "95vw" }} onClick={(e) => e.stopPropagation()}>
+      <ReceivingModal open onClose={closeDetail} large>
             <div className="rw-modal-header">
               <div>
                 <h2>{selectedList.name}</h2>
@@ -1140,7 +1185,7 @@ export default function ReceivingManagement() {
                   {selectedList.supplier_name} · {selectedList.driver_name || "No driver assigned"}
                 </div>
               </div>
-              <button className="rw-modal-close" onClick={() => setSelectedList(null)}>✕</button>
+              <button className="rw-modal-close" onClick={closeDetail}>✕</button>
             </div>
             <div className="rw-modal-body">
               {/* Summary Stats */}
@@ -1339,12 +1384,11 @@ export default function ReceivingManagement() {
                   Start Receiving
                 </button>
               )}
-              <button className="rw-btn rw-btn-secondary" onClick={() => setSelectedList(null)}>
+              <button className="rw-btn rw-btn-secondary" onClick={closeDetail}>
                 Close
               </button>
             </div>
-          </div>
-        </div>
+      </ReceivingModal>
       )}
     </div>
   );

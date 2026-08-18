@@ -43,6 +43,7 @@ interface Item {
   min_order_qty?: number
   weight_per_unit?: number
   standard_rate?: number
+  velocity_tier?: string
 }
 
 interface InvRow {
@@ -330,6 +331,7 @@ export default function Items() {
                 <th className="text-right">CP</th>
                 <th className="text-right">Selling price</th>
                 <th className="text-right">MOQ</th>
+                <th>Velocity</th>
                 <th>Master</th>
               </tr>
             </thead>
@@ -344,6 +346,18 @@ export default function Items() {
                   <td className="text-right">{Number(i.valuation_rate || 0).toFixed(2)}</td>
                   <td className="text-right">{Number(i.standard_rate || 0).toFixed(2)}</td>
                   <td className="text-right">{Number(i.min_order_qty || 0)}</td>
+                  <td>
+                    <span style={{
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      fontSize: '0.75rem',
+                      fontWeight: 600,
+                      background: i.velocity_tier === 'fast' ? '#dcfce7' : i.velocity_tier === 'slow' ? '#fee2e2' : '#fef3c7',
+                      color: i.velocity_tier === 'fast' ? '#166534' : i.velocity_tier === 'slow' ? '#991b1b' : '#92400e'
+                    }}>
+                      {i.velocity_tier || 'medium'}
+                    </span>
+                  </td>
                   <td>
                     <span className={`erpnext-badge ${i.master_complete ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
                       {i.master_complete ? 'ok' : 'incomplete'}
@@ -393,6 +407,14 @@ export default function Items() {
                 <div>UOM: {selected.uom || 'PCS'}</div>
                 <div>MOQ (VEH_DLR Set Qty): {selected.min_order_qty ?? 0}</div>
                 <div>HSN: {selected.hsn_no || '—'}</div>
+                <div>Velocity: <span style={{
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  background: selected.velocity_tier === 'fast' ? '#dcfce7' : selected.velocity_tier === 'slow' ? '#fee2e2' : '#fef3c7',
+                  color: selected.velocity_tier === 'fast' ? '#166534' : selected.velocity_tier === 'slow' ? '#991b1b' : '#92400e'
+                }}>{selected.velocity_tier || 'medium'}</span></div>
                 <div>GST: {selected.gst_percentage ?? 0}%</div>
                 <div>Weight: {selected.weight_per_unit ?? 0}</div>
                 <div>Threshold: {selected.threshold_value ?? 0}</div>

@@ -38,9 +38,14 @@ func listPackingLists(db *pgxpool.Pool) fiber.Handler {
 				gs.created_at,
 				COALESCE(gs.created_by, 0) as created_by
 			FROM grn_sessions gs
-			WHERE gs.receiving_mode = 'packing_list' 
+			WHERE (
+			   gs.receiving_mode = 'packing_list'
 			   OR gs.packing_list_available = true
 			   OR EXISTS (SELECT 1 FROM grn_cartons gc WHERE gc.grn_session_id = gs.id AND gc.is_expected = true)
+			) AND (
+			   EXISTS (SELECT 1 FROM grn_cartons gc WHERE gc.grn_session_id = gs.id)
+			   OR EXISTS (SELECT 1 FROM grn_lines gl WHERE gl.grn_session_id = gs.id AND COALESCE(gl.expected_qty,0)+COALESCE(gl.scanned_qty,0) > 0)
+			)
 			ORDER BY gs.created_at DESC
 			LIMIT 100`
 
@@ -312,16 +317,16 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		colMap := map[string]string{
-			"part_code":    "Part Code",
-			"part_name":    "Part Name",
-			"qty":          "Qty",
-			"box_number":   "Box Number",
-			"invoice_no":   "InvoiceNo",
-			"branch":       "Branch",
-			"invoice_date": "Invoice Date",
+			"part_code":     "Part Code",
+			"part_name":     "Part Name",
+			"qty":           "Qty",
+			"box_number":    "Box Number",
+			"invoice_no":    "InvoiceNo",
+			"branch":        "Branch",
+			"invoice_date":  "Invoice Date",
 			"delivery_date": "Delivery Date",
-			"box_no_from":  "Box No From",
-			"box_no_to":    "Box No To",
+			"box_no_from":   "Box No From",
+			"box_no_to":     "Box No To",
 		}
 
 		getCell := func(row []string, logical string) string {
@@ -399,20 +404,20 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 				continue
 			}
 
-		partName := getCell(row, "part_name")
-		invoiceNo := getCell(row, "invoice_no")
-		branch := getCell(row, "branch")
-		invoiceDate := getCell(row, "invoice_date")
-		deliveryDate := getCell(row, "delivery_date")
-		boxNoFrom := getCell(row, "box_no_from")
-		boxNoTo := getCell(row, "box_no_to")
+			partName := getCell(row, "part_name")
+			invoiceNo := getCell(row, "invoice_no")
+			branch := getCell(row, "branch")
+			invoiceDate := getCell(row, "invoice_date")
+			deliveryDate := getCell(row, "delivery_date")
+			boxNoFrom := getCell(row, "box_no_from")
+			boxNoTo := getCell(row, "box_no_to")
 
-		boxItemCount[boxNo]++
+			boxItemCount[boxNo]++
 
-		// Insert carton if not exists
-		cartonID, ok := cartonIDs[boxNo]
-		if !ok {
-			err = tx.QueryRow(c.Context(), `
+			// Insert carton if not exists
+			cartonID, ok := cartonIDs[boxNo]
+			if !ok {
+				err = tx.QueryRow(c.Context(), `
 				INSERT INTO grn_cartons (
 					grn_session_id, carton_no, status, is_expected,
 					dealer_code, dealer_name, delivery_no, plant, branch,
@@ -422,16 +427,16 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 					NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), NULLIF($7, ''),
 					NULLIF($8, '')::timestamptz, NULLIF($9, '')::timestamptz, NULLIF($10, ''), NULLIF($11, '')
 				) RETURNING id`,
-				sessionID, boxNo,
-				getCell(row, "dealer_code"), getCell(row, "dealer_name"),
-				getCell(row, "delivery_no"), getCell(row, "plant"), branch,
-				invoiceDate, deliveryDate, boxNoFrom, boxNoTo,
-			).Scan(&cartonID)
-			if err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, "failed to insert carton: "+err.Error())
+					sessionID, boxNo,
+					getCell(row, "dealer_code"), getCell(row, "dealer_name"),
+					getCell(row, "delivery_no"), getCell(row, "plant"), branch,
+					invoiceDate, deliveryDate, boxNoFrom, boxNoTo,
+				).Scan(&cartonID)
+				if err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, "failed to insert carton: "+err.Error())
+				}
+				cartonIDs[boxNo] = cartonID
 			}
-			cartonIDs[boxNo] = cartonID
-		}
 
 			// Insert line
 			var notes *string
@@ -488,5 +493,3 @@ func importPackingListFile(db *pgxpool.Pool) fiber.Handler {
 		})
 	}
 }
-
-

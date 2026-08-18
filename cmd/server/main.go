@@ -134,6 +134,8 @@ func main() {
 	notifications.Register(api.Group("/notifications"), pool)
 	packing.Register(api.Group("/packing"), pool)
 	packinglist.Register(api.Group("/packing-list"), pool)
+	packinglist.RegisterReceiving(api.Group("/receiving"), pool)
+	grn.RegisterRFScan(api.Group("/receiving"), pool)
 	packinglist.RegisterGRNAlias(api.Group("/grn"), pool) // docs alias: /grn/:id/import-packing-list
 	packinglist.RegisterSupplierAlias(api.Group("/suppliers"), pool)
 	picking.Register(api.Group("/picking"), pool)

@@ -10,6 +10,7 @@ import (
 )
 
 // ItemBinCapacity is the tightest of: this SKU in this bin, item default, location max.
+// Returns nil (no cap) when no explicit capacity is configured anywhere.
 func ItemBinCapacity(ctx context.Context, q querier, itemCode string, locationID int) (*float64, error) {
 	var cap *float64
 	err := q.QueryRow(ctx, `
