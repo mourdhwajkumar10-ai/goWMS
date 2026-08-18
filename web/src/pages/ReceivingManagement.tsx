@@ -92,6 +92,7 @@ interface PackingList {
   packing_list_no?: string;
   packing_list_filename?: string;
   items: PackingListItem[];
+  progress?: PackingListProgress;
 }
 
 function InboundDocMap({ po, packingList, grn, file }: { po?: string; packingList?: string; grn?: string; file?: string }) {
@@ -122,6 +123,7 @@ interface PackingListItem {
   part_name: string;
   expected_qty: number;
   scanned_qty: number;
+  damaged_qty?: number;
   batch_no: string;
   invoice_no: string;
   dealer_code: string;
@@ -136,7 +138,88 @@ interface PackingListItem {
   unit_weight_kg: number;
   status: string;
   route_location: string;
+  box_status?: string;
+  box_condition?: string;
 }
+
+interface PackingListProgress {
+  boxes_total: number;
+  boxes_awaiting: number;
+  boxes_counted: number;
+  boxes_damaged: number;
+  boxes_verified: number;
+  items_total: number;
+  items_pending: number;
+  items_scanning: number;
+  items_matched: number;
+  items_shortage: number;
+  items_excess: number;
+}
+
+type BoxStage = "awaiting" | "counted" | "damaged" | "verified";
+type ItemStage = "pending" | "scanning" | "matched" | "shortage" | "excess";
+
+const isDamagedCondition = (cond?: string) => {
+  const c = (cond || "ok").toLowerCase().trim();
+  return c === "damaged" || c === "damage" || c === "broken" || c === "wet" || c === "crushed" || c === "torn";
+};
+
+const boxStageOf = (item: PackingListItem): BoxStage => {
+  const st = (item.box_status || "").toLowerCase();
+  const dmg = isDamagedCondition(item.box_condition);
+  if (st === "verified") return "verified";
+  if (st === "received" || st === "accounted" || st === "exception" || st === "excess") {
+    return dmg ? "damaged" : "counted";
+  }
+  if (dmg) return "damaged";
+  return "awaiting";
+};
+
+const itemStageOf = (item: PackingListItem): ItemStage => {
+  const scanned = Number(item.scanned_qty) || 0;
+  const expected = Number(item.expected_qty) || 0;
+  const st = (item.status || "").toLowerCase();
+  if (st === "excess" || (scanned > expected && expected > 0)) return "excess";
+  if (st === "shortage") return "shortage";
+  if (st === "full_match" || st === "completed" || st === "received") return "matched";
+  if (expected > 0 && scanned >= expected) return "matched";
+  if (scanned > 0 && expected > 0 && scanned < expected) return "scanning";
+  return "pending";
+};
+
+const BOX_STAGE_LABEL: Record<BoxStage, string> = {
+  awaiting: "Awaiting dock",
+  counted: "Counted",
+  damaged: "Damaged",
+  verified: "Items verified",
+};
+const ITEM_STAGE_LABEL: Record<ItemStage, string> = {
+  pending: "Not scanned",
+  scanning: "In progress",
+  matched: "Matched",
+  shortage: "Shortage",
+  excess: "Excess",
+};
+const boxStageBadge = (stage: BoxStage) =>
+  stage === "verified" ? "erpnext-badge-green" :
+  stage === "damaged" ? "erpnext-badge-red" :
+  stage === "counted" ? "erpnext-badge-blue" :
+  "erpnext-badge-yellow";
+const itemStageBadge = (stage: ItemStage) =>
+  stage === "matched" ? "erpnext-badge-green" :
+  stage === "excess" ? "erpnext-badge-red" :
+  stage === "shortage" ? "erpnext-badge-red" :
+  stage === "scanning" ? "erpnext-badge-blue" :
+  "erpnext-badge-yellow";
+const conditionLabel = (cond?: string) => {
+  if (isDamagedCondition(cond)) {
+    const c = (cond || "damaged").toLowerCase();
+    if (c === "wet") return "Wet";
+    if (c === "crushed" || c === "torn") return "Crushed";
+    return "Damaged";
+  }
+  return "OK";
+};
 
 interface TruckSuggestion {
   id: number;
@@ -219,6 +302,8 @@ export default function ReceivingManagement() {
   // Detail modal filters
   const [colFilters, setColFilters] = useState<Record<string, string>>({});
   const [statusFilterDetail, setStatusFilterDetail] = useState("all");
+  const [boxFilterDetail, setBoxFilterDetail] = useState("all");
+  const [detailUpdatedAt, setDetailUpdatedAt] = useState<Date | null>(null);
 
   // Load GRN sessions on mount
   useEffect(() => {
@@ -508,7 +593,7 @@ export default function ReceivingManagement() {
     setLoading(false);
   };
 
-  // Filter items within the detail modal — per-field search
+  // Filter items within the detail modal — per-field search + live receiving stages
   const filteredDetailItems = useMemo(() => {
     let items = selectedList?.items || [];
     for (const [key, val] of Object.entries(colFilters)) {
@@ -517,36 +602,84 @@ export default function ReceivingManagement() {
         String(it[key] || "").toLowerCase().includes(val.toLowerCase())
       );
     }
+    if (boxFilterDetail !== "all") {
+      items = items.filter((it: PackingListItem) => boxStageOf(it) === boxFilterDetail);
+    }
     if (statusFilterDetail !== "all") {
-      items = items.filter((it: any) => it.status === statusFilterDetail);
+      items = items.filter((it: PackingListItem) => itemStageOf(it) === statusFilterDetail);
     }
     return items;
-  }, [selectedList, colFilters, statusFilterDetail]);
+  }, [selectedList, colFilters, statusFilterDetail, boxFilterDetail]);
 
-  // Detail modal summary stats
+  // Detail modal summary stats — unique boxes + line progress
   const detailStats = useMemo(() => {
     const items = selectedList?.items || [];
-    const totalBoxes = new Set(items.map((i: any) => i.box_number)).size;
-    const received = items.filter((i: any) => i.status === "received" || i.status === "completed").length;
-    const pending = items.length - received;
-    const locations = new Set(items.filter((i: any) => i.route_location).map((i: any) => i.route_location)).size;
-    return { totalBoxes, received, pending, locations };
+    const p = selectedList?.progress;
+    const boxMap = new Map<string, BoxStage>();
+    items.forEach((i) => {
+      if (!boxMap.has(i.box_number)) boxMap.set(i.box_number, boxStageOf(i));
+    });
+    const stages = Array.from(boxMap.values());
+    const awaiting = p?.boxes_awaiting ?? stages.filter((s) => s === "awaiting").length;
+    const counted = p?.boxes_counted ?? stages.filter((s) => s === "counted").length;
+    const damaged = p?.boxes_damaged ?? stages.filter((s) => s === "damaged").length;
+    const verified = p?.boxes_verified ?? stages.filter((s) => s === "verified").length;
+    const matched = p?.items_matched ?? items.filter((i) => itemStageOf(i) === "matched").length;
+    const shortage = p?.items_shortage ?? items.filter((i) => itemStageOf(i) === "shortage").length;
+    const excess = p?.items_excess ?? items.filter((i) => itemStageOf(i) === "excess").length;
+    const scanning = p?.items_scanning ?? items.filter((i) => itemStageOf(i) === "scanning").length;
+    const pending = p?.items_pending ?? items.filter((i) => itemStageOf(i) === "pending").length;
+    const locations = new Set(items.filter((i) => i.route_location).map((i) => i.route_location)).size;
+    return {
+      totalBoxes: p?.boxes_total ?? boxMap.size,
+      awaiting, counted, damaged, verified,
+      matched, shortage, excess, scanning, pending,
+      itemsTotal: p?.items_total ?? items.length,
+      locations,
+    };
   }, [selectedList]);
+
+  const applyPackingListPayload = useCallback((list: PackingList, data: any) => {
+    setSelectedList({
+      ...list,
+      ...data,
+      items: data.items || [],
+      progress: data.progress,
+    });
+    setDetailUpdatedAt(new Date());
+  }, []);
+
+  const refreshDetail = useCallback(async (id: number, silent = false) => {
+    if (!silent) setDetailLoading(true);
+    try {
+      const res = await api.packingListGet(id);
+      if (res.ok && res.data) {
+        setSelectedList((prev) => {
+          if (!prev || prev.id !== id) return prev;
+          return { ...prev, ...res.data, items: res.data.items || [], progress: res.data.progress };
+        });
+        setDetailUpdatedAt(new Date());
+      } else if (!silent) {
+        showFlash(res.error || "Failed to load details", "error");
+      }
+    } catch (e: any) {
+      if (!silent) showFlash(e.message || "Failed to load details", "error");
+    }
+    if (!silent) setDetailLoading(false);
+  }, []);
 
   // Open detail modal and fetch full packing list details (incl. items)
   const openDetail = async (list: PackingList) => {
     setSelectedList({ ...list, items: [] });
     setColFilters({});
     setStatusFilterDetail("all");
+    setBoxFilterDetail("all");
+    setDetailUpdatedAt(null);
     setDetailLoading(true);
     try {
       const res = await api.packingListGet(list.id);
       if (res.ok && res.data) {
-        setSelectedList((prev) => ({
-          ...(prev || list),
-          ...res.data,
-          items: res.data.items || [],
-        }));
+        applyPackingListPayload(list, res.data);
       } else {
         showFlash(res.error || "Failed to load details", "error");
       }
@@ -555,6 +688,19 @@ export default function ReceivingManagement() {
     }
     setDetailLoading(false);
   };
+
+  const sessionClosed = (selectedList?.status || "").toLowerCase() === "closed"
+    || (selectedList?.status || "").toLowerCase() === "completed";
+
+  useEffect(() => {
+    if (!selectedList?.id) return;
+    const tick = () => {
+      void refreshDetail(selectedList.id, true);
+    };
+    const ms = sessionClosed ? 20000 : 4000;
+    const t = setInterval(tick, ms);
+    return () => clearInterval(t);
+  }, [selectedList?.id, sessionClosed, refreshDetail]);
 
   const filteredGRNs = useMemo(() => {
     const q = search.toLowerCase();
@@ -1259,7 +1405,7 @@ export default function ReceivingManagement() {
           )}
         </div>
 
-      {/* Detail Modal — full rewrite with stats, per-field search, status filter */}
+      {/* Detail Modal — live packing-list row monitor */}
       {selectedList && (
       <ReceivingModal open onClose={closeDetail} large>
             <div className="rw-modal-header">
@@ -1269,24 +1415,24 @@ export default function ReceivingManagement() {
                   {selectedList.supplier_name} · {selectedList.driver_name || "No driver assigned"}
                 </div>
               </div>
-              <button className="rw-modal-close" onClick={closeDetail}>✕</button>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, marginLeft: "auto" }}>
+                <div className="pl-live" title="Row status refreshes while this window is open">
+                  <span className={`pl-live-dot${sessionClosed ? " is-idle" : ""}`} />
+                  {sessionClosed ? "Session closed" : "Live"}
+                  {detailUpdatedAt ? ` · ${detailUpdatedAt.toLocaleTimeString()}` : ""}
+                </div>
+                <button className="rw-modal-close" onClick={closeDetail}>✕</button>
+              </div>
             </div>
-            <InboundDocMap
-              po={selectedList.po_no}
-              packingList={selectedList.packing_list_no}
-              grn={selectedList.name}
-              file={selectedList.packing_list_filename}
-            />
-            <div className="rw-modal-body">
-              {/* Summary Stats */}
+            <div className="rw-modal-body rw-modal-body-fill">
               <div className="rw-info-grid" style={{ marginBottom: 20 }}>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Status</div>
+                  <div className="rw-info-label">Session</div>
                   <div className="rw-info-value">
                     <span className={`erpnext-badge ${
                       selectedList.status === "draft" ? "erpnext-badge-yellow" :
-                      selectedList.status === "pending_approval" ? "erpnext-badge-orange" :
-                      selectedList.status === "ready_to_receive" ? "erpnext-badge-blue" :
+                      selectedList.status === "exception_pending" ? "erpnext-badge-red" :
+                      selectedList.status === "completed" || selectedList.status === "closed" ? "erpnext-badge-blue" :
                       "erpnext-badge-green"
                     }`}>
                       {selectedList.status.replace(/_/g, " ")}
@@ -1294,160 +1440,190 @@ export default function ReceivingManagement() {
                   </div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Total Boxes</div>
+                  <div className="rw-info-label">Boxes</div>
                   <div className="rw-info-value">{detailStats.totalBoxes}</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Received</div>
-                  <div className="rw-info-value" style={{ color: "#28a745" }}>{detailStats.received}</div>
+                  <div className="rw-info-label">Awaiting dock</div>
+                  <div className="rw-info-value" style={{ color: "#b45309" }}>{detailStats.awaiting}</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Pending</div>
-                  <div className="rw-info-value" style={{ color: "#dc3545" }}>{detailStats.pending}</div>
+                  <div className="rw-info-label">Counted</div>
+                  <div className="rw-info-value" style={{ color: "#2563eb" }}>{detailStats.counted}</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Locations Used</div>
-                  <div className="rw-info-value">{detailStats.locations}</div>
+                  <div className="rw-info-label">Damaged</div>
+                  <div className="rw-info-value" style={{ color: "#dc3545" }}>{detailStats.damaged}</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Driver</div>
-                  <div className="rw-info-value">{selectedList.driver_name || "-"}</div>
+                  <div className="rw-info-label">Items verified</div>
+                  <div className="rw-info-value" style={{ color: "#16a34a" }}>{detailStats.verified}</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Transporter</div>
-                  <div className="rw-info-value">{selectedList.transporter || "-"}</div>
+                  <div className="rw-info-label">Item rows</div>
+                  <div className="rw-info-value">{detailStats.matched}/{detailStats.itemsTotal} matched</div>
                 </div>
                 <div className="rw-info-item">
-                  <div className="rw-info-label">Created</div>
-                  <div className="rw-info-value">{formatDate(selectedList.created_at)}</div>
+                  <div className="rw-info-label">Exceptions</div>
+                  <div className="rw-info-value">{detailStats.shortage} short · {detailStats.excess} excess</div>
                 </div>
               </div>
+              <p className="pl-status-hint">
+                Awaiting dock means the box was not confirmed on RF yet. Counted = tap Box is fine (or scan the next box). Damaged = tap Damaged / broken. Items verified = finish item scan and close the box.
+              </p>
 
-              {/* Items Table with per-column search */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <div className="rw-section-title" style={{ marginBottom: 0 }}>Items</div>
+                <div className="rw-section-title" style={{ marginBottom: 0 }}>Packing list rows</div>
                 {!detailLoading && selectedList.items && selectedList.items.length > 0 && (
                   <span className="text-sm" style={{ color: "var(--text-dim)" }}>
                     {filteredDetailItems.length} of {selectedList.items.length}
+                    {detailStats.scanning ? ` · ${detailStats.scanning} scanning` : ""}
+                    {detailStats.pending ? ` · ${detailStats.pending} not scanned` : ""}
                   </span>
                 )}
               </div>
 
-              <div style={{ overflowX: "auto" }}>
-                <table className="erpnext-table" style={{ width: "100%", minWidth: 900 }}>
+              <div className="pl-table-wrap">
+                <table className="erpnext-table pl-monitor-table" style={{ width: "100%", minWidth: 1080 }}>
                   <thead>
-                    <tr style={{ background: "var(--panel-2)" }}>
-                      <th style={{ width: 100 }}>Box Number</th>
-                      <th style={{ width: 110 }}>Part Code</th>
-                      <th>Part Name</th>
-                      <th className="text-right" style={{ width: 80 }}>Expected</th>
-                      <th className="text-right" style={{ width: 80 }}>Scanned</th>
-                      <th style={{ width: 90 }}>Status</th>
-                      <th style={{ width: 130 }}>Current Location</th>
+                    <tr>
+                      <th style={{ width: 120 }}>
+                        <span className="pl-th-label">Box number</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.box_number || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, box_number: e.target.value }))}
+                        />
+                      </th>
+                      <th style={{ width: 140 }}>
+                        <span className="pl-th-label">Box status</span>
+                        <select
+                          className="rw-col-filter-select"
+                          value={boxFilterDetail}
+                          onChange={(e) => setBoxFilterDetail(e.target.value)}
+                        >
+                          <option value="all">All</option>
+                          <option value="awaiting">Awaiting dock</option>
+                          <option value="counted">Counted</option>
+                          <option value="damaged">Damaged</option>
+                          <option value="verified">Items verified</option>
+                        </select>
+                      </th>
+                      <th style={{ width: 100 }}>
+                        <span className="pl-th-label">Condition</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="OK / Damaged"
+                          value={colFilters.box_condition || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, box_condition: e.target.value }))}
+                        />
+                      </th>
+                      <th style={{ width: 110 }}>
+                        <span className="pl-th-label">Part code</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.part_code || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, part_code: e.target.value }))}
+                        />
+                      </th>
+                      <th>
+                        <span className="pl-th-label">Part name</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.part_name || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, part_name: e.target.value }))}
+                        />
+                      </th>
+                      <th className="text-right" style={{ width: 80 }}>
+                        <span className="pl-th-label">Expected</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.expected_qty || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, expected_qty: e.target.value }))}
+                        />
+                      </th>
+                      <th className="text-right" style={{ width: 80 }}>
+                        <span className="pl-th-label">Scanned</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.scanned_qty || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, scanned_qty: e.target.value }))}
+                        />
+                      </th>
+                      <th style={{ width: 130 }}>
+                        <span className="pl-th-label">Item status</span>
+                        <select
+                          className="rw-col-filter-select"
+                          value={statusFilterDetail}
+                          onChange={(e) => setStatusFilterDetail(e.target.value)}
+                        >
+                          <option value="all">All</option>
+                          <option value="pending">Not scanned</option>
+                          <option value="scanning">In progress</option>
+                          <option value="matched">Matched</option>
+                          <option value="shortage">Shortage</option>
+                          <option value="excess">Excess</option>
+                        </select>
+                      </th>
+                      <th style={{ width: 130 }}>
+                        <span className="pl-th-label">Location</span>
+                        <input
+                          className="rw-col-filter"
+                          placeholder="Filter..."
+                          value={colFilters.route_location || ""}
+                          onChange={(e) => setColFilters((prev) => ({ ...prev, route_location: e.target.value }))}
+                        />
+                      </th>
                     </tr>
-                    {!detailLoading && selectedList.items && selectedList.items.length > 0 && (
-                      <tr style={{ background: "var(--bg-2, #f9fafb)" }}>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.box_number || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, box_number: e.target.value }))}
-                          />
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.part_code || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, part_code: e.target.value }))}
-                          />
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.part_name || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, part_name: e.target.value }))}
-                          />
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.expected_qty || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, expected_qty: e.target.value }))}
-                          />
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.scanned_qty || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, scanned_qty: e.target.value }))}
-                          />
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <select
-                            className="rw-col-filter-select"
-                            value={statusFilterDetail}
-                            onChange={(e) => setStatusFilterDetail(e.target.value)}
-                          >
-                            <option value="all">All</option>
-                            <option value="pending">Pending</option>
-                            <option value="received">Received</option>
-                            <option value="completed">Completed</option>
-                            <option value="exception">Exception</option>
-                          </select>
-                        </th>
-                        <th style={{ padding: "4px 6px" }}>
-                          <input
-                            className="rw-col-filter"
-                            placeholder="Filter..."
-                            value={colFilters.route_location || ""}
-                            onChange={(e) => setColFilters((prev) => ({ ...prev, route_location: e.target.value }))}
-                          />
-                        </th>
-                      </tr>
-                    )}
                   </thead>
                   <tbody>
-                    {filteredDetailItems.map((item: any) => (
-                      <tr key={item.id}>
+                    {filteredDetailItems.map((item: PackingListItem) => {
+                      const box = boxStageOf(item);
+                      const line = itemStageOf(item);
+                      return (
+                      <tr key={item.id} className={`pl-row pl-row-${box}`}>
                         <td>{item.box_number}</td>
+                        <td>
+                          <span className={`erpnext-badge ${boxStageBadge(box)}`}>{BOX_STAGE_LABEL[box]}</span>
+                        </td>
+                        <td>
+                          <span className={`erpnext-badge ${isDamagedCondition(item.box_condition) ? "erpnext-badge-red" : "erpnext-badge-green"}`}>
+                            {conditionLabel(item.box_condition)}
+                          </span>
+                        </td>
                         <td className="font-medium">{item.part_code}</td>
                         <td>{item.part_name}</td>
                         <td className="text-right">{item.expected_qty}</td>
                         <td className="text-right">{item.scanned_qty ?? 0}</td>
                         <td>
-                          <span className={`erpnext-badge ${
-                            item.status === "received" || item.status === "completed" ? "erpnext-badge-blue" :
-                            item.status === "exception" ? "erpnext-badge-red" :
-                            "erpnext-badge-green"
-                          }`}>
-                            {item.status || "pending"}
-                          </span>
+                          <span className={`erpnext-badge ${itemStageBadge(line)}`}>{ITEM_STAGE_LABEL[line]}</span>
                         </td>
                         <td>{item.route_location || "-"}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                     {detailLoading && (
                       <tr>
-                        <td colSpan={7} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
+                        <td colSpan={9} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
                           Loading items...
                         </td>
                       </tr>
                     )}
                     {!detailLoading && (!selectedList.items || selectedList.items.length === 0) && (
                       <tr>
-                        <td colSpan={7} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
+                        <td colSpan={9} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
                           No items in this packing list
                         </td>
                       </tr>
                     )}
                     {!detailLoading && selectedList.items && selectedList.items.length > 0 && filteredDetailItems.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
+                        <td colSpan={9} className="text-center py-8" style={{ color: "var(--text-dim)" }}>
                           No items match current filters
                         </td>
                       </tr>
@@ -1466,12 +1642,12 @@ export default function ReceivingManagement() {
                   Approve & Mark Ready to Receive
                 </button>
               )}
-              {(selectedList.status === "ready_to_receive" || selectedList.status === "receiving") && (
+              {(selectedList.status === "ready_to_receive" || selectedList.status === "receiving" || selectedList.status === "open" || selectedList.status === "item_verification") && (
                 <button
                   className="rw-btn rw-btn-primary"
                   onClick={() => navigate(`/receiving?packing_list_id=${selectedList.id}`)}
                 >
-                  Start Receiving
+                  Open RF
                 </button>
               )}
               <button className="rw-btn rw-btn-secondary" onClick={closeDetail}>

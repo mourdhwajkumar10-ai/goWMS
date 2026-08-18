@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"goWMS/api/config"
+	"goWMS/api/middleware"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -91,12 +92,13 @@ func login(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		cfg, _ := config.Load()
-		claims := jwt.MapClaims{
-			"user_id": id,
-			"role":    role,
-			"exp":     time.Now().Add(cfg.TokenExpiry).Unix(),
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, middleware.Claims{
+			UserID: id,
+			Role:   role,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.TokenExpiry)),
+			},
+		})
 		signed, err := token.SignedString([]byte(cfg.JWTSecret))
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to sign token")
@@ -126,12 +128,12 @@ func pinLogin(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		var (
-			id       int
-			pinHash  string
-			wmsRole  string
-			name     string
-			whID     *int
-			tokVer   int
+			id      int
+			pinHash string
+			wmsRole string
+			name    string
+			whID    *int
+			tokVer  int
 		)
 		var err error
 		if body.BadgeCode != "" {
@@ -158,17 +160,16 @@ func pinLogin(db *pgxpool.Pool) fiber.Handler {
 		if body.WarehouseID != nil && whID != nil && *body.WarehouseID != *whID {
 			return shared.Err(c, fiber.StatusUnauthorized, "employee not assigned to this warehouse")
 		}
+		_ = tokVer
 
 		cfg, _ := config.Load()
-		claims := jwt.MapClaims{
-			"user_id":       id,
-			"employee_id":   id,
-			"role":          wmsRole,
-			"auth":          "pin",
-			"token_version": tokVer,
-			"exp":           time.Now().Add(cfg.TokenExpiry).Unix(),
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, middleware.Claims{
+			UserID: id,
+			Role:   wmsRole,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(cfg.TokenExpiry)),
+			},
+		})
 		signed, err := token.SignedString([]byte(cfg.JWTSecret))
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to sign token")

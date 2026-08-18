@@ -7,7 +7,7 @@ import (
 
 func normalizeBoxCondition(raw string) string {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "damaged", "damage":
+	case "damaged", "damage", "broken":
 		return "damaged"
 	case "wet":
 		return "wet"

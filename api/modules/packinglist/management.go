@@ -176,6 +176,7 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 			PartName      string     `json:"part_name"`
 			ExpectedQty   float64    `json:"expected_qty"`
 			ScannedQty    float64    `json:"scanned_qty"`
+			DamagedQty    float64    `json:"damaged_qty"`
 			BatchNo       string     `json:"batch_no"`
 			InvoiceNo     string     `json:"invoice_no"`
 			DealerCode    string     `json:"dealer_code"`
@@ -190,6 +191,8 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 			UnitWeight    float64    `json:"unit_weight_kg"`
 			Status        string     `json:"status"`
 			RouteLocation string     `json:"route_location"`
+			BoxStatus     string     `json:"box_status"`
+			BoxCondition  string     `json:"box_condition"`
 		}
 
 		rows, err := db.Query(c.Context(), `
@@ -200,6 +203,7 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(gl.part_name, '') as part_name,
 				gl.expected_qty,
 				COALESCE(gl.scanned_qty, 0) as scanned_qty,
+				COALESCE(gl.damaged_qty, 0) as damaged_qty,
 				COALESCE(gl.batch_no, '') as batch_no,
 				COALESCE(gl.invoice_no, '') as invoice_no,
 				COALESCE(gc.dealer_code, '') as dealer_code,
@@ -213,7 +217,9 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(gc.box_no_to, '') as box_no_to,
 				COALESCE(gl.unit_weight_kg, 0) as unit_weight_kg,
 				COALESCE(gl.status, 'pending') as status,
-				COALESCE(gl.route_location, '') as route_location
+				COALESCE(gl.route_location, '') as route_location,
+				COALESCE(gc.status, 'pending') as box_status,
+				COALESCE(gc.condition, 'ok') as box_condition
 			FROM grn_lines gl
 			LEFT JOIN grn_cartons gc ON gl.grn_carton_id = gc.id
 			WHERE gl.grn_session_id = $1
@@ -227,17 +233,113 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 		for rows.Next() {
 			var item itemInfo
 			if err := rows.Scan(&item.ID, &item.BoxNumber, &item.PartCode, &item.PartName,
-				&item.ExpectedQty, &item.ScannedQty, &item.BatchNo, &item.InvoiceNo,
+				&item.ExpectedQty, &item.ScannedQty, &item.DamagedQty, &item.BatchNo, &item.InvoiceNo,
 				&item.DealerCode, &item.DealerName, &item.DeliveryNo, &item.Plant,
 				&item.Branch, &item.InvoiceDate, &item.DeliveryDate,
 				&item.BoxNoFrom, &item.BoxNoTo,
-				&item.UnitWeight, &item.Status, &item.RouteLocation); err != nil {
+				&item.UnitWeight, &item.Status, &item.RouteLocation,
+				&item.BoxStatus, &item.BoxCondition); err != nil {
 				continue
 			}
 			items = append(items, item)
 		}
 		if items == nil {
 			items = []itemInfo{}
+		}
+
+		type cartonMeta struct {
+			Status    string
+			Condition string
+			Scanned   bool
+		}
+		cartonByNo := map[string]cartonMeta{}
+		cr, cErr := db.Query(c.Context(), `
+			SELECT COALESCE(carton_no,''), COALESCE(status,'expected'), COALESCE(condition,'ok'), scanned_at IS NOT NULL
+			FROM grn_cartons WHERE grn_session_id=$1`, id)
+		if cErr == nil {
+			for cr.Next() {
+				var no, st, cond string
+				var scanned bool
+				if err := cr.Scan(&no, &st, &cond, &scanned); err != nil {
+					continue
+				}
+				cartonByNo[strings.ToLower(strings.TrimSpace(no))] = cartonMeta{Status: st, Condition: cond, Scanned: scanned}
+			}
+			cr.Close()
+		}
+
+		for i := range items {
+			if meta, ok := cartonByNo[strings.ToLower(strings.TrimSpace(items[i].BoxNumber))]; ok {
+				items[i].BoxStatus = meta.Status
+				items[i].BoxCondition = meta.Condition
+			}
+		}
+
+		awaiting, counted, damaged, verified := 0, 0, 0, 0
+		if len(cartonByNo) > 0 {
+			for _, meta := range cartonByNo {
+				switch packingBoxStageEx(meta.Status, meta.Condition, meta.Scanned) {
+				case "verified":
+					verified++
+				case "damaged":
+					damaged++
+				case "counted":
+					counted++
+				default:
+					awaiting++
+				}
+			}
+		} else {
+			boxStage := map[string]string{}
+			for _, it := range items {
+				if _, ok := boxStage[it.BoxNumber]; !ok {
+					boxStage[it.BoxNumber] = packingBoxStage(it.BoxStatus, it.BoxCondition)
+				}
+			}
+			for _, st := range boxStage {
+				switch st {
+				case "verified":
+					verified++
+				case "damaged":
+					damaged++
+				case "counted":
+					counted++
+				default:
+					awaiting++
+				}
+			}
+		}
+		pending, scanning, matched, shortage, excess := 0, 0, 0, 0, 0
+		for _, it := range items {
+			switch packingItemStage(it.Status, it.ExpectedQty, it.ScannedQty) {
+			case "excess":
+				excess++
+			case "shortage":
+				shortage++
+			case "matched":
+				matched++
+			case "scanning":
+				scanning++
+			default:
+				pending++
+			}
+		}
+		boxesTotal := session.TotalBoxes
+		if n := len(cartonByNo); n > boxesTotal {
+			boxesTotal = n
+		}
+		progress := fiber.Map{
+			"boxes_total":    boxesTotal,
+			"boxes_awaiting": awaiting,
+			"boxes_counted":  counted,
+			"boxes_damaged":  damaged,
+			"boxes_verified": verified,
+			"items_total":    len(items),
+			"items_pending":  pending,
+			"items_scanning": scanning,
+			"items_matched":  matched,
+			"items_shortage": shortage,
+			"items_excess":   excess,
 		}
 
 		return shared.OK(c, fiber.Map{
@@ -260,6 +362,7 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 			"packing_list_filename": session.PackingListFilename,
 			"purchase_order_id":     session.PurchaseOrderID,
 			"items":                 items,
+			"progress":              progress,
 		})
 	}
 }
@@ -294,6 +397,58 @@ func approvePackingList(db *pgxpool.Pool) fiber.Handler {
 
 		return shared.OK(c, fiber.Map{"message": "Packing list approved"})
 	}
+}
+
+func packingDamaged(cond string) bool {
+	switch strings.ToLower(strings.TrimSpace(cond)) {
+	case "damaged", "damage", "broken", "wet", "crushed", "torn":
+		return true
+	default:
+		return false
+	}
+}
+
+func packingBoxStage(status, condition string) string {
+	return packingBoxStageEx(status, condition, false)
+}
+
+func packingBoxStageEx(status, condition string, physicallyScanned bool) string {
+	st := strings.ToLower(strings.TrimSpace(status))
+	dmg := packingDamaged(condition)
+	if st == "verified" {
+		return "verified"
+	}
+	if st == "received" || st == "accounted" || st == "exception" || st == "excess" || st == "scanned" {
+		if dmg {
+			return "damaged"
+		}
+		return "counted"
+	}
+	if dmg {
+		return "damaged"
+	}
+	if physicallyScanned && (st == "" || st == "expected" || st == "pending" || st == "open") {
+		return "counted"
+	}
+	return "awaiting"
+}
+
+func packingItemStage(status string, expected, scanned float64) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "excess":
+		return "excess"
+	case "shortage":
+		return "shortage"
+	case "full_match", "completed", "received":
+		return "matched"
+	}
+	if scanned > 0 && expected > 0 && scanned < expected {
+		return "scanning"
+	}
+	if expected > 0 && scanned >= expected {
+		return "matched"
+	}
+	return "pending"
 }
 
 // importPackingListFile imports an XLSX file and creates a new GRN session

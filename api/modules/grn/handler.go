@@ -1258,8 +1258,22 @@ func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 }
 
 func userID(c *fiber.Ctx) int {
-	if v, ok := c.Locals("user_id").(int); ok {
+	switch v := c.Locals("user_id").(type) {
+	case int:
 		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	default:
+		return 0
 	}
-	return 0
+}
+
+func nullableUserID(c *fiber.Ctx) any {
+	id := userID(c)
+	if id <= 0 {
+		return nil
+	}
+	return id
 }

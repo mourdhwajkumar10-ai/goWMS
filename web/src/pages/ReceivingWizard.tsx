@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import ScannerInput from "../components/ScannerInput";
@@ -8,7 +9,9 @@ import "../styles/receiving-wizard.css";
 interface POInfo { id: number; name: string; supplier_name: string; status: string; grand_total: number; schedule_date: string; item_count: number; total_qty: number; received_qty: number; open_sessions: number; resume_session_id?: number | null; }
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string; }
 interface ScanResult { box_number: string; auto_completed: boolean; message: string; timestamp: Date; status: "success" | "warning" | "error"; }
-interface StatsData { session_id: number; session_no?: string; delivery_no: string; po_name?: string; packing_list_no?: string; packing_list_filename?: string; total_boxes: number; boxes_received: number; single_item_boxes: number; multi_item_boxes: number; overall_progress_pct: number; total_items: number; items_full_match: number; items_shortage: number; items_excess: number; items_unknown: number; total_qty_expected: number; total_qty_scanned: number; exceptions_open: number; elapsed_time_sec: number; est_remaining_sec: number; }
+type Phase = "box_verify" | "item_verify";
+interface StatsData { session_id: number; session_no?: string; session_status?: string; phase?: Phase; delivery_no: string; po_name?: string; packing_list_no?: string; packing_list_filename?: string; total_boxes: number; boxes_received: number; boxes_verified?: number; boxes_damaged?: number; single_item_boxes: number; multi_item_boxes: number; overall_progress_pct: number; box_progress_pct?: number; item_progress_pct?: number; total_items: number; items_full_match: number; items_shortage: number; items_excess: number; items_unknown: number; total_qty_expected: number; total_qty_scanned: number; exceptions_open: number; elapsed_time_sec: number; est_remaining_sec: number; }
+interface PendingBox { box_number: string; item_count: number; items: BoxItem[]; }
 
 const playBeep = (freq = 800, dur = 0.15) => { try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.type = "sine"; o.frequency.value = freq; g.gain.setValueAtTime(0.1, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur); o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + dur); } catch {} };
 const triggerVibrate = (p: number | number[] = 200) => { if (navigator.vibrate) navigator.vibrate(p); };
@@ -43,7 +46,7 @@ export default function ReceivingWizard() {
   const [selPO, setSelPO] = useState<POInfo | null>(null);
   const [sid, setSid] = useState<number | null>(resumeSid ? Number(resumeSid) : null);
   const [sNo, setSNo] = useState<string | null>(null);
-  const [curBox, setCurBox] = useState<{ box_number: string; items: BoxItem[] } | null>(null);
+  const [curBox, setCurBox] = useState<{ box_number: string; items: BoxItem[]; damaged?: boolean } | null>(null);
   const [scanIn, setScanIn] = useState("");
   const [boxes, setBoxes] = useState<any[]>([]);
   const [hist, setHist] = useState<ScanResult[]>([]);
@@ -55,6 +58,9 @@ export default function ReceivingWizard() {
   const [toasts, setToasts] = useState<{ id: number; text: string; type: string }[]>([]);
   const [camOpen, setCamOpen] = useState(false);
   const [itemCamOpen, setItemCamOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>("box_verify");
+  const [pendingBox, setPendingBox] = useState<PendingBox | null>(null);
+  const [showSignOff, setShowSignOff] = useState(false);
   const autoClosedRef = useRef<string | null>(null);
   const DR = "INCOMING-01";
 
@@ -79,6 +85,7 @@ export default function ReceivingWizard() {
           setSid(Number(resumeSid));
           if (r.data.session_no) setSNo(r.data.session_no);
           if (r.data.po_name) setSelPO(p => p ?? { id: 0, name: r.data.po_name!, supplier_name: "", status: "", grand_total: 0, schedule_date: "", item_count: 0, total_qty: 0, received_qty: 0, open_sessions: 0 });
+          if (r.data.phase === "item_verify") setPhase("item_verify");
           setStep("scan_box");
         }
       });
@@ -89,10 +96,21 @@ export default function ReceivingWizard() {
   useEffect(() => { let t: any; if ((step === "scan_box" || step === "scan_items") && sid) { const f = () => api.receivingExceptions(sid).then(r => { if (r.ok) setExc(r.data || []); }); f(); t = setInterval(f, 15000); } return () => clearInterval(t); }, [step, sid]);
 
   const fetchBoxes = useCallback(async () => { if (!sid) return; const r = await api.receivingBoxes(sid); if (r.ok && r.data?.boxes) setBoxes(r.data.boxes); }, [sid]);
-  useEffect(() => { if (sid && step === "scan_box") { fetchBoxes(); const t = setInterval(fetchBoxes, 10000); return () => clearInterval(t); } }, [sid, step, fetchBoxes]);
+  useEffect(() => { if (sid && (step === "scan_box" || step === "scan_items")) { fetchBoxes(); const t = setInterval(fetchBoxes, 10000); return () => clearInterval(t); } }, [sid, step, fetchBoxes]);
 
-  const qk = useMemo(() => boxes.filter(b => b.status !== "verified").slice(0, 6), [boxes]);
-  const cnt = useMemo(() => { let d = 0; for (const b of boxes) if (b.status === "verified") d++; return { done: d, total: boxes.length, pend: boxes.length - d }; }, [boxes]);
+  const qk = useMemo(() => {
+    if (phase === "item_verify") return boxes.filter(b => b.status !== "verified" && (b.status === "received" || b.status === "exception")).slice(0, 6);
+    return boxes.filter(b => b.status !== "verified" && b.status !== "received" && b.status !== "exception").slice(0, 6);
+  }, [boxes, phase]);
+  const cnt = useMemo(() => {
+    let verified = 0, received = 0, damaged = 0;
+    for (const b of boxes) {
+      if (b.status === "verified") verified++;
+      if (b.status === "received" || b.status === "verified" || b.status === "exception") received++;
+      if (b.condition && b.condition !== "ok") damaged++;
+    }
+    return { verified, received, damaged, total: boxes.length, pendDock: boxes.length - received, pendItems: received - verified };
+  }, [boxes]);
 
   const refreshProg = useCallback(async () => { if (!sid) return; api.receivingStats(sid).then(r => { if (r.ok) setStats(r.data); }); fetchBoxes(); }, [sid, fetchBoxes]);
 
@@ -105,6 +123,8 @@ export default function ReceivingWizard() {
           setSid(po.resume_session_id);
           setStats(sr.data);
           if (sr.data.session_no) setSNo(sr.data.session_no);
+          if (sr.data.phase === "item_verify") setPhase("item_verify");
+          else setPhase("box_verify");
           setLoading(false);
           setStep("scan_box");
           toast(`${sr.data.session_no || "Session"} · ${sr.data.total_boxes} boxes`, "success");
@@ -116,26 +136,108 @@ export default function ReceivingWizard() {
     } catch (e: any) { setLoading(false); setError(e.message || "Failed"); }
   };
 
+  const confirmBoxSnapshot = useCallback(async (snapshot: PendingBox, condition: "ok" | "damaged") => {
+    if (!sid || !snapshot) return false;
+    const items = snapshot.items || [];
+    setPendingBox(null);
+    if (condition === "damaged") {
+      autoClosedRef.current = null;
+      setCurBox({ box_number: snapshot.box_number, items, damaged: true });
+      setStep("scan_items");
+    }
+    setLoading(true);
+    try {
+      const r = await api.receivingConfirmBox({ session_id: sid, box_number: snapshot.box_number, condition });
+      setLoading(false);
+      if (!r.ok) {
+        toast(r.error || "Failed to save box condition", "error");
+        if (condition !== "damaged") setPendingBox(snapshot);
+        return false;
+      }
+      const nextItems: BoxItem[] = r.data.items || items;
+      const bn = r.data.box_number || snapshot.box_number;
+      if (condition === "damaged" || r.data.next_action === "scan_items" || r.data.damaged) {
+        setCurBox({ box_number: bn, items: nextItems, damaged: true });
+        setStep("scan_items");
+        toast(r.data.message || "Damaged — scan items", "warning");
+      } else {
+        toast(r.data.message || `${bn} accepted`, "success");
+        setHist(p => [{ box_number: bn, auto_completed: true, message: "Box OK", timestamp: new Date(), status: "success" }, ...p.slice(0, 4)]);
+        const dp = r.data.delivery_progress;
+        if (dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
+          setShowSignOff(true);
+        }
+      }
+      refreshProg();
+      return true;
+    } catch (e: any) {
+      setLoading(false);
+      toast(e.message || "Failed", "error");
+      if (condition !== "damaged") setPendingBox(snapshot);
+      return false;
+    }
+  }, [sid, toast, refreshProg]);
+
+  const confirmBoxCondition = useCallback(async (condition: "ok" | "damaged") => {
+    if (!pendingBox) return false;
+    return confirmBoxSnapshot(pendingBox, condition);
+  }, [pendingBox, confirmBoxSnapshot]);
+
   const handleBoxScan = useCallback(async (e: React.FormEvent, eb?: string) => {
     e.preventDefault();
     const raw = (eb !== undefined ? eb : scanIn).trim();
     if (!raw || !sid) return;
+    if (pendingBox && phase === "box_verify" && pendingBox.box_number.trim().toLowerCase() !== raw.toLowerCase()) {
+      await confirmBoxSnapshot(pendingBox, "ok");
+    }
     setScanIn(""); setLoading(true);
     try {
-      const r = await api.receivingScanBox({ session_id: sid, box_number: raw, auto_complete_single: false, default_route: DR });
+      const r = await api.receivingScanBox({ session_id: sid, box_number: raw, auto_complete_single: false, default_route: DR, phase });
       setLoading(false);
       if (!r.ok) { doFlash("error"); toast(r.error || "Box not found", "error"); return; }
-      doFlash("success");
-      if (r.data.auto_completed) {
-        toast(r.data.message, "success");
-        setHist(p => [{ box_number: raw, auto_completed: true, message: r.data.message, timestamp: new Date(), status: "success" }, ...p.slice(0, 4)]);
-      } else {
-        setCurBox({ box_number: r.data.box_number, items: r.data.items || [] });
-        setStep("scan_items"); toast(r.data.message, "warning");
+      const next = r.data.next_action as string;
+      const items: BoxItem[] = r.data.items || [];
+      if (next === "already_verified") {
+        doFlash("success");
+        toast(r.data.message || "Already verified", "success");
+        return;
       }
-      refreshProg();
+      if (next === "already_scanned") {
+        doFlash("success");
+        toast(r.data.message || "Already counted", "warning");
+        return;
+      }
+      if (next === "scan_items") {
+        doFlash("success");
+        setCurBox({
+          box_number: r.data.box_number,
+          items,
+          damaged: !!(r.data.condition && r.data.condition !== "ok"),
+        });
+        setStep("scan_items");
+        toast(r.data.message || "Scan items", "warning");
+        refreshProg();
+        return;
+      }
+      doFlash("success");
+      playBeep(800, 0.15);
+      setPendingBox({ box_number: r.data.box_number, item_count: r.data.item_count || items.length, items });
     } catch (e: any) { setLoading(false); doFlash("error"); toast(e.message || "Failed", "error"); }
-  }, [sid, scanIn, toast, doFlash, refreshProg]);
+  }, [sid, scanIn, phase, pendingBox, confirmBoxSnapshot, toast, doFlash, refreshProg]);
+
+  const signOffBoxes = useCallback(async () => {
+    if (!sid) return;
+    setLoading(true);
+    try {
+      const r = await api.receivingSignOffBoxes({ session_id: sid });
+      setLoading(false);
+      if (!r.ok) { toast(r.error || "Failed", "error"); return; }
+      setShowSignOff(false);
+      setPhase("item_verify");
+      toast(r.data.message || "Transporter signed off", "success");
+      refreshProg();
+    } catch (e: any) { setLoading(false); toast(e.message || "Failed", "error"); }
+  }, [sid, toast, refreshProg]);
 
   const completeBox = useCallback(async (boxNo?: string) => {
     const bn = boxNo || curBox?.box_number;
@@ -150,11 +252,14 @@ export default function ReceivingWizard() {
       toast(`${bn} → ${rt}`, "success");
       setHist(p => [{ box_number: bn, auto_completed: true, message: `Verified → ${rt}`, timestamp: new Date(), status: "success" }, ...p.slice(0, 4)]);
       setCurBox(null);
-      const dp = r.data.delivery_progress;
-      if (dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
+      if (r.data.all_verified) {
         setStep("complete");
       } else {
         setStep("scan_box");
+        const dp = r.data.delivery_progress;
+        if (phase === "box_verify" && dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
+          setShowSignOff(true);
+        }
       }
       refreshProg();
       return true;
@@ -163,20 +268,26 @@ export default function ReceivingWizard() {
       toast(e.message || "Failed", "error");
       return false;
     }
-  }, [sid, curBox, toast, refreshProg]);
+  }, [sid, curBox, phase, toast, refreshProg]);
 
   const handleItemScan = async (e?: React.FormEvent, rawOverride?: string) => {
     e?.preventDefault();
     const raw = (rawOverride ?? scanIn).trim();
     if (!raw || !sid || !curBox) return;
+    const boxNo = curBox.box_number.trim().toLowerCase();
+    if (raw.trim().toLowerCase() === boxNo) {
+      toast("Scan an item QR, not the box barcode", "warning");
+      return;
+    }
     setScanIn(""); setLoading(true);
     try {
       const r = await api.receivingScanItem({ session_id: sid, box_number: curBox.box_number, qr_raw: raw });
       setLoading(false);
       if (!r.ok) { doFlash("error"); toast(r.error || "Item not found", "error"); return; }
       const m = r.data.match; doFlash(m.status === "excess" ? "error" : "success");
-      const upd = curBox.items.map(it => it.part_code === r.data.parsed.item_code ? { ...it, scanned_qty: m.scanned, status: m.status } : it);
-      const shouldClose = m.status !== "excess" && (r.data.box_complete || boxItemsMatched(upd));
+      const scannedCode = String(r.data.parsed?.item_code || "").toLowerCase();
+      const upd = curBox.items.map(it => it.part_code.toLowerCase() === scannedCode ? { ...it, scanned_qty: m.scanned, status: m.status } : it);
+      const shouldClose = !curBox.damaged && m.status !== "excess" && (r.data.box_complete || boxItemsMatched(upd));
       if (shouldClose) autoClosedRef.current = curBox.box_number;
       setCurBox({ ...curBox, items: upd });
       toast(m.message, m.status === "excess" ? "warning" : "success");
@@ -187,14 +298,17 @@ export default function ReceivingWizard() {
   };
 
   useEffect(() => {
-    if (step !== "scan_items" || !curBox || loading) return;
+    if (step !== "scan_items" || !curBox || loading || curBox.damaged) return;
     if (!boxItemsMatched(curBox.items)) return;
     if (autoClosedRef.current === curBox.box_number) return;
     autoClosedRef.current = curBox.box_number;
     void completeBox(curBox.box_number);
   }, [step, curBox, loading, completeBox]);
 
-  const pct = stats?.overall_progress_pct ?? 0;
+  const pct = phase === "item_verify"
+    ? (stats?.item_progress_pct ?? (cnt.total ? Math.round((cnt.verified / cnt.total) * 100) : 0))
+    : (stats?.box_progress_pct ?? (cnt.total ? Math.round((cnt.received / cnt.total) * 100) : 0));
+  const emptyBoxList = boxes.length === 0;
 
   return (
     <div className="rw-page">
@@ -219,8 +333,8 @@ export default function ReceivingWizard() {
         <div className="rw-header">
           <button className="rw-header-back" onClick={() => setStep("select_po")}>←</button>
           <div className="rw-header-info">
-            <div className="rw-header-title">Box Scanner</div>
-            <div className="rw-header-session">{sNo || "Session"} · {cnt.done}/{cnt.total}</div>
+            <div className="rw-header-title">{phase === "item_verify" ? "Item verification" : "Box verification"}</div>
+            <div className="rw-header-session">{sNo || "Session"} · {phase === "item_verify" ? `${cnt.verified}/${cnt.total} items checked` : `${cnt.received}/${cnt.total} boxes`}</div>
           </div>
           <Ring pct={pct} />
         </div>
@@ -231,6 +345,10 @@ export default function ReceivingWizard() {
           <span className="rw-doc-arrow">→</span>
           <span className="rw-doc-chip" data-kind="grn"><span className="rw-doc-chip-label">GRN</span><span className="rw-doc-chip-value">{sNo || "—"}</span></span>
         </div>
+        <div className="rw-phase-tabs">
+          <button type="button" className="rw-phase-tab" data-active={phase === "box_verify"} onClick={() => setPhase("box_verify")}>1. Boxes</button>
+          <button type="button" className="rw-phase-tab" data-active={phase === "item_verify"} disabled={cnt.received < 1} onClick={() => setPhase("item_verify")}>2. Items</button>
+        </div>
 
         <CameraScanner
           open={camOpen}
@@ -239,7 +357,11 @@ export default function ReceivingWizard() {
         />
 
         <div className="rw-scan-hero">
-          <div className="rw-scan-prompt">{stats ? `${stats.boxes_received} of ${stats.total_boxes} scanned` : "Tap camera or type box number"}</div>
+          <div className="rw-scan-prompt">
+            {phase === "item_verify"
+              ? (cnt.pendItems > 0 ? `Scan a received box to check items · ${cnt.pendItems} left` : "All received boxes have been item-checked")
+              : (stats ? `${cnt.received} of ${cnt.total} boxes counted` : "Scan each box, then confirm it is fine")}
+          </div>
           <button className="rw-camera-btn" onClick={() => setCamOpen(true)}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>
             <span className="rw-camera-btn-label">SCAN</span>
@@ -257,13 +379,17 @@ export default function ReceivingWizard() {
 
         {qk.length > 0 ? (
         <div className="rw-boxes-section">
-          <div className="rw-boxes-header"><span className="rw-boxes-title">Next boxes</span><span className="rw-boxes-count">{cnt.pend} remaining</span></div>
+          <div className="rw-boxes-header">
+            <span className="rw-boxes-title">{phase === "item_verify" ? "Boxes to item-check" : "Next boxes"}</span>
+            <span className="rw-boxes-count">{phase === "item_verify" ? `${cnt.pendItems} remaining` : `${cnt.pendDock} remaining`}</span>
+          </div>
           <div className="rw-boxes-list">
             {qk.map((box: any) => {
               const isVerified = box.status === "verified";
-              const isReceived = box.status === "received";
-              const status = isVerified ? "verified" : isReceived ? "scanning" : "expected";
-              const badge = isVerified ? "Done" : isReceived ? "In Progress" : "Scan";
+              const isReceived = box.status === "received" || box.status === "exception";
+              const damaged = box.condition && box.condition !== "ok";
+              const status = isVerified ? "verified" : damaged ? "excess" : isReceived ? "scanning" : "expected";
+              const badge = isVerified ? "Done" : damaged ? "Damaged" : isReceived ? (phase === "item_verify" ? "Check items" : "Counted") : "Scan";
               return (
                 <div key={box.id || box.box_number} className="rw-box-row" data-status={status}
                   onClick={() => handleBoxScan({ preventDefault: () => {} } as any, box.box_number)}>
@@ -274,14 +400,20 @@ export default function ReceivingWizard() {
               );
             })}
           </div>
-          {cnt.pend > 6 && <button className="rw-view-all-btn" onClick={() => setShowAll(true)}>View all {cnt.total} boxes</button>}
+          {cnt.total > 6 && <button className="rw-view-all-btn" onClick={() => setShowAll(true)}>View all {cnt.total} boxes</button>}
         </div>
-        ) : (
+        ) : emptyBoxList ? (
         <div className="rw-empty">
           <div className="rw-empty-icon">📦</div>
           <div className="rw-empty-title">No boxes to suggest</div>
           <div className="rw-empty-msg">This GRN has no packing list yet, so there are no expected box numbers. Upload the packing list, or scan a box QR if you already have one.</div>
           <button className="rw-btn rw-btn-primary" style={{ marginTop: 12 }} type="button" onClick={() => navigate("/receiving-management")}>+ Upload Packing List</button>
+        </div>
+        ) : (
+        <div className="rw-empty">
+          <div className="rw-empty-icon">✓</div>
+          <div className="rw-empty-title">{phase === "item_verify" ? "No boxes waiting for item check" : "All boxes counted"}</div>
+          <div className="rw-empty-msg">{phase === "item_verify" ? "Scan a box number to reopen it, or finish remaining items later." : "Sign off the transporter, then start item verification."}</div>
         </div>
         )}
 
@@ -290,6 +422,14 @@ export default function ReceivingWizard() {
           {hist.slice(0, 5).map((h, i) => <div key={i} className={`rw-history-chip ${h.status}`}><span>{h.status === "success" ? "✓" : h.status === "error" ? "✕" : "⚠"}</span><span>{cut(h.box_number, 16)}</span></div>)}
         </div></div>}
         {exc.length > 0 && <div className="rw-exception-banner">⚠ {exc.length} open exception{exc.length !== 1 ? "s" : ""}</div>}
+
+        {phase === "box_verify" && cnt.received > 0 && (
+          <div className="rw-scan-actions">
+            <button className="rw-btn rw-btn-primary" style={{ flex: 1 }} type="button" disabled={loading} onClick={() => setShowSignOff(true)}>
+              {cnt.pendDock === 0 ? "Sign off transporter" : `Sign off transporter · ${cnt.pendDock} not scanned`}
+            </button>
+          </div>
+        )}
       </>}
 
       {step === "scan_items" && curBox && (() => {
@@ -301,7 +441,7 @@ export default function ReceivingWizard() {
           <div className="rw-header">
             <button className="rw-header-back" onClick={() => { setCurBox(null); setStep("scan_box"); }}>←</button>
             <div className="rw-header-info">
-              <div className="rw-header-title">Item Scanner</div>
+              <div className="rw-header-title">{curBox.damaged ? "Damaged box — items" : "Item Scanner"}</div>
               <div className="rw-header-session">{cut(curBox.box_number, 24)} · {matched}/{total} items</div>
             </div>
             <Ring pct={boxPct} />
@@ -318,9 +458,12 @@ export default function ReceivingWizard() {
             onClose={() => setItemCamOpen(false)}
             onScan={(code) => { setItemCamOpen(false); setScanIn(""); void handleItemScan(undefined, code); }}
           />
+          {curBox.damaged && (
+            <div className="rw-exception-banner">Damaged / broken box — scan each item QR, then tap Complete</div>
+          )}
           <div className="rw-scan-hero">
             <div className="rw-scan-prompt">{isComplete ? "All items matched — close this box" : `${matched} of ${total} scanned`}</div>
-            {isComplete ? (
+            {isComplete && !curBox.damaged ? (
               <button className="rw-camera-btn rw-camera-btn-done" onClick={() => { void completeBox(); }} disabled={loading}>
                 <span className="rw-camera-btn-check">✓</span>
                 <span className="rw-camera-btn-label">DONE</span>
@@ -331,12 +474,13 @@ export default function ReceivingWizard() {
                 <span className="rw-camera-btn-label">SCAN</span>
               </button>
             )}
-            {!isComplete && (
+            {(!isComplete || curBox.damaged) && (
             <div className="rw-manual-row">
               <ScannerInput
+                key={`${curBox.box_number}-items`}
                 onScan={(code) => { if (sid) void handleItemScan(undefined, code); }}
-                placeholder="Or type item QR code"
-                autoFocus={false} showTorch={true}
+                placeholder="Scan or type item QR"
+                autoFocus={true} showTorch={true}
                 suggestions={curBox.items.map(it => ({ code: it.part_code, name: it.part_name || "", qty: it.expected_qty }))}
                 onSelectSuggestion={(code) => { if (sid) void handleItemScan(undefined, code); }}
               />
@@ -365,7 +509,9 @@ export default function ReceivingWizard() {
           </div>
           <div className="rw-scan-actions">
             <button className="rw-btn rw-btn-secondary" style={{ flex: 1 }} onClick={() => { void completeBox(); }} disabled={loading}>Close Box</button>
-            <button className="rw-btn rw-btn-primary" style={{ flex: 1 }} disabled={!isComplete || loading} onClick={() => { void completeBox(); }}>Complete</button>
+            <button className="rw-btn rw-btn-primary" style={{ flex: 1 }} disabled={(!curBox.damaged && !isComplete) || loading} onClick={() => { void completeBox(); }}>
+              {curBox.damaged && !isComplete ? "Finish inspection" : "Complete"}
+            </button>
           </div>
         </>;
       })()}
@@ -383,7 +529,7 @@ export default function ReceivingWizard() {
           </div>}
           <div className="rw-complete-actions">
             <a href="/grn" className="rw-btn rw-btn-primary" style={{ textDecoration: "none" }}>Report</a>
-            <button className="rw-btn rw-btn-secondary" onClick={() => { setStep("select_po"); setSid(null); setSelPO(null); setStats(null); setHist([]); setCurBox(null); setLastRoute(null); setBoxes([]); }}>New</button>
+            <button className="rw-btn rw-btn-secondary" onClick={() => { setStep("select_po"); setSid(null); setSelPO(null); setStats(null); setHist([]); setCurBox(null); setLastRoute(null); setBoxes([]); setPhase("box_verify"); setPendingBox(null); }}>New</button>
           </div>
         </div>
       </>}
@@ -396,13 +542,14 @@ export default function ReceivingWizard() {
         <div className="rw-sheet-overlay" onClick={() => setShowAll(false)} />
         <div className="rw-sheet">
           <div className="rw-sheet-handle" />
-          <div className="rw-sheet-header"><div className="rw-sheet-title">All Boxes ({cnt.done}/{cnt.total})</div><button className="rw-sheet-close" onClick={() => setShowAll(false)}>✕</button></div>
+          <div className="rw-sheet-header"><div className="rw-sheet-title">All Boxes ({cnt.received}/{cnt.total} counted · {cnt.verified} item-checked)</div><button className="rw-sheet-close" onClick={() => setShowAll(false)}>✕</button></div>
           <div className="rw-sheet-body">
             {boxes.map((box: any) => {
               const isVerified = box.status === "verified";
-              const isReceived = box.status === "received";
-              const st = isVerified ? "verified" : isReceived ? "scanning" : "expected";
-              const badge = isVerified ? "Done" : isReceived ? "In Progress" : "Scan";
+              const isReceived = box.status === "received" || box.status === "exception";
+              const damaged = box.condition && box.condition !== "ok";
+              const st = isVerified ? "verified" : damaged ? "excess" : isReceived ? "scanning" : "expected";
+              const badge = isVerified ? "Done" : damaged ? "Damaged" : isReceived ? "Counted" : "Scan";
               return <div key={box.id || box.box_number} className="rw-box-row" data-status={st} onClick={() => { setShowAll(false); handleBoxScan({ preventDefault: () => {} } as any, box.box_number); }}>
                 <div className="rw-box-row-dot" />
                 <div className="rw-box-row-info"><div className="rw-box-row-num">{cut(box.box_number, 24)}</div><div className="rw-box-row-meta">{box.item_count || 0} items · {box.scanned_qty || 0}/{box.total_qty || 0} units</div></div>
@@ -412,6 +559,38 @@ export default function ReceivingWizard() {
           </div>
         </div>
       </>}
+
+      {pendingBox && createPortal(
+        <div className="rw-confirm-overlay" onClick={() => !loading && setPendingBox(null)} role="presentation">
+          <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="rw-confirm-kicker">Box scanned</div>
+            <div className="rw-confirm-boxno">{pendingBox.box_number}</div>
+            <div className="rw-confirm-meta">{pendingBox.item_count} item{pendingBox.item_count === 1 ? "" : "s"} on packing list</div>
+            <p className="rw-confirm-q">Is the box fine?</p>
+            <p className="rw-confirm-meta">This is what marks the box Counted. Scan the next box to accept this one as fine.</p>
+            <button type="button" className="rw-confirm-ok" disabled={loading} onClick={() => { void confirmBoxCondition("ok"); }}>Box is fine</button>
+            <button type="button" className="rw-confirm-dmg" disabled={loading} onClick={() => { void confirmBoxCondition("damaged"); }}>Damaged / broken — scan items</button>
+            <button type="button" className="rw-confirm-cancel" disabled={loading} onClick={() => setPendingBox(null)}>Cancel scan</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showSignOff && createPortal(
+        <div className="rw-confirm-overlay" onClick={() => !loading && setShowSignOff(false)} role="presentation">
+          <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="rw-confirm-kicker">Transporter sign-off</div>
+            <div className="rw-confirm-boxno">{cnt.received} / {cnt.total}</div>
+            <div className="rw-confirm-meta">boxes counted at the dock</div>
+            {cnt.pendDock > 0
+              ? <p className="rw-confirm-q">{cnt.pendDock} expected box{cnt.pendDock === 1 ? "" : "es"} not scanned. Sign off anyway so the transporter can leave?</p>
+              : <p className="rw-confirm-q">All expected boxes are counted. Sign off and tell the transporter the shipment is accepted?</p>}
+            <button type="button" className="rw-confirm-ok" disabled={loading} onClick={() => { void signOffBoxes(); }}>Sign off transporter</button>
+            <button type="button" className="rw-confirm-cancel" disabled={loading} onClick={() => setShowSignOff(false)}>Keep scanning</button>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }

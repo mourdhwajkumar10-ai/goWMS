@@ -21,6 +21,8 @@ type Config struct {
 // Load reads .env (if present) and returns a fully populated Config.
 func Load() (*Config, error) {
 	_ = godotenv.Load()
+	_ = godotenv.Load(".env")
+	_ = godotenv.Load("../.env")
 
 	cfg := &Config{
 		JWTSecret:   getEnv("JWT_SECRET", "change-me-in-production"),

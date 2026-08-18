@@ -685,6 +685,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 		q := `
 			SELECT 
 				c.id, c.carton_no, COALESCE(c.box_type, '') as box_type, COALESCE(c.status, '') as status,
+				COALESCE(c.condition, 'ok') as condition,
 				COUNT(l.id) as item_count,
 				COALESCE(SUM(l.expected_qty), 0) as total_qty,
 				COALESCE(SUM(l.scanned_qty), 0) as scanned_qty
@@ -698,7 +699,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 			args = append(args, deliveryNo)
 		}
 
-		q += ` GROUP BY c.id, c.carton_no, c.box_type, c.status ORDER BY c.carton_no`
+		q += ` GROUP BY c.id, c.carton_no, c.box_type, c.status, c.condition ORDER BY c.carton_no`
 
 		rows, err := db.Query(c.Context(), q, args...)
 		if err != nil {
@@ -720,6 +721,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 			BoxNumber    string     `json:"box_number"`
 			BoxType      string     `json:"box_type"`
 			Status       string     `json:"status"`
+			Condition    string     `json:"condition"`
 			ItemCount    int        `json:"item_count"`
 			IsSingleItem bool       `json:"is_single_item"`
 			TotalQty     float64    `json:"total_qty"`
@@ -732,7 +734,7 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 
 		for rows.Next() {
 			var b boxInfo
-			err := rows.Scan(&b.ID, &b.BoxNumber, &b.BoxType, &b.Status, &b.ItemCount, &b.TotalQty, &b.ScannedQty)
+			err := rows.Scan(&b.ID, &b.BoxNumber, &b.BoxType, &b.Status, &b.Condition, &b.ItemCount, &b.TotalQty, &b.ScannedQty)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}

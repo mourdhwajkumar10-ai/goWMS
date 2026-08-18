@@ -212,11 +212,26 @@ func TestNormalizeBoxCondition(t *testing.T) {
 	if got := normalizeBoxCondition("DAMAGED"); got != "damaged" {
 		t.Errorf("got %q", got)
 	}
+	if got := normalizeBoxCondition("broken"); got != "damaged" {
+		t.Errorf("broken: got %q", got)
+	}
 	if got := normalizeBoxCondition(""); got != "ok" {
 		t.Errorf("got %q", got)
 	}
 	if !isDamagedCondition("wet") || isDamagedCondition("ok") {
 		t.Error("damage condition helpers")
+	}
+}
+
+func TestRfPhaseFromStatus(t *testing.T) {
+	if got := rfPhaseFromStatus("receiving", ""); got != "box_verify" {
+		t.Errorf("receiving: %q", got)
+	}
+	if got := rfPhaseFromStatus("item_verification", ""); got != "item_verify" {
+		t.Errorf("item_verification: %q", got)
+	}
+	if got := rfPhaseFromStatus("item_verification", "box_verify"); got != "box_verify" {
+		t.Errorf("explicit box_verify: %q", got)
 	}
 }
 

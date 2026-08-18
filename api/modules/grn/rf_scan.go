@@ -1,6 +1,7 @@
 package grn
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -11,18 +12,42 @@ import (
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RegisterRFScan registers /api/receiving scan routes
 func RegisterRFScan(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/scan-box", scanBoxHandler(db))
+	r.Post("/confirm-box", confirmBoxHandler(db))
+	r.Post("/sign-off-boxes", signOffBoxesHandler(db))
 	r.Post("/scan-item", scanItemHandler(db))
 	r.Post("/complete-box", completeBoxHandler(db))
 	r.Post("/route-exception", routeExceptionHandler(db))
 	r.Post("/override-route", overrideRouteHandler(db))
 	r.Get("/stats", getStatsHandler(db))
 	r.Get("/exceptions", listSessionExceptions(db))
+}
+
+type rfItemSummary struct {
+	PartCode    string  `json:"part_code"`
+	PartName    string  `json:"part_name"`
+	ExpectedQty float64 `json:"expected_qty"`
+	ScannedQty  float64 `json:"scanned_qty"`
+	Status      string  `json:"status"`
+}
+
+func rfPhaseFromStatus(sessionStatus, requested string) string {
+	req := strings.ToLower(strings.TrimSpace(requested))
+	if req == "item_verify" || req == "box_verify" {
+		return req
+	}
+	switch canonicalStatus(sessionStatus) {
+	case "item_verification", "item_verification_complete", "exception_pending":
+		return "item_verify"
+	default:
+		return "box_verify"
+	}
 }
 
 func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
@@ -32,6 +57,7 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			BoxNumber          string `json:"box_number"`
 			AutoCompleteSingle bool   `json:"auto_complete_single"`
 			DefaultRoute       string `json:"default_route"`
+			Phase              string `json:"phase"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -51,14 +77,14 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 
 		// 1. Get Carton
 		var cartonID int
-		var boxType, status, deliveryNo, dealerName, plant string
+		var boxType, status, deliveryNo, dealerName, plant, condition string
 		err = tx.QueryRow(c.Context(), `
 			SELECT id, COALESCE(box_type,''), status, COALESCE(delivery_no,''),
-			       COALESCE(dealer_name,''), COALESCE(plant,'')
+			       COALESCE(dealer_name,''), COALESCE(plant,''), COALESCE(condition,'ok')
 			FROM grn_cartons
-			WHERE grn_session_id=$1 AND carton_no=$2`,
+			WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))`,
 			body.SessionID, strings.TrimSpace(body.BoxNumber),
-		).Scan(&cartonID, &boxType, &status, &deliveryNo, &dealerName, &plant)
+		).Scan(&cartonID, &boxType, &status, &deliveryNo, &dealerName, &plant, &condition)
 		if err != nil {
 			fmt.Printf("[scan-box] session=%d box=%q err=%v\n", body.SessionID, body.BoxNumber, err)
 			return shared.Err(c, fiber.StatusNotFound, "Box not in packing list")
@@ -179,19 +205,9 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
-		// Otherwise: multi-item box or auto_complete_single is false
-		// Update box to received
-		_, err = tx.Exec(c.Context(), `
-			UPDATE grn_cartons SET
-				status = 'received',
-				scanned_at = NOW(),
-				scanned_by = $2
-			WHERE id = $1`, cartonID, userID(c))
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-
-		// Fetch items list
+		// Lookup only — physical accept happens in confirm-box after the operator
+		// answers OK vs damaged. Do not mark received here or a dismissed popup
+		// would count the box as accepted.
 		rows, err := tx.Query(c.Context(), `
 			SELECT item_code, COALESCE(part_name, ''), expected_qty, scanned_qty, status
 			FROM grn_lines WHERE grn_carton_id=$1`, cartonID)
@@ -200,19 +216,33 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 		defer rows.Close()
 
-		type itemSummary struct {
-			PartCode    string  `json:"part_code"`
-			PartName    string  `json:"part_name"`
-			ExpectedQty float64 `json:"expected_qty"`
-			ScannedQty  float64 `json:"scanned_qty"`
-			Status      string  `json:"status"`
-		}
-
-		var items []itemSummary
+		var items []rfItemSummary
 		for rows.Next() {
-			var it itemSummary
+			var it rfItemSummary
 			_ = rows.Scan(&it.PartCode, &it.PartName, &it.ExpectedQty, &it.ScannedQty, &it.Status)
 			items = append(items, it)
+		}
+		rows.Close()
+		if items == nil {
+			items = []rfItemSummary{}
+		}
+
+		var sessStatus string
+		_ = tx.QueryRow(c.Context(), `SELECT COALESCE(status,'') FROM grn_sessions WHERE id=$1`, body.SessionID).Scan(&sessStatus)
+		phase := rfPhaseFromStatus(sessStatus, body.Phase)
+		already := isDuplicateBoxStatus(status)
+
+		next := "confirm_condition"
+		msg := fmt.Sprintf("%s — confirm if the box is fine", body.BoxNumber)
+		if status == "verified" {
+			next = "already_verified"
+			msg = fmt.Sprintf("%s already item-verified", body.BoxNumber)
+		} else if already && phase == "item_verify" {
+			next = "scan_items"
+			msg = fmt.Sprintf("%s: %d items to verify — scan item QR codes", body.BoxNumber, itemCount)
+		} else if already {
+			next = "already_scanned"
+			msg = fmt.Sprintf("%s already counted at the dock", body.BoxNumber)
 		}
 
 		if err = tx.Commit(c.Context()); err != nil {
@@ -227,8 +257,230 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			"auto_completed": false,
 			"item_count":     itemCount,
 			"items":          items,
-			"next_action":    "scan_items",
-			"message":        fmt.Sprintf("📦 %s: %d items to verify — scan item QR codes", body.BoxNumber, itemCount),
+			"box_status":     status,
+			"condition":      condition,
+			"duplicate":      already,
+			"phase":          phase,
+			"next_action":    next,
+			"message":        msg,
+		})
+	}
+}
+
+func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			SessionID int    `json:"session_id"`
+			BoxNumber string `json:"box_number"`
+			Condition string `json:"condition"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.SessionID == 0 || strings.TrimSpace(body.BoxNumber) == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "session_id and box_number are required")
+		}
+		condition := normalizeBoxCondition(body.Condition)
+		damaged := isDamagedCondition(condition)
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var sessStatus string
+		err = tx.QueryRow(c.Context(),
+			`SELECT status FROM grn_sessions WHERE id=$1 FOR UPDATE`, body.SessionID).Scan(&sessStatus)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if !sessionWritable(sessStatus) {
+			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
+		}
+
+		var cartonID int
+		var status string
+		err = tx.QueryRow(c.Context(), `
+			SELECT id, status FROM grn_cartons
+			WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))
+			FOR UPDATE`,
+			body.SessionID, strings.TrimSpace(body.BoxNumber),
+		).Scan(&cartonID, &status)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "Box not in packing list")
+		}
+		if status == "verified" {
+			items, _ := loadCartonItemsTx(c.Context(), tx, cartonID)
+			_ = tx.Rollback(c.Context())
+			return shared.OK(c, fiber.Map{
+				"box_number":  body.BoxNumber,
+				"box_status":  "verified",
+				"condition":   condition,
+				"items":       items,
+				"item_count":  len(items),
+				"next_action": "already_verified",
+				"message":     "Box already item-verified",
+			})
+		}
+
+		uid := nullableUserID(c)
+		_, err = tx.Exec(c.Context(), `
+			UPDATE grn_cartons SET
+				status = 'received',
+				condition = $2,
+				scanned_at = NOW(),
+				scanned_by = $3
+			WHERE id = $1`, cartonID, condition, uid)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		eventType := "BOX_RECEIVED"
+		result := "received"
+		if damaged {
+			eventType = "BOX_DAMAGE_REPORTED"
+			result = "damage"
+		}
+		payloadBytes, _ := json.Marshal(map[string]any{"condition": condition, "result": result})
+		_, err = tx.Exec(c.Context(), `
+			INSERT INTO grn_events (grn_session_id, event_type, box_no, actor_id, device, payload)
+			VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+			body.SessionID, eventType, strings.TrimSpace(body.BoxNumber), uid, requestDevice(c), string(payloadBytes),
+		)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to log box confirm: "+err.Error())
+		}
+
+		received, verified, cartonTotal, syncErr := syncSessionBoxCounts(c.Context(), tx, body.SessionID)
+		if syncErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, syncErr.Error())
+		}
+
+		items, err := loadCartonItemsTx(c.Context(), tx, cartonID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		var cartonNo string
+		_ = tx.QueryRow(c.Context(), `SELECT carton_no FROM grn_cartons WHERE id=$1`, cartonID).Scan(&cartonNo)
+		if cartonNo == "" {
+			cartonNo = strings.TrimSpace(body.BoxNumber)
+		}
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if damaged {
+			writeException(db, c, body.SessionID, "damage", fiber.Map{"box_no": cartonNo})
+		}
+
+		next := "scan_next_box"
+		msg := fmt.Sprintf("%s accepted — scan the next box", cartonNo)
+		if damaged {
+			next = "scan_items"
+			msg = fmt.Sprintf("%s damaged — scan items now", cartonNo)
+		}
+
+		progressPct := 0
+		if cartonTotal > 0 {
+			progressPct = int(math.Round(float64(received) / float64(cartonTotal) * 100))
+		}
+
+		return shared.OK(c, fiber.Map{
+			"box_number":  cartonNo,
+			"box_status":  "received",
+			"condition":   condition,
+			"damaged":     damaged,
+			"items":       items,
+			"item_count":  len(items),
+			"next_action": next,
+			"message":     msg,
+			"delivery_progress": fiber.Map{
+				"boxes_received": received,
+				"boxes_verified": verified,
+				"boxes_total":    cartonTotal,
+				"progress_pct":   progressPct,
+			},
+		})
+	}
+}
+
+func signOffBoxesHandler(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			SessionID int `json:"session_id"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.SessionID == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "session_id is required")
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var sessStatus string
+		err = tx.QueryRow(c.Context(),
+			`SELECT status FROM grn_sessions WHERE id=$1 FOR UPDATE`, body.SessionID).Scan(&sessStatus)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if !sessionWritable(sessStatus) {
+			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
+		}
+
+		received, verified, cartonTotal, syncErr := syncSessionBoxCounts(c.Context(), tx, body.SessionID)
+		if syncErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, syncErr.Error())
+		}
+		if received < 1 {
+			return shared.Err(c, fiber.StatusBadRequest, "scan at least one box before signing off the transporter")
+		}
+
+		missing := cartonTotal - received
+		if missing < 0 {
+			missing = 0
+		}
+
+		_, err = tx.Exec(c.Context(), `
+			UPDATE grn_sessions SET status='item_verification', updated_at=NOW() WHERE id=$1`, body.SessionID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		payload := fmt.Sprintf(`{"boxes_received":%d,"boxes_total":%d,"missing":%d}`, received, cartonTotal, missing)
+		_, err = tx.Exec(c.Context(), `
+			INSERT INTO grn_events (grn_session_id, event_type, actor_id, device, payload)
+			VALUES ($1, 'TRANSPORT_SIGNED', $2, $3, $4::jsonb)`,
+			body.SessionID, nullableUserID(c), requestDevice(c), payload)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to log sign-off: "+err.Error())
+		}
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		msg := fmt.Sprintf("Transporter signed off — %d of %d boxes received", received, cartonTotal)
+		if missing > 0 {
+			msg = fmt.Sprintf("Transporter signed off — %d boxes missing. Continue with item verification.", missing)
+		}
+
+		return shared.OK(c, fiber.Map{
+			"session_id":     body.SessionID,
+			"status":         "item_verification",
+			"phase":          "item_verify",
+			"boxes_received": received,
+			"boxes_verified": verified,
+			"boxes_total":    cartonTotal,
+			"missing":        missing,
+			"message":        msg,
 		})
 	}
 }
@@ -280,58 +532,22 @@ func scanItemHandler(db *pgxpool.Pool) fiber.Handler {
 
 		// Find carton
 		var cartonID int
+		var cartonNo, cartonCond string
 		err = tx.QueryRow(c.Context(), `
-			SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2 FOR UPDATE`,
+			SELECT id, carton_no, COALESCE(condition,'ok')
+			FROM grn_cartons
+			WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))
+			FOR UPDATE`,
 			body.SessionID, body.BoxNumber,
-		).Scan(&cartonID)
+		).Scan(&cartonID, &cartonNo, &cartonCond)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "Box not found")
 		}
+		body.BoxNumber = cartonNo
+		damagedBox := isDamagedCondition(cartonCond)
 
-		// 2. Find matching line
-		var lineID int
-		var expectedQty, scannedQty float64
-		var currentStatus string
-		var actualItemCode string
-
-		err = tx.QueryRow(c.Context(), `
-			SELECT id, expected_qty, scanned_qty, status, item_code
-			FROM grn_lines
-			WHERE grn_carton_id=$1 AND (item_code=$2 OR supplier_sku=$2)
-			ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
-			LIMIT 1
-			FOR UPDATE`,
-			cartonID, itemCode,
-		).Scan(&lineID, &expectedQty, &scannedQty, &currentStatus, &actualItemCode)
-
-		// Try case-insensitive fallback if not found
-		if err != nil {
-			err = tx.QueryRow(c.Context(), `
-				SELECT id, expected_qty, scanned_qty, status, item_code
-				FROM grn_lines
-				WHERE grn_carton_id=$1 AND (LOWER(item_code)=LOWER($2) OR LOWER(supplier_sku)=LOWER($2))
-				ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
-				LIMIT 1
-				FOR UPDATE`,
-				cartonID, itemCode,
-			).Scan(&lineID, &expectedQty, &scannedQty, &currentStatus, &actualItemCode)
-		}
-
-		// Try full raw QR string as itemCode fallback if not found
-		if err != nil {
-			err = tx.QueryRow(c.Context(), `
-				SELECT id, expected_qty, scanned_qty, status, item_code
-				FROM grn_lines
-				WHERE grn_carton_id=$1 AND (item_code=$2 OR supplier_sku=$2)
-				ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
-				LIMIT 1
-				FOR UPDATE`,
-				cartonID, body.QRRaw,
-			).Scan(&lineID, &expectedQty, &scannedQty, &currentStatus, &actualItemCode)
-			if err == nil {
-				itemCode = body.QRRaw
-			}
-		}
+		// 2. Find matching line (trim/case, packed QR prefix, raw QR)
+		lineID, expectedQty, scannedQty, _, actualItemCode, err := findCartonLine(c.Context(), tx, cartonID, itemCode, body.QRRaw)
 
 		if err != nil {
 			_, _ = tx.Exec(c.Context(), `
@@ -343,16 +559,18 @@ func scanItemHandler(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusNotFound, "Item not in this box")
 		}
 
-		// Item master completeness check
+		// Item master completeness: block normal receiving, allow damaged-box inspection.
 		exists, complete, _ := shared.ItemMasterComplete(c.Context(), db, actualItemCode)
-		if !exists || !complete {
+		if (!exists || !complete) && !damagedBox {
 			return shared.Err(c, fiber.StatusConflict, "item master incomplete — complete required fields before receiving")
 		}
 
-		// Over-receipt tolerance check
+		// Over-receipt tolerance check (allow excess on damaged inspection)
 		newScanned := scannedQty + qty
-		if orErr := CheckOverReceipt(c.Context(), db, body.SessionID, actualItemCode, expectedQty, newScanned); orErr != nil {
-			return shared.Err(c, fiber.StatusBadRequest, orErr.Error())
+		if !damagedBox {
+			if orErr := CheckOverReceipt(c.Context(), db, body.SessionID, actualItemCode, expectedQty, newScanned); orErr != nil {
+				return shared.Err(c, fiber.StatusBadRequest, orErr.Error())
+			}
 		}
 
 		// Status classification
@@ -386,11 +604,14 @@ func scanItemHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		// Log Scan Event
-		_, _ = tx.Exec(c.Context(), `
+		_, err = tx.Exec(c.Context(), `
 			INSERT INTO grn_events (grn_session_id, event_type, box_no, part_no, quantity, actor_id, device)
 			VALUES ($1, 'ITEM_SCANNED', $2, $3, $4, $5, $6)`,
-			body.SessionID, body.BoxNumber, actualItemCode, qty, userID(c), requestDevice(c),
+			body.SessionID, body.BoxNumber, actualItemCode, qty, nullableUserID(c), requestDevice(c),
 		)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to log item scan: "+err.Error())
+		}
 
 		// Get updated box stats
 		var itemsTotal, itemsScanned int
@@ -478,7 +699,9 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		var cartonID int
 		var status string
 		err = tx.QueryRow(c.Context(), `
-			SELECT id, status FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2 FOR UPDATE`,
+			SELECT id, status FROM grn_cartons
+			WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))
+			FOR UPDATE`,
 			body.SessionID, body.BoxNumber,
 		).Scan(&cartonID, &status)
 		if err != nil {
@@ -497,7 +720,7 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 
 		_, err = tx.Exec(c.Context(), `
 			UPDATE grn_cartons SET status = 'verified', verified_at = NOW(), verified_by = $2 WHERE id = $1 AND status <> 'verified'`,
-			cartonID, userID(c),
+			cartonID, nullableUserID(c),
 		)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -596,24 +819,20 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		hasExceptions := len(exceptions) > 0
 		exceptionCount := len(exceptions)
 
-		// Increment boxes_received if not already verified
-		var boxesReceived int
-		if status != "verified" {
-			_, _ = tx.Exec(c.Context(), `
-				UPDATE grn_sessions SET boxes_received = boxes_received + 1 WHERE id = $1`, body.SessionID)
+		boxesReceived, boxesVerified, totalBoxes, syncErr := syncSessionBoxCounts(c.Context(), tx, body.SessionID)
+		if syncErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, syncErr.Error())
 		}
 
-		var totalBoxes int
-		_ = tx.QueryRow(c.Context(), `
-			SELECT boxes_total, boxes_received FROM grn_sessions WHERE id=$1`, body.SessionID).
-			Scan(&totalBoxes, &boxesReceived)
-
 		// Log session event
-		_, _ = tx.Exec(c.Context(), `
+		_, err = tx.Exec(c.Context(), `
 			INSERT INTO grn_events (grn_session_id, event_type, box_no, actor_id, device)
 			VALUES ($1, 'BOX_VERIFIED', $2, $3, $4)`,
-			body.SessionID, body.BoxNumber, userID(c), requestDevice(c),
+			body.SessionID, body.BoxNumber, nullableUserID(c), requestDevice(c),
 		)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to log box verify: "+err.Error())
+		}
 
 		if err = tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -621,8 +840,9 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 
 		progressPct := 0
 		if totalBoxes > 0 {
-			progressPct = int(math.Round(float64(boxesReceived) / float64(totalBoxes) * 100))
+			progressPct = int(math.Round(float64(boxesVerified) / float64(totalBoxes) * 100))
 		}
+		allVerified := totalBoxes > 0 && boxesVerified >= totalBoxes
 
 		return shared.OK(c, fiber.Map{
 			"box_number":      body.BoxNumber,
@@ -631,8 +851,10 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			"items_summary":   lines,
 			"has_exceptions":  hasExceptions,
 			"exception_count": exceptionCount,
+			"all_verified":    allVerified,
 			"delivery_progress": fiber.Map{
 				"boxes_received": boxesReceived,
+				"boxes_verified": boxesVerified,
 				"boxes_total":    totalBoxes,
 				"progress_pct":   progressPct,
 			},
@@ -711,7 +933,7 @@ func overrideRouteHandler(db *pgxpool.Pool) fiber.Handler {
 
 		var cartonID int
 		err := db.QueryRow(c.Context(), `
-			SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
+			SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND lower(btrim(carton_no))=lower(btrim($2))`,
 			body.SessionID, body.BoxNumber).Scan(&cartonID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "Box not found")
@@ -801,22 +1023,30 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session_id required")
 		}
 
-		var deliveryNo, sessionNo, poName, packingListNo, packingListFile string
+		var deliveryNo, sessionNo, poName, packingListNo, packingListFile, sessStatus string
 		var boxesTotal, boxesReceived int
 		var createdAt time.Time
 		err := db.QueryRow(c.Context(), `
 			SELECT COALESCE(delivery_no, ''), COALESCE(session_no, ''), COALESCE(boxes_total,0), COALESCE(boxes_received,0), created_at,
-			       COALESCE(purchase_receipt_no, ''), COALESCE(packing_list_no, ''), COALESCE(packing_list_filename, '')
+			       COALESCE(purchase_receipt_no, ''), COALESCE(packing_list_no, ''), COALESCE(packing_list_filename, ''), COALESCE(status, '')
 			FROM grn_sessions WHERE id = $1`, sessionID,
-		).Scan(&deliveryNo, &sessionNo, &boxesTotal, &boxesReceived, &createdAt, &poName, &packingListNo, &packingListFile)
+		).Scan(&deliveryNo, &sessionNo, &boxesTotal, &boxesReceived, &createdAt, &poName, &packingListNo, &packingListFile, &sessStatus)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
 		}
-		var cartonCount int
-		_ = db.QueryRow(c.Context(), `SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&cartonCount)
+		var cartonCount, boxesVerified, boxesDamaged int
+		_ = db.QueryRow(c.Context(), `
+			SELECT COUNT(*),
+			       COUNT(*) FILTER (WHERE status IN ('received','verified','accounted','exception')),
+			       COUNT(*) FILTER (WHERE status = 'verified'),
+			       COUNT(*) FILTER (WHERE COALESCE(condition,'ok') IN ('damaged','wet','crushed'))
+			FROM grn_cartons WHERE grn_session_id=$1`, sessionID,
+		).Scan(&cartonCount, &boxesReceived, &boxesVerified, &boxesDamaged)
 		if cartonCount > boxesTotal {
 			boxesTotal = cartonCount
 		}
+
+		phase := rfPhaseFromStatus(sessStatus, "")
 
 		// Counts
 		var singleItemCount, multiItemCount int
@@ -863,19 +1093,33 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		progressPct := 0
+		boxProgressPct := 0
+		itemProgressPct := 0
 		if boxesTotal > 0 {
-			progressPct = int(math.Round(float64(boxesReceived) / float64(boxesTotal) * 100))
+			boxProgressPct = int(math.Round(float64(boxesReceived) / float64(boxesTotal) * 100))
+			itemProgressPct = int(math.Round(float64(boxesVerified) / float64(boxesTotal) * 100))
+			if phase == "item_verify" {
+				progressPct = itemProgressPct
+			} else {
+				progressPct = boxProgressPct
+			}
 		}
 
 		return shared.OK(c, fiber.Map{
 			"session_id":            sessionID,
 			"session_no":            sessionNo,
+			"session_status":        canonicalStatus(sessStatus),
+			"phase":                 phase,
 			"delivery_no":           deliveryNo,
 			"total_boxes":           boxesTotal,
 			"boxes_received":        boxesReceived,
+			"boxes_verified":        boxesVerified,
+			"boxes_damaged":         boxesDamaged,
 			"single_item_boxes":     singleItemCount,
 			"multi_item_boxes":      multiItemCount,
 			"overall_progress_pct":  progressPct,
+			"box_progress_pct":      boxProgressPct,
+			"item_progress_pct":     itemProgressPct,
 			"total_items":           itemsCount,
 			"items_full_match":      itemsFullMatch,
 			"items_shortage":        itemsShortage,
@@ -891,6 +1135,83 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 			"packing_list_filename": packingListFile,
 		})
 	}
+}
+
+func findCartonLine(ctx context.Context, tx pgx.Tx, cartonID int, itemCode, qrRaw string) (id int, expected, scanned float64, status, code string, err error) {
+	code = strings.TrimSpace(itemCode)
+	raw := strings.TrimSpace(qrRaw)
+	scanLine := func(cond string, arg string) error {
+		return tx.QueryRow(ctx, `
+			SELECT id, expected_qty, scanned_qty, status, item_code
+			FROM grn_lines
+			WHERE grn_carton_id=$1 AND (`+cond+`)
+			ORDER BY CASE WHEN status IN ('pending','shortage') THEN 0 ELSE 1 END, id
+			LIMIT 1
+			FOR UPDATE`, cartonID, arg).Scan(&id, &expected, &scanned, &status, &code)
+	}
+	err = scanLine(`item_code=$2 OR supplier_sku=$2`, code)
+	if err == nil {
+		return
+	}
+	err = scanLine(`lower(btrim(item_code))=lower(btrim($2)) OR lower(btrim(COALESCE(supplier_sku,'')))=lower(btrim($2))`, code)
+	if err == nil {
+		return
+	}
+	if raw != "" && raw != code {
+		err = scanLine(`item_code=$2 OR supplier_sku=$2`, raw)
+		if err == nil {
+			return
+		}
+		err = scanLine(`lower(btrim(item_code))=lower(btrim($2)) OR lower(btrim(COALESCE(supplier_sku,'')))=lower(btrim($2))`, raw)
+		if err == nil {
+			return
+		}
+	}
+	if raw != "" {
+		err = scanLine(`lower(btrim($2)) LIKE lower(btrim(item_code)) || '-%'`, raw)
+	}
+	return
+}
+
+func loadCartonItemsTx(ctx context.Context, tx pgx.Tx, cartonID int) ([]rfItemSummary, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT item_code, COALESCE(part_name, ''), expected_qty, scanned_qty, status
+		FROM grn_lines WHERE grn_carton_id=$1`, cartonID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []rfItemSummary
+	for rows.Next() {
+		var it rfItemSummary
+		if err := rows.Scan(&it.PartCode, &it.PartName, &it.ExpectedQty, &it.ScannedQty, &it.Status); err != nil {
+			continue
+		}
+		items = append(items, it)
+	}
+	if items == nil {
+		items = []rfItemSummary{}
+	}
+	return items, nil
+}
+
+func syncSessionBoxCounts(ctx context.Context, tx pgx.Tx, sessionID int) (received, verified, total int, err error) {
+	err = tx.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status IN ('received','verified','accounted','exception')),
+			COUNT(*) FILTER (WHERE status = 'verified'),
+			COUNT(*)
+		FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&received, &verified, &total)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	var sessionTotal int
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(boxes_total,0) FROM grn_sessions WHERE id=$1`, sessionID).Scan(&sessionTotal)
+	if sessionTotal > total {
+		total = sessionTotal
+	}
+	_, _ = tx.Exec(ctx, `UPDATE grn_sessions SET boxes_received=$2 WHERE id=$1`, sessionID, received)
+	return received, verified, total, nil
 }
 
 // sqlNullString helper for standard SQL conversions

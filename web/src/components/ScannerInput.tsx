@@ -36,7 +36,11 @@ export default function ScannerInput({
   }, [anchorRef])
 
   useEffect(() => {
-    if (autoFocus) inputRef.current?.focus()
+    if (!autoFocus) return
+    const focus = () => inputRef.current?.focus()
+    focus()
+    const t = window.setTimeout(focus, 250)
+    return () => window.clearTimeout(t)
   }, [autoFocus])
 
   useEffect(() => {
@@ -89,13 +93,18 @@ export default function ScannerInput({
     [onScan],
   )
 
-  const handleManualSubmit = useCallback(() => {
-    const value = query.trim()
+  const submitScanned = useCallback((raw: string) => {
+    const value = raw.trim()
     if (!value) return
     onScan(value)
     navigator.vibrate?.(10)
     setQuery('')
-  }, [query, onScan])
+    setOpen(false)
+  }, [onScan])
+
+  const handleManualSubmit = useCallback(() => {
+    submitScanned(inputRef.current?.value ?? query)
+  }, [query, submitScanned])
 
   const handleSelectSuggestion = useCallback(
     (code: string) => {
@@ -221,11 +230,9 @@ export default function ScannerInput({
           onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
             if (e.key === 'Enter') {
               e.preventDefault()
-              if (filtered.length > 0 && open) {
-                handleSelectSuggestion(filtered[0].code)
-              } else {
-                handleManualSubmit()
-              }
+              // RF guns fire Enter before React state catches up — read the DOM value.
+              // Never auto-pick the first suggestion; that records the wrong item.
+              submitScanned(e.currentTarget.value)
             }
             if (e.key === 'Escape') setOpen(false)
           }}

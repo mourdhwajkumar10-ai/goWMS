@@ -32,7 +32,7 @@ export default function Login() {
     try {
       if (mode === "password") {
         const r = await api.login(username, password);
-        if (!r.ok || !r.data) {
+        if (!r.ok || !r.data?.token) {
           setError(r.error || "Login failed");
           return;
         }
@@ -49,7 +49,7 @@ export default function Login() {
         employee_number: empNo || undefined,
         pin,
       });
-      if (!r.ok || !r.data) {
+      if (!r.ok || !r.data?.token) {
         setError(r.error || "PIN login failed");
         return;
       }

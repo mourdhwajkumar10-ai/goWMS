@@ -3,7 +3,9 @@ const TOKEN_KEY = "gowms_token";
 const ROLE_KEY = "gowms_role";
 
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  const t = localStorage.getItem(TOKEN_KEY);
+  if (!t || t === "undefined" || t === "null" || !t.trim()) return null;
+  return t;
 }
 
 export function setSession(token: string, role: string) {
@@ -20,6 +22,27 @@ export function clearSession() {
   localStorage.removeItem(ROLE_KEY);
 }
 
+const AUTH_PUBLIC = ["/auth/login", "/auth/pin-login", "/auth/register"];
+
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(extra || {}) };
+  const token = getToken();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (typeof navigator !== "undefined" && navigator.userAgent) {
+    headers["X-Device"] = navigator.userAgent.slice(0, 100);
+  }
+  return headers;
+}
+
+function bounceToLogin(path: string, status: number) {
+  if (status !== 401) return;
+  if (AUTH_PUBLIC.some((p) => path.startsWith(p))) return;
+  clearSession();
+  if (typeof window !== "undefined" && window.location.pathname !== "/login") {
+    window.location.assign("/login");
+  }
+}
+
 interface ApiResponse<T> {
   data: T;
   ok: boolean;
@@ -29,19 +52,15 @@ interface ApiResponse<T> {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<ApiResponse<T>> {
-  const headers: Record<string, string> = {};
-  const token = getToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
-  if (body !== undefined) headers["Content-Type"] = "application/json";
-  if (typeof navigator !== "undefined" && navigator.userAgent) {
-    headers["X-Device"] = navigator.userAgent.slice(0, 100);
-  }
+  const headers = authHeaders(body !== undefined ? { "Content-Type": "application/json" } : undefined);
 
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
+
+  bounceToLogin(path, res.status);
 
   const payload = await res.json().catch(() => ({})) as ApiResponse<T> & { message?: string }
   if (!res.ok || payload.ok === false) {
@@ -58,6 +77,16 @@ const post = <T>(path: string, body?: unknown) => request<T>("POST", path, body)
 const put = <T>(path: string, body?: unknown) => request<T>("PUT", path, body);
 const patch = <T>(path: string, body?: unknown) => request<T>("PATCH", path, body);
 const del = <T>(path: string) => request<T>("DELETE", path);
+
+async function formPost(path: string, fd: FormData) {
+  const res = await fetch(`${BASE}${path}`, { method: "POST", headers: authHeaders(), body: fd });
+  bounceToLogin(path, res.status);
+  const payload = await res.json().catch(() => ({}));
+  if (!res.ok || payload.ok === false) {
+    return { ok: false as const, data: payload.data, error: payload.error || `Request failed (${res.status})` };
+  }
+  return { ok: true as const, data: payload.data };
+}
 
 export const api = {
   get,
@@ -102,18 +131,11 @@ export const api = {
     if (transporter) fd.append("transporter", transporter);
     if (supplierName) fd.append("supplier_name", supplierName);
     if (poName) fd.append("po_name", poName);
-    const headers: Record<string, string> = {};
-    const token = getToken();
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    if (typeof navigator !== "undefined" && navigator.userAgent) {
-      headers["X-Device"] = navigator.userAgent.slice(0, 100);
+    const res = await formPost("/packing-list/import-file", fd);
+    if (!res.ok) {
+      return { ok: false as const, data: res.data, error: res.error || "Import failed" };
     }
-    const res = await fetch(`${BASE}/packing-list/import-file`, { method: "POST", headers, body: fd });
-    const payload = await res.json().catch(() => ({}));
-    if (!res.ok || payload.ok === false) {
-      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` };
-    }
-    return { ok: true as const, data: payload.data };
+    return { ok: true as const, data: res.data };
   },
 
   // Employees
@@ -169,18 +191,7 @@ export const api = {
   itemImportFile: async (file: File) => {
     const fd = new FormData()
     fd.append("file", file)
-    const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    if (typeof navigator !== "undefined" && navigator.userAgent) {
-      headers["X-Device"] = navigator.userAgent.slice(0, 100)
-    }
-    const res = await fetch(`${BASE}/masterdata/items/import-file`, { method: "POST", headers, body: fd })
-    const payload = await res.json().catch(() => ({}))
-    if (!res.ok || payload.ok === false) {
-      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` }
-    }
-    return { ok: true as const, data: payload.data }
+    return formPost("/masterdata/items/import-file", fd)
   },
   itemGroups: () => get<any[]>("/masterdata/item-groups"),
   itemGroupCreate: (data: any) => post<any>("/masterdata/item-groups", data),
@@ -198,18 +209,11 @@ export const api = {
     fd.append('file', file)
     fd.append('entity_type', entityType)
     fd.append('entity_id', String(entityId))
-    const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    if (typeof navigator !== 'undefined' && navigator.userAgent) {
-      headers['X-Device'] = navigator.userAgent.slice(0, 100)
+    const res = await formPost("/attachments/", fd)
+    if (!res.ok) {
+      return { ok: false as const, data: res.data, error: res.error || "Upload failed" }
     }
-    const res = await fetch(`${BASE}/attachments/`, { method: 'POST', headers, body: fd })
-    const payload = await res.json().catch(() => ({}))
-    if (!res.ok || payload.ok === false) {
-      return { ok: false as const, data: payload.data, error: payload.error || `Upload failed (${res.status})` }
-    }
-    return { ok: true as const, data: payload.data }
+    return { ok: true as const, data: res.data }
   },
   attachmentUrl: (id: number) => `${BASE}/attachments/${id}`,
 
@@ -305,13 +309,9 @@ export const api = {
   grnImportPackingList: async (sessionId: number, file: File) => {
     const fd = new FormData()
     fd.append('file', file)
-    const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    const res = await fetch(`${BASE}/grn/${sessionId}/import-packing-list`, { method: 'POST', headers, body: fd })
-    const payload = await res.json().catch(() => ({}))
-    if (!res.ok || payload.ok === false) return { ok: false as const, error: payload.error || `Import failed (${res.status})` }
-    return { ok: true as const, data: payload.data }
+    const res = await formPost(`/grn/${sessionId}/import-packing-list`, fd)
+    if (!res.ok) return { ok: false as const, error: res.error || "Import failed" }
+    return { ok: true as const, data: res.data }
   },
 
   // Picking
@@ -488,23 +488,14 @@ export const api = {
     if (grnSessionId) fd.append("grn_session_id", String(grnSessionId))
     if (poName) fd.append("po_name", poName)
     if (supplierName) fd.append("supplier_name", supplierName)
-    const headers: Record<string, string> = {}
-    const token = getToken()
-    if (token) headers.Authorization = `Bearer ${token}`
-    if (typeof navigator !== "undefined" && navigator.userAgent) {
-      headers["X-Device"] = navigator.userAgent.slice(0, 100)
-    }
-    const res = await fetch(`${BASE}/receiving/import`, { method: "POST", headers, body: fd })
-    const payload = await res.json().catch(() => ({}))
-    if (!res.ok || payload.ok === false) {
-      return { ok: false as const, data: payload.data, error: payload.error || `Import failed (${res.status})` }
-    }
-    return { ok: true as const, data: payload.data }
+    return formPost("/receiving/import", fd)
   },
   receivingInvoices: (sessionId: number) => get<any[]>(`/receiving/invoices?session_id=${sessionId}`),
   receivingDNs: (sessionId: number, invoiceNo?: string) => get<any[]>(`/receiving/delivery-notes?session_id=${sessionId}${invoiceNo ? `&invoice_no=${encodeURIComponent(invoiceNo)}` : ""}`),
   receivingBoxes: (sessionId: number, deliveryNo?: string) => get<any>(`/receiving/boxes?session_id=${sessionId}${deliveryNo ? `&delivery_no=${encodeURIComponent(deliveryNo)}` : ""}`),
-  receivingScanBox: (data: { session_id: number; box_number: string; auto_complete_single: boolean; default_route?: string }) => post<any>("/receiving/scan-box", data),
+  receivingScanBox: (data: { session_id: number; box_number: string; auto_complete_single: boolean; default_route?: string; phase?: "box_verify" | "item_verify" }) => post<any>("/receiving/scan-box", data),
+  receivingConfirmBox: (data: { session_id: number; box_number: string; condition: string }) => post<any>("/receiving/confirm-box", data),
+  receivingSignOffBoxes: (data: { session_id: number }) => post<any>("/receiving/sign-off-boxes", data),
   receivingScanItem: (data: { session_id: number; box_number: string; qr_raw: string }) => post<any>("/receiving/scan-item", data),
   receivingCompleteBox: (data: { session_id: number; box_number: string; default_route?: string }) => post<any>("/receiving/complete-box", data),
   receivingRouteException: (data: { session_id: number; routes: { grn_line_id: number; location: string }[] }) => post<any>("/receiving/route-exception", data),
