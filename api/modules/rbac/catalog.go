@@ -11,6 +11,8 @@ type Permission struct {
 // Catalog is the authoritative permission list exposed by GET /api/permissions.
 var Catalog = []Permission{
 	{Code: "*", Module: "system", Name: "Full access", Description: "Bypass all module checks"},
+
+	// Coarse module-level permissions (backward-compatible).
 	{Code: "masters.access", Module: "masters", Name: "Masters", Description: "Items, warehouses, locations, batches, serial, inventory"},
 	{Code: "grn.access", Module: "grn", Name: "GRN / Inbound", Description: "GRN sessions and packing-list import"},
 	{Code: "qi.access", Module: "qi", Name: "Quality Inspection", Description: "QI inspections and templates"},
@@ -26,6 +28,30 @@ var Catalog = []Permission{
 	{Code: "analytics.access", Module: "analytics", Name: "Analytics", Description: "Dashboard KPIs and reports"},
 	{Code: "notifications.access", Module: "notifications", Name: "Notifications", Description: "In-app notifications"},
 	{Code: "import_export.access", Module: "import_export", Name: "Import / Export", Description: "CSV/XLSX import and export endpoints"},
+
+	// Fine-grained receiving permissions.
+	{Code: "receiving.view", Module: "receiving", Name: "View receiving", Description: "View receiving sessions and eligible POs"},
+	{Code: "receiving.start", Module: "receiving", Name: "Start receiving", Description: "Start or resume a receiving session"},
+	{Code: "receiving.scan_box", Module: "receiving", Name: "Scan box", Description: "Scan and record box receipt"},
+	{Code: "receiving.scan_item", Module: "receiving", Name: "Scan item", Description: "Scan and verify an item"},
+	{Code: "receiving.reject_item", Module: "receiving", Name: "Reject item", Description: "Reject an item and route to reject location"},
+	{Code: "receiving.complete", Module: "receiving", Name: "Complete receiving", Description: "Complete box/session receiving steps"},
+	{Code: "receiving.approve", Module: "receiving", Name: "Approve receiving", Description: "Approve a packing list for receiving"},
+
+	// Fine-grained PO permissions.
+	{Code: "po.view", Module: "po", Name: "View POs", Description: "View purchase orders"},
+	{Code: "po.create", Module: "po", Name: "Create POs", Description: "Create purchase orders"},
+	{Code: "po.edit", Module: "po", Name: "Edit POs", Description: "Edit or submit purchase orders"},
+
+	// Fine-grained inventory permissions.
+	{Code: "inventory.view", Module: "inventory", Name: "View inventory", Description: "View stock and location balances"},
+	{Code: "inventory.adjust", Module: "inventory", Name: "Adjust inventory", Description: "Adjust inventory quantities"},
+
+	// Fine-grained admin permissions.
+	{Code: "masterdata.manage", Module: "masterdata", Name: "Manage master data", Description: "Manage items, locations, warehouses, and suppliers"},
+	{Code: "reports.view", Module: "reports", Name: "View reports", Description: "View operational reports"},
+	{Code: "users.manage", Module: "users", Name: "Manage users", Description: "Manage employees and credentials"},
+	{Code: "notifications.view", Module: "notifications", Name: "View notifications", Description: "View and acknowledge notifications"},
 }
 
 // ValidCodes returns a set of known permission codes.

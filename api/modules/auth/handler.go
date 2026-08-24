@@ -6,6 +6,7 @@ import (
 
 	"goWMS/api/config"
 	"goWMS/api/middleware"
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -104,9 +105,18 @@ func login(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to sign token")
 		}
 
+		permissions := rolePermissions(db, c, id, role)
 		return shared.OK(c, fiber.Map{
-			"token": signed,
-			"role":  role,
+			"token":       signed,
+			"role":        role,
+			"user": fiber.Map{
+				"id":            id,
+				"username":      body.Username,
+				"role":          role,
+				"warehouse_ids": warehouseIDsForLogin(db, c, id, role),
+			},
+			"permissions":  permissions,
+			"device_policy": devicePolicy(role),
 		})
 	}
 }
@@ -174,12 +184,80 @@ func pinLogin(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to sign token")
 		}
+		permissions := rolePermissions(db, c, id, wmsRole)
 		return shared.OK(c, fiber.Map{
 			"token":         signed,
 			"role":          wmsRole,
 			"employee_id":   id,
 			"employee_name": name,
 			"auth":          "pin",
+			"user": fiber.Map{
+				"id":            id,
+				"role":          wmsRole,
+				"warehouse_ids": warehouseIDsForLogin(db, c, id, wmsRole),
+			},
+			"permissions":  permissions,
+			"device_policy": devicePolicy(wmsRole),
 		})
+	}
+}
+
+// rolePermissions returns the permission list for the given role.
+func rolePermissions(db *pgxpool.Pool, c *fiber.Ctx, userID int, role string) []string {
+	s := rbac.Global()
+	if s == nil {
+		return []string{}
+	}
+	return s.Codes(role)
+}
+
+// warehouseIDsForLogin returns warehouse IDs the user may access.
+func warehouseIDsForLogin(db *pgxpool.Pool, c *fiber.Ctx, userID int, role string) []int {
+	role = strings.TrimSpace(strings.ToLower(role))
+	if role == "admin" {
+		rows, err := db.Query(c.Context(), `SELECT id FROM warehouses ORDER BY id`)
+		if err != nil {
+			return []int{}
+		}
+		defer rows.Close()
+		var ids []int
+		for rows.Next() {
+			var id int
+			if err := rows.Scan(&id); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		if ids == nil {
+			ids = []int{}
+		}
+		return ids
+	}
+	var whID *int
+	_ = db.QueryRow(c.Context(),
+		`SELECT warehouse_id FROM employees WHERE id=$1 AND COALESCE(disabled,false)=false`, userID).Scan(&whID)
+	if whID == nil {
+		_ = db.QueryRow(c.Context(),
+			`SELECT warehouse_id FROM users WHERE id=$1 AND is_active=true`, userID).Scan(&whID)
+	}
+	if whID != nil && *whID > 0 {
+		return []int{*whID}
+	}
+	return []int{}
+}
+
+// devicePolicy returns the device access policy for a role.
+func devicePolicy(role string) fiber.Map {
+	r := strings.TrimSpace(strings.ToLower(role))
+	deskRoles := map[string]bool{"admin": true, "supervisor": true, "wm": true, "billing": true, "viewer": true}
+	handheldRoles := map[string]bool{
+		"admin": true, "supervisor": true, "wm": true,
+		"receiving_operator": true, "qi": true, "picker": true,
+		"packer": true, "dispatcher": true, "driver": true,
+	}
+	_ = handheldRoles
+	return fiber.Map{
+		"desktop":  deskRoles[r],
+		"handheld": handheldRoles[r],
+		"camera":   handheldRoles[r], // camera only on handheld-authorized roles
 	}
 }

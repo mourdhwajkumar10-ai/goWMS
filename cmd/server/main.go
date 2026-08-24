@@ -31,7 +31,6 @@ import (
 	"goWMS/api/modules/picking"
 	"goWMS/api/modules/po"
 	"goWMS/api/modules/putaway"
-	"goWMS/api/modules/putawayrules"
 	"goWMS/api/modules/qi"
 	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/reports"
@@ -127,7 +126,7 @@ func main() {
 	billing.Register(api.Group("/billing"), pool)
 	customer.Register(api.Group("/customer"), pool)
 	cyclecount.Register(api.Group("/cycle-count"), pool)
-	cyclecount.Register(api.Group("/cyclecount"), pool) // frontend alias
+	cyclecount.Register(api.Group("/cyclecount"), pool) // frontend calls /cyclecount/
 	dispatch.Register(api.Group("/dispatch"), pool)
 	employee.Register(api.Group("/employees"), pool)
 	grn.Register(api.Group("/grn"), pool)
@@ -135,15 +134,25 @@ func main() {
 	notifications.Register(api.Group("/notifications"), pool)
 	packing.Register(api.Group("/packing"), pool)
 	packinglist.Register(api.Group("/packing-list"), pool)
-	packinglist.RegisterReceiving(api.Group("/receiving"), pool)
-	grn.RegisterRFScan(api.Group("/receiving"), pool)
+	// Receiving: view permission for listing, scan permission for RF operations.
+	receivingGroup := api.Group("/receiving")
+	receivingGroup.Use(rbac.RequirePermission("receiving.view"))
+	packinglist.RegisterReceiving(receivingGroup, pool)
+
+	// RF scan operations (scan-box, scan-item, reject, complete) require scan permission.
+	rfGroup := api.Group("/receiving")
+	rfGroup.Use(rbac.RequirePermission("receiving.scan_box"))
+	grn.RegisterRFScan(rfGroup, pool)
 	packinglist.RegisterGRNAlias(api.Group("/grn"), pool) // docs alias: /grn/:id/import-packing-list
 	packinglist.RegisterSupplierAlias(api.Group("/suppliers"), pool)
 	picking.Register(api.Group("/picking"), pool)
 	picking.RegisterWave(api.Group("/picking"), pool)
-	po.Register(api.Group("/po"), pool)
+	// PO create/edit require coarser permissions (po.create / po.edit).
+	poGroup := api.Group("/po")
+	poGroup.Use(rbac.RequirePermission("po.view"))
+	po.Register(poGroup, pool)
 	putaway.Register(api.Group("/putaway"), pool)
-	putawayrules.Register(api.Group("/putaway-rules"), pool)
+	putaway.Register(api.Group("/putaway-rules"), pool) // merged from putawayrules module
 	qi.Register(api.Group("/qi"), pool)
 	reports.Register(api.Group("/reports"), pool)
 	returns.Register(api.Group("/returns"), pool)

@@ -430,10 +430,19 @@ func seedDefaults(db *pgxpool.Pool) fiber.Handler {
 				created++
 			}
 
-			var n int
-			_ = tx.QueryRow(c.Context(), `SELECT COUNT(*) FROM role_permissions WHERE role_id=$1`, id).Scan(&n)
-			if n == 0 {
-				for _, p := range PermissionsForProfile(profile) {
+		var n int
+		_ = tx.QueryRow(c.Context(), `SELECT COUNT(*) FROM role_permissions WHERE role_id=$1`, id).Scan(&n)
+		if n == 0 {
+			for _, p := range PermissionsForProfile(profile) {
+				if _, err := tx.Exec(c.Context(),
+					`INSERT INTO role_permissions (role_id, permission_code) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+					id, p); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+			}
+			// Also seed fine-grained permissions for this role.
+			if finePerms, ok := FineGrainedPermissions()[code]; ok {
+				for _, p := range finePerms {
 					if _, err := tx.Exec(c.Context(),
 						`INSERT INTO role_permissions (role_id, permission_code) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
 						id, p); err != nil {
@@ -441,6 +450,7 @@ func seedDefaults(db *pgxpool.Pool) fiber.Handler {
 					}
 				}
 			}
+		}
 		}
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())

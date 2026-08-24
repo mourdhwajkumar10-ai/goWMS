@@ -122,29 +122,83 @@ func PermissionsForProfile(p AccessProfile) []string {
 // DefaultProfiles for seed-defaults.
 func DefaultProfiles() map[string]AccessProfile {
 	return map[string]AccessProfile{
-		"admin":      {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessEdit},
-		"supervisor": {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessView},
-		"wm":         {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessView},
-		"picker":     {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
-		"packer":     {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
-		"qi":         {Inbound: AccessEdit, Outbound: AccessNone, Admin: AccessNone},
-		"dispatcher": {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
-		"driver":     {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
-		"billing":    {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"admin":               {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessEdit},
+		"supervisor":          {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessView},
+		"wm":                  {Inbound: AccessEdit, Outbound: AccessEdit, Admin: AccessView},
+		"picker":              {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"packer":              {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"qi":                  {Inbound: AccessEdit, Outbound: AccessNone, Admin: AccessNone},
+		"dispatcher":          {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"driver":              {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"billing":             {Inbound: AccessNone, Outbound: AccessEdit, Admin: AccessNone},
+		"receiving_operator":  {Inbound: AccessEdit, Outbound: AccessNone, Admin: AccessNone},
+		"viewer":              {Inbound: AccessView, Outbound: AccessView, Admin: AccessView},
+	}
+}
+
+// FineGrainedPermissions maps new fine-grained codes to roles that should receive them
+// beyond the coarse AccessProfile expansion.
+func FineGrainedPermissions() map[string][]string {
+	return map[string][]string{
+		"receiving_operator": {
+			"receiving.view", "receiving.start", "receiving.scan_box",
+			"receiving.scan_item", "receiving.reject_item", "receiving.complete",
+			"po.view", "notifications.view",
+		},
+		"viewer": {
+			"receiving.view", "inventory.view", "reports.view",
+			"po.view", "notifications.view",
+		},
+		"qi": {
+			"receiving.view", "receiving.scan_box", "receiving.scan_item",
+			"receiving.reject_item", "receiving.complete", "po.view",
+			"notifications.view",
+		},
+		"supervisor": {
+			"receiving.view", "receiving.start", "receiving.scan_box",
+			"receiving.scan_item", "receiving.reject_item", "receiving.complete",
+			"receiving.approve", "po.view", "po.create", "po.edit",
+			"inventory.view", "inventory.adjust", "masterdata.manage",
+			"reports.view", "notifications.view",
+		},
+		"wm": {
+			"receiving.view", "receiving.start", "receiving.scan_box",
+			"receiving.scan_item", "receiving.reject_item", "receiving.complete",
+			"receiving.approve", "po.view", "po.create", "po.edit",
+			"inventory.view", "inventory.adjust", "masterdata.manage",
+			"reports.view", "notifications.view",
+		},
+		"picker": {
+			"inventory.view", "notifications.view",
+		},
+		"packer": {
+			"inventory.view", "notifications.view",
+		},
+		"dispatcher": {
+			"inventory.view", "notifications.view",
+		},
+		"driver": {
+			"notifications.view",
+		},
+		"billing": {
+			"reports.view", "notifications.view",
+		},
 	}
 }
 
 // DefaultRoleMeta name/description for seed.
 func DefaultRoleMeta() map[string]struct{ Name, Desc string } {
 	return map[string]struct{ Name, Desc string }{
-		"admin":      {"Admin", "Full system access; manage roles and employees"},
-		"supervisor": {"Supervisor", "Warehouse supervisor (floor + masters)"},
-		"picker":     {"Picker", "Picking operations"},
-		"packer":     {"Packer", "Packing operations"},
-		"qi":         {"QI", "Quality inspection"},
-		"dispatcher": {"Dispatcher", "Dispatch / delivery notes"},
-		"wm":         {"Warehouse Manager", "Legacy alias of supervisor"},
-		"driver":     {"Driver", "Legacy alias of dispatcher"},
-		"billing":    {"Billing", "Sales orders and billing"},
+		"admin":               {"Admin", "Full system access; manage roles and employees"},
+		"supervisor":          {"Supervisor", "Warehouse supervisor (floor + masters)"},
+		"picker":              {"Picker", "Picking operations"},
+		"packer":              {"Packer", "Packing operations"},
+		"qi":                  {"QI", "Quality inspection"},
+		"dispatcher":          {"Dispatcher", "Dispatch / delivery notes"},
+		"wm":                  {"Warehouse Manager", "Legacy alias of supervisor"},
+		"driver":              {"Driver", "Legacy alias of dispatcher"},
+		"billing":             {"Billing", "Sales orders and billing"},
+		"receiving_operator":  {"Receiving Operator", "Receiving scan and verify operations"},
+		"viewer":              {"Viewer", "Read-only access to warehouse data"},
 	}
 }
