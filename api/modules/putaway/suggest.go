@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"math"
 
 	"goWMS/api/modules/shared"
 
@@ -112,18 +111,9 @@ func FindBestLocation(ctx context.Context, db *pgxpool.Pool, itemCode string, qt
 
 // computeMaxFit determines how much of qty fits in the given location.
 func computeMaxFit(ctx context.Context, db *pgxpool.Pool, itemCode string, qty float64, locationID int, locationCode string) (int, string, float64, bool, error) {
-	cap, err := shared.ItemBinCapacity(ctx, db, itemCode, locationID)
+	fits, err := shared.ComputeMaxFitUnits(ctx, db, itemCode, locationID, qty)
 	if err != nil {
 		return 0, "", 0, false, err
 	}
-	var currentQty float64
-	_ = db.QueryRow(ctx,
-		`SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
-		WHERE item_code=$1 AND location_id=$2`, itemCode, locationID).Scan(&currentQty)
-	free := *cap - currentQty
-	if free < 0 {
-		free = 0
-	}
-	maxFit := math.Min(free, qty)
-	return locationID, locationCode, maxFit, maxFit < qty, nil
+	return locationID, locationCode, fits, fits < qty, nil
 }

@@ -436,6 +436,11 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 				},
 			})
 		}
+		if limErr := shared.CheckBinLimits(c.Context(), tx, itemCode, body.TargetLocationID, qty); limErr != nil {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+				"ok": false, "error": limErr.Error(), "error_type": "bin_full",
+			})
+		}
 
 		var warehouseID int
 		_ = tx.QueryRow(c.Context(),

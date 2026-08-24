@@ -179,7 +179,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(product_group,''), COALESCE(category,''),
 			       COALESCE(parts_movement,''), COALESCE(parts_pbo,''), COALESCE(threshold_value,0),
 			       COALESCE(max_rate_discount,0), COALESCE(remark,''),
-			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0),
+			       COALESCE(description,''), COALESCE(min_order_qty,0), COALESCE(weight_per_unit,0), COALESCE(weight_uom,''), unit_length_cm, unit_width_cm, unit_height_cm, unit_volume_cm3,
 			       COALESCE(standard_rate,0), max_qty_per_bin, COALESCE(requires_qi,false),
 			       COALESCE(velocity_tier,'medium')
 			FROM items ` + where + order + fmt.Sprintf(` LIMIT $%d OFFSET $%d`, limitArg, offsetArg)
@@ -224,6 +224,11 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 			Description     string   `json:"description"`
 			MinOrderQty     float64  `json:"min_order_qty"`
 			WeightPerUnit   float64  `json:"weight_per_unit"`
+			WeightUOM       string   `json:"weight_uom"`
+			UnitLengthCm    *float64 `json:"unit_length_cm"`
+			UnitWidthCm     *float64 `json:"unit_width_cm"`
+			UnitHeightCm    *float64 `json:"unit_height_cm"`
+			UnitVolumeCm3   *float64 `json:"unit_volume_cm3"`
 			StandardRate    float64  `json:"standard_rate"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 			RequiresQI      bool     `json:"requires_qi"`
@@ -239,7 +244,7 @@ func listItems(db *pgxpool.Pool) fiber.Handler {
 				&i.CartonQty, &i.ShelfLifeDays,
 				&i.MRP, &i.HSNNo, &i.GSTPercentage, &i.Vech, &i.Make, &i.UOM, &i.ProductGroup, &i.Category,
 				&i.PartsMovement, &i.PartsPBO, &i.ThresholdValue, &i.MaxRateDiscount, &i.Remark,
-				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.StandardRate, &i.MaxQtyPerBin, &i.RequiresQI, &i.VelocityTier); err != nil {
+				&i.Description, &i.MinOrderQty, &i.WeightPerUnit, &i.WeightUOM, &i.UnitLengthCm, &i.UnitWidthCm, &i.UnitHeightCm, &i.UnitVolumeCm3, &i.StandardRate, &i.MaxQtyPerBin, &i.RequiresQI, &i.VelocityTier); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			i.ItemGroup = groupID
@@ -286,6 +291,11 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			Description     string   `json:"description"`
 			MinOrderQty     float64  `json:"min_order_qty"`
 			WeightPerUnit   float64  `json:"weight_per_unit"`
+			WeightUOM       string   `json:"weight_uom"`
+			UnitLengthCm    *float64 `json:"unit_length_cm"`
+			UnitWidthCm     *float64 `json:"unit_width_cm"`
+			UnitHeightCm    *float64 `json:"unit_height_cm"`
+			UnitVolumeCm3   *float64 `json:"unit_volume_cm3"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 			RequiresQI      bool     `json:"requires_qi"`
 		}
@@ -346,6 +356,17 @@ func createItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, body.RequiresQI)
+		if body.WeightUOM != "" || body.UnitLengthCm != nil || body.UnitWidthCm != nil || body.UnitHeightCm != nil || body.UnitVolumeCm3 != nil {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE items SET
+					weight_uom = COALESCE($2, weight_uom),
+					unit_length_cm = COALESCE($3, unit_length_cm),
+					unit_width_cm = COALESCE($4, unit_width_cm),
+					unit_height_cm = COALESCE($5, unit_height_cm),
+					unit_volume_cm3 = COALESCE($6, unit_volume_cm3)
+				WHERE id=$1`,
+				id, nullIfEmpty(body.WeightUOM), body.UnitLengthCm, body.UnitWidthCm, body.UnitHeightCm, body.UnitVolumeCm3)
+		}
 		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.create", "item", id, nil, fiber.Map{
 			"code": body.Code, "name": body.Name, "master_complete": complete,
 		})
@@ -392,6 +413,11 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 			Description     *string  `json:"description"`
 			MinOrderQty     *float64 `json:"min_order_qty"`
 			WeightPerUnit   *float64 `json:"weight_per_unit"`
+			WeightUOM       *string  `json:"weight_uom"`
+			UnitLengthCm    *float64 `json:"unit_length_cm"`
+			UnitWidthCm     *float64 `json:"unit_width_cm"`
+			UnitHeightCm    *float64 `json:"unit_height_cm"`
+			UnitVolumeCm3   *float64 `json:"unit_volume_cm3"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 			RequiresQI      *bool    `json:"requires_qi"`
 		}
@@ -500,6 +526,17 @@ func updateItem(db *pgxpool.Pool) fiber.Handler {
 		if body.RequiresQI != nil {
 			_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, *body.RequiresQI)
 		}
+		if body.WeightUOM != nil || body.UnitLengthCm != nil || body.UnitWidthCm != nil || body.UnitHeightCm != nil || body.UnitVolumeCm3 != nil {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE items SET
+					weight_uom = COALESCE($2, weight_uom),
+					unit_length_cm = COALESCE($3, unit_length_cm),
+					unit_width_cm = COALESCE($4, unit_width_cm),
+					unit_height_cm = COALESCE($5, unit_height_cm),
+					unit_volume_cm3 = COALESCE($6, unit_volume_cm3)
+				WHERE id=$1`,
+				id, body.WeightUOM, body.UnitLengthCm, body.UnitWidthCm, body.UnitHeightCm, body.UnitVolumeCm3)
+		}
 		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "item.update", "item", id, nil, fiber.Map{
 			"name": name, "master_complete": complete,
 		})
@@ -540,6 +577,11 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 			Description     string   `json:"description"`
 			MinOrderQty     float64  `json:"min_order_qty"`
 			WeightPerUnit   float64  `json:"weight_per_unit"`
+			WeightUOM       string   `json:"weight_uom"`
+			UnitLengthCm    *float64 `json:"unit_length_cm"`
+			UnitWidthCm     *float64 `json:"unit_width_cm"`
+			UnitHeightCm    *float64 `json:"unit_height_cm"`
+			UnitVolumeCm3   *float64 `json:"unit_volume_cm3"`
 			MaxQtyPerBin    *float64 `json:"max_qty_per_bin"`
 			RequiresQI      bool     `json:"requires_qi"`
 		}
@@ -622,6 +664,17 @@ func completeItemMaster(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		_, _ = db.Exec(c.Context(), `UPDATE items SET requires_qi=$2 WHERE id=$1`, id, body.RequiresQI)
+		if body.WeightUOM != "" || body.UnitLengthCm != nil || body.UnitWidthCm != nil || body.UnitHeightCm != nil || body.UnitVolumeCm3 != nil {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE items SET
+					weight_uom = COALESCE($2, weight_uom),
+					unit_length_cm = COALESCE($3, unit_length_cm),
+					unit_width_cm = COALESCE($4, unit_width_cm),
+					unit_height_cm = COALESCE($5, unit_height_cm),
+					unit_volume_cm3 = COALESCE($6, unit_volume_cm3)
+				WHERE id=$1`,
+				id, nullIfEmpty(body.WeightUOM), body.UnitLengthCm, body.UnitWidthCm, body.UnitHeightCm, body.UnitVolumeCm3)
+		}
 		return shared.OK(c, fiber.Map{"id": id, "code": body.Code, "master_complete": true})
 	}
 }
@@ -846,6 +899,8 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 			       COALESCE(wl.number, COALESCE(wl.bin,'')), COALESCE(wl.location_type,'storage'),
 			       wl.max_capacity_qty, COALESCE(wl.allow_mixed_items,true), COALESCE(wl.disabled,false),
 			       COALESCE(wl.is_occupied,false), COALESCE(wl.putaway_priority, 5),
+			       COALESCE(wl.length_cm,0), COALESCE(wl.width_cm,0), COALESCE(wl.height_cm,0),
+			       COALESCE(wl.volume_cm3,0), COALESCE(wl.max_weight_kg,0),
 			       COALESCE((SELECT SUM(actual_qty) FROM stock_location_balances slb WHERE slb.location_id = wl.id),0) AS on_hand_qty,
 			       (SELECT COUNT(DISTINCT item_code) FROM stock_location_balances slb WHERE slb.location_id = wl.id AND slb.actual_qty <> 0) AS item_count
 			FROM warehouse_locations wl
@@ -877,6 +932,11 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 			Disabled        bool     `json:"disabled"`
 			IsOccupied      bool     `json:"is_occupied"`
 			PutawayPriority int      `json:"putaway_priority"`
+			LengthCm        float64  `json:"length_cm"`
+			WidthCm         float64  `json:"width_cm"`
+			HeightCm        float64  `json:"height_cm"`
+			VolumeCm3       float64  `json:"volume_cm3"`
+			MaxWeightKg     float64  `json:"max_weight_kg"`
 			OnHandQty       float64  `json:"on_hand_qty"`
 			ItemCount       int      `json:"item_count"`
 		}
@@ -885,6 +945,7 @@ func listWarehouseLocations(db *pgxpool.Pool) fiber.Handler {
 			var l loc
 			if err := rows.Scan(&l.ID, &l.Code, &l.WarehouseID, &l.Zone, &l.Aisle, &l.Shelf, &l.Level, &l.Number,
 				&l.LocationType, &l.MaxCapacityQty, &l.AllowMixedItems, &l.Disabled, &l.IsOccupied, &l.PutawayPriority,
+				&l.LengthCm, &l.WidthCm, &l.HeightCm, &l.VolumeCm3, &l.MaxWeightKg,
 				&l.OnHandQty, &l.ItemCount); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
@@ -955,6 +1016,11 @@ func createLocation(db *pgxpool.Pool) fiber.Handler {
 			PutawayPriority *int     `json:"putaway_priority"`
 			Zone            string   `json:"zone"`
 			Code            string   `json:"code"`
+			LengthCm        *float64 `json:"length_cm"`
+			WidthCm         *float64 `json:"width_cm"`
+			HeightCm        *float64 `json:"height_cm"`
+			VolumeCm3       *float64 `json:"volume_cm3"`
+			MaxWeightKg     *float64 `json:"max_weight_kg"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -1015,6 +1081,17 @@ func createLocation(db *pgxpool.Pool) fiber.Handler {
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
+		}
+		if body.LengthCm != nil || body.WidthCm != nil || body.HeightCm != nil || body.VolumeCm3 != nil || body.MaxWeightKg != nil {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE warehouse_locations SET
+					length_cm = COALESCE($2, length_cm),
+					width_cm = COALESCE($3, width_cm),
+					height_cm = COALESCE($4, height_cm),
+					volume_cm3 = COALESCE($5, volume_cm3),
+					max_weight_kg = COALESCE($6, max_weight_kg)
+				WHERE id=$1`,
+				id, body.LengthCm, body.WidthCm, body.HeightCm, body.VolumeCm3, body.MaxWeightKg)
 		}
 		shared.WriteAudit(db, c.Context(), shared.ActorID(c), "location.create", "location", id, nil, fiber.Map{
 			"code": loc.Code, "warehouse_id": wid, "level": loc.Level,
@@ -1174,6 +1251,11 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 			Disabled        *bool    `json:"disabled"`
 			PutawayPriority *int     `json:"putaway_priority"`
 			Zone            *string  `json:"zone"`
+			LengthCm        *float64 `json:"length_cm"`
+			WidthCm         *float64 `json:"width_cm"`
+			HeightCm        *float64 `json:"height_cm"`
+			VolumeCm3       *float64 `json:"volume_cm3"`
+			MaxWeightKg     *float64 `json:"max_weight_kg"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -1226,6 +1308,17 @@ func updateLocation(db *pgxpool.Pool) fiber.Handler {
 		}
 		if tag.RowsAffected() == 0 {
 			return shared.Err(c, fiber.StatusNotFound, "location not found")
+		}
+		if body.LengthCm != nil || body.WidthCm != nil || body.HeightCm != nil || body.VolumeCm3 != nil || body.MaxWeightKg != nil {
+			_, _ = db.Exec(c.Context(), `
+				UPDATE warehouse_locations SET
+					length_cm = COALESCE($2, length_cm),
+					width_cm = COALESCE($3, width_cm),
+					height_cm = COALESCE($4, height_cm),
+					volume_cm3 = COALESCE($5, volume_cm3),
+					max_weight_kg = COALESCE($6, max_weight_kg)
+				WHERE id=$1`,
+				id, body.LengthCm, body.WidthCm, body.HeightCm, body.VolumeCm3, body.MaxWeightKg)
 		}
 		return shared.OK(c, fiber.Map{"id": id, "updated": true})
 	}

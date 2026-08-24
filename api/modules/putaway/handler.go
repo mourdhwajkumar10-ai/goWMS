@@ -13,12 +13,28 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// hsnZoneSQL returns a SQL CASE expression that maps HSN codes to putaway zones.
+// This is used by both queue() and queueZones(); keep it in one place.
+var hsnZoneSQL = `COALESCE(
+    CASE
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '391990%' THEN 'B'
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87149%' OR UPPER(COALESCE(i.hsn_no,'')) LIKE '87141%' THEN 'C'
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '7318%' THEN 'D'
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '40169%' THEN 'E'
+        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '854430%' THEN 'F'
+        ELSE 'G'
+    END, 'G')`
+
 // Register wires the putaway routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/", createLog(db))
 	r.Post("/fit-exception", recordFitException(db))
 	r.Get("/logs", listLogs(db))
-	r.Get("/rules", listRulesAlias(db))
+	r.Get("/rules", listRules(db))
+	r.Post("/rules", createRule(db))
+	r.Get("/rules/resolve", resolveRule(db))
+	r.Put("/rules/:id", updateRule(db))
 	r.Get("/suggest", suggest(db))
 	r.Get("/queue", queue(db))
 	r.Get("/queue/zones", queueZones(db))
@@ -31,7 +47,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/sessions/:id/place/:itemId", placeSessionItem(db))
 }
 
-func listRulesAlias(db *pgxpool.Pool) fiber.Handler {
+func listRules(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT id, item_code, warehouse, priority, stock_capacity
@@ -234,6 +250,16 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			SELECT COALESCE(velocity_tier,'medium')
 			FROM items WHERE UPPER(code)=UPPER($1) AND disabled=false`, itemCode).Scan(&velocityTier)
 
+		// Physical attributes drive the weight/volume fit layers (0 = skip that layer).
+		var unitWeight, unitVolume, iL, iW, iH float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(weight_per_unit,0), COALESCE(unit_volume_cm3,0),
+			       COALESCE(unit_length_cm,0), COALESCE(unit_width_cm,0), COALESCE(unit_height_cm,0)
+			FROM items WHERE UPPER(code)=UPPER($1)`, itemCode).Scan(&unitWeight, &unitVolume, &iL, &iW, &iH)
+		if unitVolume <= 0 && iL > 0 && iW > 0 && iH > 0 {
+			unitVolume = iL * iW * iH
+		}
+
 		if warehouseID < 1 {
 			if wid, werr := shared.EnsureDefaultWarehouse(c.Context(), db); werr == nil {
 				warehouseID = wid
@@ -321,7 +347,14 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				  SELECT COALESCE(SUM(actual_qty),0) AS on_hand
 				  FROM stock_location_balances slb
 				  WHERE slb.location_id = wl.id AND UPPER(slb.item_code)=UPPER($1)
-				) oh ON true`
+				) oh ON true
+				LEFT JOIN LATERAL (
+				  SELECT COALESCE(SUM(slb.actual_qty * COALESCE(i.weight_per_unit,0)),0) AS tot_weight,
+				         COALESCE(SUM(slb.actual_qty * COALESCE(NULLIF(i.unit_volume_cm3,0), i.unit_length_cm*i.unit_width_cm*i.unit_height_cm, 0)),0) AS tot_volume
+				  FROM stock_location_balances slb
+				  LEFT JOIN items i ON UPPER(i.code)=UPPER(slb.item_code)
+				  WHERE slb.location_id = wl.id AND slb.actual_qty <> 0
+				) phys ON true`
 		mixedOK := `
 				  AND (
 				    COALESCE(wl.allow_mixed_items, true) = true
@@ -358,8 +391,10 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			for rows.Next() {
 				var s cand
 				var cap *float64
+				var maxW, binV, totW, totV float64
 				if rows.Scan(&s.LocationID, &s.LocationCode, &s.WarehouseID, &cap, &s.OnHandQty,
-					&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt) != nil {
+					&s.Aisle, &s.Bay, &s.Level, &s.LocationType, &s.LastPickedBy, &s.LastPickedAt,
+					&maxW, &binV, &totW, &totV) != nil {
 					continue
 				}
 				if cap != nil {
@@ -374,6 +409,26 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				freeCap := 0.0
 				if s.FreeCapacity != nil {
 					freeCap = *s.FreeCapacity
+				}
+				// Weight fit layer: how many units the bin's remaining weight allows.
+				if unitWeight > 0 && maxW > 0 {
+					roomW := maxW - totW
+					if roomW < 0 {
+						roomW = 0
+					}
+					if byWeight := roomW / unitWeight; byWeight < freeCap {
+						freeCap = byWeight
+					}
+				}
+				// Volume fit layer: how many units the bin's remaining volume allows.
+				if unitVolume > 0 && binV > 0 {
+					roomV := binV - totV
+					if roomV < 0 {
+						roomV = 0
+					}
+					if byVolume := roomV / unitVolume; byVolume < freeCap {
+						freeCap = byVolume
+					}
 				}
 				s.MaxFitQty = math.Min(freeCap, requestedQty)
 				s.RequiresSplit = s.MaxFitQty < requestedQty
@@ -393,7 +448,9 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				SELECT wl.id, wl.code, wl.warehouse_id, cap.item_bin_cap, COALESCE(oh.on_hand,0),
 				       COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,'')), COALESCE(wl.level,''),
 				       COALESCE(wl.location_type,'storage'),
-				       COALESCE(u.username,''), COALESCE(wl.last_picked_at::text,'')
+				       COALESCE(u.username,''), COALESCE(wl.last_picked_at::text,''),
+				       COALESCE(wl.max_weight_kg,0), COALESCE(wl.volume_cm3,0),
+				       COALESCE(phys.tot_weight,0), COALESCE(phys.tot_volume,0)
 				FROM warehouse_locations wl` + joins + `
 				LEFT JOIN users u ON u.id = wl.last_picked_by_user_id` + `
 				WHERE COALESCE(wl.disabled,false)=false` + mixedOK
@@ -549,40 +606,20 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		zoneFilter := strings.TrimSpace(c.Query("zone"))
 
 		query := `
-			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
-			       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
-			       slb.suggested_location_id, wl2.code,
-			       COALESCE(
-			           CASE
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '391990%' THEN 'B'
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87149%' OR UPPER(COALESCE(i.hsn_no,'')) LIKE '87141%' THEN 'C'
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '7318%' THEN 'D'
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '40169%' THEN 'E'
-			               WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '854430%' THEN 'F'
-			               ELSE 'G'
-			           END, 'G'
-			       ) as zone
-			FROM stock_location_balances slb
-			JOIN warehouse_locations wl ON wl.id = slb.location_id
-			JOIN warehouses w ON w.id = slb.warehouse_id
-			LEFT JOIN items i ON i.code = slb.item_code
-			LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
-			WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
+			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,		       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
+		       slb.suggested_location_id, wl2.code,
+		       ` + hsnZoneSQL + ` as zone
+		FROM stock_location_balances slb
+		JOIN warehouse_locations wl ON wl.id = slb.location_id
+		JOIN warehouses w ON w.id = slb.warehouse_id
+		LEFT JOIN items i ON i.code = slb.item_code
+		LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
+		WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
 
 		args := []any{}
 		argIdx := 1
 		if zoneFilter != "" {
-			query += fmt.Sprintf(` AND COALESCE(
-			    CASE
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87141090' THEN 'A'
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '391990%%' THEN 'B'
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '87149%%' OR UPPER(COALESCE(i.hsn_no,'')) LIKE '87141%%' THEN 'C'
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '7318%%' THEN 'D'
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '40169%%' THEN 'E'
-			        WHEN UPPER(COALESCE(i.hsn_no,'')) LIKE '854430%%' THEN 'F'
-			        ELSE 'G'
-			    END, 'G') = $%d`, argIdx)
+			query += ` AND ` + hsnZoneSQL + ` = $` + strconv.Itoa(argIdx)
 			args = append(args, strings.ToUpper(zoneFilter))
 			argIdx++
 		}
@@ -627,20 +664,8 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 
 func queueZones(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(c.Context(), `
-			SELECT zone, COUNT(*) as count FROM (
-				SELECT
-					COALESCE(
-						CASE
-							WHEN UPPER(i.hsn_no) LIKE '87141090' THEN 'A'
-							WHEN UPPER(i.hsn_no) LIKE '391990%' THEN 'B'
-							WHEN UPPER(i.hsn_no) LIKE '87149%' OR UPPER(i.hsn_no) LIKE '87141%' THEN 'C'
-							WHEN UPPER(i.hsn_no) LIKE '7318%' THEN 'D'
-							WHEN UPPER(i.hsn_no) LIKE '40169%' THEN 'E'
-							WHEN UPPER(i.hsn_no) LIKE '854430%' THEN 'F'
-							ELSE 'G'
-						END, 'G'
-					) as zone
+		rows, err := db.Query(c.Context(), `SELECT zone, COUNT(*) as count FROM (
+				SELECT `+hsnZoneSQL+` as zone
 				FROM stock_location_balances slb
 				JOIN warehouse_locations wl ON wl.id = slb.location_id
 				LEFT JOIN items i ON i.code = slb.item_code
@@ -790,6 +815,9 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest,
 				fmt.Sprintf("bin holds max %.0f of this item (already %.0f, trying to add %.0f) — split or pick another location",
 					*cap, onHand, body.Quantity))
+		}
+		if err := shared.CheckBinLimits(c.Context(), tx, body.ItemCode, targetID, body.Quantity); err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
 		}
 
 		srcTag, srcErr := tx.Exec(c.Context(), `
@@ -969,4 +997,130 @@ func userID(c *fiber.Ctx) int {
 		return v
 	}
 	return 0
+}
+
+// ── Putaway Rules CRUD (merged from putawayrules module) ──
+
+func createRule(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			ItemCode      string  `json:"item_code"`
+			Warehouse     string  `json:"warehouse"`
+			Priority      int     `json:"priority"`
+			StockCapacity float64 `json:"stock_capacity"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.ItemCode == "" || body.Warehouse == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "item_code and warehouse required")
+		}
+		if body.Priority == 0 {
+			body.Priority = 1
+		}
+
+		var id int
+		err := db.QueryRow(c.Context(),
+			`INSERT INTO putaway_rules (item_code, warehouse, priority, stock_capacity)
+			 VALUES ($1, $2, $3, $4) RETURNING id`,
+			body.ItemCode, body.Warehouse, body.Priority, body.StockCapacity).Scan(&id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": id})
+	}
+}
+
+func resolveRule(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		itemCode := c.Query("item_code")
+		if itemCode == "" {
+			return shared.Err(c, fiber.StatusBadRequest, "item_code query required")
+		}
+
+		var (
+			ruleID  int
+			wh      string
+			cap     float64
+			current float64
+		)
+		err := db.QueryRow(c.Context(), `
+			SELECT pr.id, pr.warehouse, pr.stock_capacity
+			FROM putaway_rules pr
+			WHERE pr.item_code=$1 AND pr.active=true
+			ORDER BY pr.priority ASC LIMIT 1`, itemCode).Scan(&ruleID, &wh, &cap)
+		if err != nil {
+			return shared.OK(c, fiber.Map{
+				"found": false, "item_code": itemCode, "message": "no putaway rule for item",
+			})
+		}
+		var warehouseID int
+		_ = db.QueryRow(c.Context(), `SELECT id FROM warehouses WHERE UPPER(code)=UPPER($1)`, wh).Scan(&warehouseID)
+		rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
+		if rule != nil {
+			ruleID = rule.ID
+			wh = rule.Warehouse
+			cap = rule.StockCapacity
+			current = rule.CurrentQty
+		} else {
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(slb.actual_qty),0)
+				FROM stock_location_balances slb
+				JOIN warehouse_locations wl ON wl.id = slb.location_id
+				JOIN warehouses w ON w.id = slb.warehouse_id
+				WHERE UPPER(slb.item_code)=UPPER($1)
+				  AND wl.location_type IN ('pick_face','storage')
+				  AND ($2='' OR $2='any' OR $2='*' OR $2='all' OR UPPER(w.code)=UPPER($2))`,
+				itemCode, wh).Scan(&current)
+		}
+
+		available := cap - current
+		if available < 0 {
+			available = 0
+		}
+
+		return shared.OK(c, fiber.Map{
+			"rule_id":         ruleID,
+			"item_code":       itemCode,
+			"warehouse":       wh,
+			"stock_capacity":  cap,
+			"current_stock":   current,
+			"available_space": available,
+		})
+	}
+}
+
+func updateRule(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+
+		var body struct {
+			Warehouse     string  `json:"warehouse"`
+			Priority      int     `json:"priority"`
+			StockCapacity float64 `json:"stock_capacity"`
+			Active        *bool   `json:"active"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+
+		active := true
+		if body.Active != nil {
+			active = *body.Active
+		}
+
+		tag, err := db.Exec(c.Context(),
+			`UPDATE putaway_rules SET warehouse=$1, priority=$2, stock_capacity=$3, active=$4 WHERE id=$5`,
+			body.Warehouse, body.Priority, body.StockCapacity, active, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "rule not found")
+		}
+		return shared.OK(c, fiber.Map{"id": id})
+	}
 }

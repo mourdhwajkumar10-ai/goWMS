@@ -996,34 +996,32 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 			}
 		}
 
-		// Warehouse-level bin + SLE (legacy aggregate).
-		var qtyAfter float64
-		_ = db.QueryRow(c.Context(),
-			`SELECT COALESCE(actual_qty,0) FROM bins WHERE item_code=$1 AND warehouse=$2`,
-			l.itemCode, whCode).Scan(&qtyAfter)
-		qtyAfter += l.scanned
-
+		// Stock ledger entry (audit trail only — stock_location_balances is the single truth).
 		batchArg := any(nil)
 		if l.batch != "" {
 			batchArg = l.batch
 		}
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO stock_ledger_entries (item_code, warehouse, actual_qty, qty_after_transaction, voucher_type, voucher_no, posting_date, creation, batch_no)
-			VALUES ($1,$2,$3,$4,'GRN', $5, CURRENT_DATE, NOW(), $6)`,
-			l.itemCode, whCode, l.scanned, qtyAfter, voucherNo, batchArg); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if _, err := db.Exec(c.Context(), `
-			INSERT INTO bins (item_code, warehouse, actual_qty, projected_qty, last_synced_at)
-			VALUES ($1,$2,$3,$3,NOW())
-			ON CONFLICT (item_code, warehouse)
-			DO UPDATE SET actual_qty = bins.actual_qty + EXCLUDED.actual_qty,
-			              projected_qty = bins.projected_qty + EXCLUDED.actual_qty,
-			              last_synced_at = NOW()`,
-			l.itemCode, whCode, l.scanned); err != nil {
+			VALUES ($1,$2,$3,$3,'GRN', $5, CURRENT_DATE, NOW(), $6)`,
+			l.itemCode, whCode, l.scanned, voucherNo, batchArg); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 	}
+
+	// Backfill item weight from packing-list "Calculated Part Weight" where the
+	// item master has none — feeds the weight-based putaway fit layer.
+	_, _ = db.Exec(c.Context(), `
+		UPDATE items i SET
+			weight_per_unit = COALESCE(NULLIF(i.weight_per_unit,0), sub.w),
+			weight_uom = COALESCE(NULLIF(i.weight_uom,''),'Kg')
+		FROM (
+			SELECT UPPER(item_code) ic, MAX(unit_weight_kg) w
+			FROM grn_lines
+			WHERE grn_session_id=$1 AND COALESCE(unit_weight_kg,0) > 0
+			GROUP BY UPPER(item_code)
+		) sub
+		WHERE UPPER(i.code)=sub.ic`, sessionID)
 
 	// Update linked Purchase Order (purchase_receipt_no stores PO name).
 	poUpdate := fiber.Map{}
@@ -1214,6 +1212,9 @@ func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest,
 				fmt.Sprintf("bin holds max %.0f of this item (already %.0f, trying to add %.0f) — split or pick another location",
 					*cap, onHand, body.Quantity))
+		}
+		if err := shared.CheckBinLimits(c.Context(), db, body.ItemCode, targetID, body.Quantity); err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
 		}
 
 		srcCode := body.SourceLocation
