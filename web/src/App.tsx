@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import Layout from "./components/Layout";
+import FloorLayout from "./components/FloorLayout";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import GRN from "./pages/GRN";
@@ -41,8 +42,15 @@ import Roles from "./pages/Roles";
 import Returns from "./pages/Returns";
 import Backorders from "./pages/Backorders";
 import AuditLogs from "./pages/AuditLogs";
+import DockReceiving from "./pages/DockReceiving";
+import ItemVerifier from "./pages/ItemVerifier";
+import PutawayRunner from "./pages/PutawayRunner";
+import StockPeek from "./pages/StockPeek";
+import QuickCount from "./pages/QuickCount";
 import { getRole, getToken } from "./services/api";
 import { homePathForRole, isDeskRole } from "./utils/roleAccess";
+import { isHandheld } from "./utils/deviceDetect";
+import { hasPermission, canUseDevice } from "./utils/permissions";
 
 function RoleHome() {
   const role = getRole();
@@ -55,6 +63,13 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AppShell() {
+  // On handheld devices (Android phones, scanners) we use a stripped
+  // task-focused layout with no sidebar and only execution pages.
+  if (isHandheld()) return <FloorLayout />;
+  return <Layout />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -63,7 +78,7 @@ export default function App() {
         path="/"
         element={
           <RequireAuth>
-            <Layout />
+            <AppShell />
           </RequireAuth>
         }
       >
@@ -74,12 +89,8 @@ export default function App() {
         <Route path="receiving" element={<ReceivingWizard />} />
         <Route path="receiving-management" element={<ReceivingManagement />} />
         <Route path="exceptions" element={<GRNExceptions />} />
-        <Route path="grn-exceptions" element={<GRNExceptions />} />
         <Route path="follow-up" element={<GRNFollowUps />} />
-        <Route path="followups" element={<GRNFollowUps />} />
-        <Route path="grn-followups" element={<GRNFollowUps />} />
         <Route path="grn-audit" element={<GRNAudit />} />
-        <Route path="audit" element={<GRNAudit />} />
         <Route path="pick" element={<Pick />} />
         <Route path="pack" element={<Pack />} />
         <Route path="dispatch" element={<Dispatch />} />
@@ -112,6 +123,11 @@ export default function App() {
         <Route path="purchase-invoices" element={<PurchaseInvoices />} />
         <Route path="stock-entries" element={<StockEntries />} />
         <Route path="stock-reconciliations" element={<StockReconciliations />} />
+        <Route path="dock-receiving" element={<DockReceiving />} />
+        <Route path="item-verifier" element={<ItemVerifier />} />
+        <Route path="putaway-runner" element={<PutawayRunner />} />
+        <Route path="stock-peek" element={<StockPeek />} />
+        <Route path="quick-count" element={<QuickCount />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

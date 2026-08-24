@@ -36,8 +36,9 @@ export default function Login() {
           setError(r.error || "Login failed");
           return;
         }
-        setSession(r.data.token, r.data.role);
-        goHome(r.data.role);
+        const d = r.data as any;
+        setSession(d.token, d.role, username, d.permissions, d.device_policy, d.user?.warehouse_ids);
+        goHome(d.role);
         return;
       }
       if (!pin || (!badge && !empNo)) {
@@ -53,8 +54,9 @@ export default function Login() {
         setError(r.error || "PIN login failed");
         return;
       }
-      setSession(r.data.token, r.data.role);
-      goHome(r.data.role);
+      const d = r.data as any;
+      setSession(d.token, d.role, d.employee_name || badge || empNo, d.permissions, d.device_policy, d.user?.warehouse_ids);
+      goHome(d.role);
     } catch (err) {
       setError((err as Error).message);
     } finally {

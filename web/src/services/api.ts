@@ -1,6 +1,7 @@
 const BASE = "/api";
 const TOKEN_KEY = "gowms_token";
 const ROLE_KEY = "gowms_role";
+const USER_KEY = "gowms_user";
 
 export function getToken(): string | null {
   const t = localStorage.getItem(TOKEN_KEY);
@@ -8,18 +9,37 @@ export function getToken(): string | null {
   return t;
 }
 
-export function setSession(token: string, role: string) {
+export function setSession(token: string, role: string, username?: string, permissions?: string[], devicePolicy?: any, warehouseIds?: number[]) {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(ROLE_KEY, role);
+  if (username) localStorage.setItem(USER_KEY, username);
+  // Persist permission metadata (additive, compat-safe).
+  if (permissions && permissions.length > 0) {
+    localStorage.setItem("gowms_permissions", JSON.stringify(permissions));
+  }
+  if (devicePolicy) {
+    localStorage.setItem("gowms_device_policy", JSON.stringify(devicePolicy));
+  }
+  if (warehouseIds && warehouseIds.length > 0) {
+    localStorage.setItem("gowms_warehouse_ids", JSON.stringify(warehouseIds));
+  }
 }
 
 export function getRole(): string | null {
   return localStorage.getItem(ROLE_KEY);
 }
 
+export function getUsername(): string | null {
+  return localStorage.getItem(USER_KEY);
+}
+
 export function clearSession() {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(ROLE_KEY);
+  localStorage.removeItem(USER_KEY);
+  localStorage.removeItem("gowms_permissions");
+  localStorage.removeItem("gowms_device_policy");
+  localStorage.removeItem("gowms_warehouse_ids");
 }
 
 const AUTH_PUBLIC = ["/auth/login", "/auth/pin-login", "/auth/register"];

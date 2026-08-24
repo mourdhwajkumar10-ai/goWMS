@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import "../styles/receiving-wizard.css";
+import { cameraErrorMessage } from "../utils/receivingData";
+import type { CameraState } from "../utils/receivingData";
 
 export type ScanOutcome = "success" | "error";
 
@@ -59,6 +61,7 @@ export default function CameraScanner({
 
   const [torchOn, setTorchOn] = useState(false);
   const [cameraOn, setCameraOn] = useState(true);
+  const [cameraState, setCameraState] = useState<CameraState>("starting");
   const [facing, setFacing] = useState<"environment" | "user">("environment");
   const facingRef = useRef<"environment" | "user">("environment");
   const deviceIdRef = useRef<string | undefined>(undefined);
@@ -197,6 +200,7 @@ export default function CameraScanner({
           return;
         }
         streamRef.current = stream;
+        setCameraState("ready");
         const settings = stream.getVideoTracks()[0]?.getSettings();
         if (settings?.deviceId) deviceIdRef.current = settings.deviceId;
         if (settings?.facingMode === "user" || settings?.facingMode === "environment") {
@@ -205,7 +209,8 @@ export default function CameraScanner({
         }
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          await videoRef.current.play();
+          videoRef.current.setAttribute("playsinline", "true");
+          await videoRef.current.play().catch(() => undefined);
         }
         if (stale()) {
           stopTracks(stream);
@@ -266,7 +271,21 @@ export default function CameraScanner({
           animRef.current = requestAnimationFrame(() => { void detect(); });
         }
       } catch (e: any) {
-        if (!stale()) setError(e.name === "NotAllowedError" ? "Camera permission denied" : e.message || "Camera error");
+        if (!stale()) {
+          const name = String(e?.name ?? "");
+          if (name === "NotAllowedError" || name === "PermissionDeniedError") {
+            setCameraState("permission_denied");
+          } else if (name === "NotFoundError") {
+            setCameraState("no_camera");
+          } else if (name === "NotReadableError") {
+            setCameraState("busy");
+          } else if (name === "SecurityError") {
+            setCameraState("unsupported");
+          } else {
+            setCameraState("unsupported");
+          }
+          setError(cameraErrorMessage(e?.name));
+        }
       }
     })();
 
