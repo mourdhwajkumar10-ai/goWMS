@@ -52,3 +52,55 @@ export function deskLabel(role?: string | null) {
   if (isDeskRole(role)) return 'Warehouse Desk'
   return 'Floor'
 }
+
+/** Short label for the floor topbar. */
+export function floorLabel(role?: string | null) {
+  const r = (role || '').toLowerCase()
+  if (r === 'qi') return 'Receiving'
+  if (r === 'picker') return 'Picking'
+  if (r === 'packer') return 'Packing'
+  if (r === 'dispatcher' || r === 'driver') return 'Dispatch'
+  if (r === 'billing') return 'Billing'
+  return 'Floor'
+}
+
+// ── Device-aware page filtering ──
+
+/** All task-execution pages available on handheld devices. */
+const HANDHELD_PAGES = [
+  '/receiving',
+  '/dock-receiving',
+  '/item-verifier',
+  '/putaway',
+  '/putaway-runner',
+  '/pick',
+  '/pack',
+  '/dispatch',
+  '/cycle-count',
+  '/quick-count',
+  '/stock-scan',
+  '/stock-peek',
+  '/qi',
+  '/exceptions',
+  '/notifications',
+]
+
+/** Per-role subset of handheld pages. Desk roles get all of them on mobile.
+ *  Floor roles get only the ones relevant to their job. */
+const HANDHELD_BY_ROLE: Record<string, string[]> = {
+  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/putaway', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
+  picker: ['/pick', '/stock-scan', '/cycle-count', '/quick-count', '/notifications'],
+  packer: ['/pack', '/notifications'],
+  dispatcher: ['/dispatch', '/notifications'],
+  driver: ['/dispatch', '/notifications'],
+  billing: ['/notifications'],
+}
+
+/** Returns the list of paths the current role+device may navigate to.
+ *  Desk roles on desktop see everything (null); desk roles on handheld
+ *  see all task pages; floor roles see their narrow subset. */
+export function floorPathsForDevice(role?: string | null): string[] {
+  const r = (role || '').toLowerCase()
+  if (isDeskRole(role)) return HANDHELD_PAGES
+  return HANDHELD_BY_ROLE[r] || ['/receiving', '/notifications']
+}

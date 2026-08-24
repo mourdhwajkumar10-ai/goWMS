@@ -5,6 +5,7 @@ import api from "../services/api";
 import ScannerInput from "../components/ScannerInput";
 import CameraScanner from "../components/CameraScanner";
 import "../styles/receiving-wizard.css";
+import { cameraErrorMessage, mergeReceivingChoices } from "../utils/receivingData";
 
 interface POInfo { id: number; name: string; supplier_name: string; status: string; grand_total: number; schedule_date: string; item_count: number; total_qty: number; received_qty: number; open_sessions: number; resume_session_id?: number | null; }
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string; }
@@ -30,6 +31,8 @@ export default function ReceivingWizard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [pendingPOs, setPendingPOs] = useState<POInfo[]>([]);
+  const [pendingLoading, setPendingLoading] = useState(true);
+  const [pendingError, setPendingError] = useState("");
   const [selPO, setSelPO] = useState<POInfo | null>(null);
   const [sid, setSid] = useState<number | null>(resumeSid ? Number(resumeSid) : null);
   const [sNo, setSNo] = useState<string | null>(null);
@@ -61,7 +64,29 @@ export default function ReceivingWizard() {
 
   const doFlash = useCallback((t: "success" | "error") => { setFlash(t); setTimeout(() => setFlash(null), 300); }, []);
 
-  useEffect(() => { api.receivingPendingPOs().then(r => { if (r.ok) setPendingPOs((r.data || []).slice(0, 5)); }); }, []);
+  useEffect(() => {
+    let cancelled = false;
+    setPendingLoading(true);
+    setPendingError("");
+    Promise.all([api.receivingPendingPOs(), api.packingListList()])
+      .then(([poResult, sessionResult]) => {
+        if (cancelled) return;
+        if (!poResult.ok && !sessionResult.ok) {
+          setPendingError(poResult.error || sessionResult.error || "Could not load receiving choices");
+          return;
+        }
+        const merged = mergeReceivingChoices(
+          poResult.ok ? (poResult.data || []) : [],
+          sessionResult.ok ? (sessionResult.data || []) : [],
+        );
+        setPendingPOs(merged.slice(0, 5) as POInfo[]);
+      })
+      .catch((e: any) => {
+        if (!cancelled) setPendingError(e?.message || "Could not load receiving choices");
+      })
+      .finally(() => { if (!cancelled) setPendingLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (resumeSid) {
@@ -354,11 +379,14 @@ export default function ReceivingWizard() {
       {step === "select_po" && <>
         <div className="rw-header"><div className="rw-header-info"><div className="rw-header-session">Receiving</div><div className="rw-header-po">Select a purchase order</div></div></div>
         <div className="rw-po-list">
+          {pendingError && <div className="rw-empty-msg" style={{ padding: 12 }} role="alert">{pendingError}</div>}
           {error && <div className="rw-empty-msg" style={{ padding: 12 }}>{error}</div>}
-          {pendingPOs.length === 0
-            ? <div className="rw-empty"><div className="rw-empty-icon">📦</div><div className="rw-empty-title">No pending POs</div><div className="rw-empty-msg">Create POs in your ERP to start</div></div>
+          {pendingLoading
+            ? <div className="rw-empty" role="status"><div className="rw-empty-icon">⏳</div><div className="rw-empty-title">Loading receiving choices…</div></div>
+            : pendingPOs.length === 0
+              ? <div className="rw-empty"><div className="rw-empty-icon">📦</div><div className="rw-empty-title">No pending POs</div><div className="rw-empty-msg">Create POs in your ERP to start</div></div>
             : pendingPOs.map(po => (
-              <div key={po.id} className="rw-po-item" onClick={() => handleSelectPO(po)}>
+              <div key={`${po.name}-${po.resume_session_id ?? po.id}`} className="rw-po-item" onClick={() => handleSelectPO(po)}>
                 <div className="rw-po-info"><div className="rw-po-name">{po.name}</div><div className="rw-po-supplier">{po.supplier_name}</div><div className="rw-po-meta">{po.item_count} items · {po.total_qty} units</div></div>
                 <span className={`rw-po-badge ${po.open_sessions > 0 ? "resume" : "start"}`}>{po.open_sessions > 0 ? "Resume" : "Start"}</span>
               </div>

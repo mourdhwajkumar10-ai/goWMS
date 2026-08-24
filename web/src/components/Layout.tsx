@@ -1,7 +1,9 @@
 import { NavLink, Navigate, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { clearSession, getRole } from "../services/api";
+import { getRole } from "../services/api";
 import { deskLabel, navPathsForRole, canOpenPath, homePathForRole } from "../utils/roleAccess";
+import NotificationBell from "./NotificationBell";
+import UserMenu from "./UserMenu";
 
 const sections: { title: string; items: { to: string; label: string; icon: string; adminOnly?: boolean; rolesAdminOnly?: boolean; supervisorOnly?: boolean }[] }[] = [
   {
@@ -9,7 +11,6 @@ const sections: { title: string; items: { to: string; label: string; icon: strin
     items: [
       { to: "/", label: "Dashboard", icon: "⌂" },
       { to: "/analytics", label: "Analytics", icon: "▦" },
-      { to: "/notifications", label: "Notifications", icon: "◔" },
     ],
   },
   {
@@ -88,7 +89,6 @@ export default function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
   const role = getRole();
-  const initial = (role || "U").slice(0, 1).toUpperCase();
   const showAdmin = canSeeAdminNav(role);
   const showRoles = canSeeRolesNav(role);
   const floorPaths = navPathsForRole(role);
@@ -98,11 +98,6 @@ export default function Layout() {
   const [navQuery, setNavQuery] = useState("");
   const [navOpen, setNavOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
-
-  const logout = () => {
-    clearSession();
-    navigate("/login");
-  };
 
   const toggleMenu = () => {
     if (window.matchMedia("(max-width: 640px)").matches) {
@@ -235,11 +230,8 @@ export default function Layout() {
           </div>
           )}
           <div className="topbar-right">
-            <span className="role-badge">{role ?? "user"}</span>
-            <span className="avatar-chip" title={role ?? "user"}>{initial}</span>
-            <button type="button" className="btn btn-ghost btn-sm" onClick={logout}>
-              Log out
-            </button>
+            <NotificationBell />
+            <UserMenu />
           </div>
         </header>
         <main className="content">
