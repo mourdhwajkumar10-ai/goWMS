@@ -47,14 +47,16 @@ import ItemVerifier from "./pages/ItemVerifier";
 import PutawayRunner from "./pages/PutawayRunner";
 import StockPeek from "./pages/StockPeek";
 import QuickCount from "./pages/QuickCount";
+import BoxVerification from "./pages/BoxVerification";
+import FloorHome from "./pages/FloorHome";
 import { getRole, getToken } from "./services/api";
-import { homePathForRole, isDeskRole } from "./utils/roleAccess";
-import { isHandheld } from "./utils/deviceDetect";
-import { hasPermission, canUseDevice } from "./utils/permissions";
+import { homePathForSession } from "./utils/roleAccess";
+import { getEffectiveShell } from "./utils/shellMode";
 
 function RoleHome() {
   const role = getRole();
-  if (!isDeskRole(role)) return <Navigate to={homePathForRole(role)} replace />;
+  const home = homePathForSession(role);
+  if (home !== "/") return <Navigate to={home} replace />;
   return <Dashboard />;
 }
 
@@ -64,9 +66,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function AppShell() {
-  // On handheld devices (Android phones, scanners) we use a stripped
-  // task-focused layout with no sidebar and only execution pages.
-  if (isHandheld()) return <FloorLayout />;
+  if (getEffectiveShell() === "floor") return <FloorLayout />;
   return <Layout />;
 }
 
@@ -83,6 +83,7 @@ export default function App() {
         }
       >
         <Route index element={<RoleHome />} />
+        <Route path="floor" element={<FloorHome />} />
         <Route path="analytics" element={<Analytics />} />
         <Route path="grn" element={<GRN />} />
         <Route path="grn/:id" element={<GRN />} />
@@ -128,6 +129,7 @@ export default function App() {
         <Route path="putaway-runner" element={<PutawayRunner />} />
         <Route path="stock-peek" element={<StockPeek />} />
         <Route path="quick-count" element={<QuickCount />} />
+        <Route path="box-verification" element={<BoxVerification />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

@@ -1,43 +1,65 @@
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
+import {
+  AlertTriangle,
+  ArrowDownToLine,
+  Bell,
+  Box,
+  CheckSquare,
+  Eye,
+  HeartPulse,
+  Menu,
+  PackageOpen,
+  RefreshCw,
+  ScanLine,
+  Search,
+  Square,
+  Truck,
+  type LucideIcon,
+} from "lucide-react";
 import { getRole } from "../services/api";
-import { floorLabel, floorPathsForDevice } from "../utils/roleAccess";
-import { hasPermission } from "../utils/permissions";
+import { floorLabel } from "../utils/roleAccess";
+import { listFloorTiles } from "../utils/navCatalog";
+import { getPermissions } from "../utils/permissions";
 import NotificationBell from "./NotificationBell";
 import UserMenu from "./UserMenu";
 
-/** Task-only pages shown on handheld devices. Everything else is hidden. */
-const floorPages: { to: string; label: string; icon: string }[] = [
-  { to: "/receiving", label: "RF Receiver", icon: "📥" },
-  { to: "/dock-receiving", label: "Dock Receiving", icon: "🏗" },
-  { to: "/item-verifier", label: "Item Verifier", icon: "✓" },
-  { to: "/putaway", label: "Putaway", icon: "⇨" },
-  { to: "/putaway-runner", label: "Putaway Runner", icon: "🏃" },
-  { to: "/pick", label: "Picking", icon: "☑" },
-  { to: "/pack", label: "Packing", icon: "▣" },
-  { to: "/dispatch", label: "Dispatch", icon: "➤" },
-  { to: "/cycle-count", label: "Cycle Count", icon: "↻" },
-  { to: "/quick-count", label: "Quick Count", icon: "⌘" },
-  { to: "/stock-scan", label: "Stock Scan", icon: "⌖" },
-  { to: "/stock-peek", label: "Stock Peek", icon: "👁" },
-  { to: "/qi", label: "QI", icon: "✚" },
-  { to: "/exceptions", label: "Exceptions", icon: "⚠" },
-  { to: "/notifications", label: "Notifications", icon: "🔔" },
-];
+const FLOOR_ICONS: Record<string, LucideIcon> = {
+  "/receiving": PackageOpen,
+  "/dock-receiving": Box,
+  "/item-verifier": CheckSquare,
+  "/box-verification": ScanLine,
+  "/putaway": ArrowDownToLine,
+  "/putaway-runner": Truck,
+  "/pick": CheckSquare,
+  "/pack": Square,
+  "/dispatch": Truck,
+  "/cycle-count": RefreshCw,
+  "/quick-count": Search,
+  "/stock-scan": ScanLine,
+  "/stock-peek": Eye,
+  "/qi": HeartPulse,
+  "/exceptions": AlertTriangle,
+  "/notifications": Bell,
+};
 
 export default function FloorLayout() {
   const location = useLocation();
   const role = getRole();
   const label = floorLabel(role);
-  const allowed = floorPathsForDevice(role);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     setDrawerOpen(false);
   }, [location.pathname]);
 
-  const pages = floorPages.filter((p) => allowed.includes(p.to));
-  const currentPage = pages.find((p) => location.pathname === p.to || location.pathname.startsWith(p.to + "/"));
+  const pages = listFloorTiles(role, getPermissions());
+  const currentPage = pages.find(
+    (p) => location.pathname === p.to || location.pathname.startsWith(p.to + "/")
+  );
+  const homeTitle = location.pathname === "/floor" || location.pathname === "/"
+    ? "Floor tasks"
+    : null;
 
   return (
     <div className="floor-shell">
@@ -56,19 +78,24 @@ export default function FloorLayout() {
           </div>
         </div>
         <nav className="floor-nav">
-          {pages.map((p) => (
-            <NavLink
-              key={p.to}
-              to={p.to}
-              end={p.to !== "/grn"}
-              className={({ isActive }) =>
-                `floor-nav-link ${isActive ? "active" : ""}`
-              }
-            >
-              <span className="floor-nav-icon">{p.icon}</span>
-              <span>{p.label}</span>
-            </NavLink>
-          ))}
+          {pages.map((p) => {
+            const Icon = FLOOR_ICONS[p.to];
+            return (
+              <NavLink
+                key={p.to}
+                to={p.to}
+                end={p.to !== "/grn"}
+                className={({ isActive }) =>
+                  `floor-nav-link ${isActive ? "active" : ""}`
+                }
+              >
+                {Icon ? (
+                  <Icon size={16} strokeWidth={1.8} className="floor-nav-icon" />
+                ) : null}
+                <span>{p.label}</span>
+              </NavLink>
+            );
+          })}
         </nav>
       </aside>
 
@@ -82,10 +109,10 @@ export default function FloorLayout() {
             aria-label="Menu"
             onClick={() => setDrawerOpen((v) => !v)}
           >
-            ☰
+            <Menu size={18} strokeWidth={1.8} />
           </button>
           <span className="floor-page-title">
-            {currentPage?.label ?? "goWMS"}
+            {homeTitle ?? currentPage?.label ?? "goWMS"}
           </span>
           <div className="floor-topbar-right">
             <NotificationBell />

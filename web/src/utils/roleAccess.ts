@@ -3,6 +3,7 @@ import {
   floorDeskPathsForRole,
   handheldPathsForRole,
 } from './navCatalog'
+import { getEffectiveShell } from './shellMode'
 
 /** Desk roles see the full Warehouse Desk. Everyone else is floor. */
 export function isDeskRole(role?: string | null) {
@@ -25,10 +26,19 @@ export function navPathsForRole(role?: string | null): string[] | null {
   return floorDeskPathsForRole(role)
 }
 
+/** Role-only home (ignores shell). Prefer homePathForSession after login / RoleHome. */
 export function homePathForRole(role?: string | null) {
   if (isDeskRole(role)) return '/'
   const r = (role || '').toLowerCase()
   return FLOOR_HOME[r] || '/grn'
+}
+
+/** Shell-aware home: floor shell → launcher; desk → role home. */
+export function homePathForSession(role?: string | null): string {
+  if (getEffectiveShell() === 'floor') return '/floor'
+  if (isDeskRole(role)) return '/'
+  const r = (role || '').toLowerCase()
+  return FLOOR_HOME[r] || '/floor'
 }
 
 export function canOpenPath(role: string | null | undefined, path: string) {
