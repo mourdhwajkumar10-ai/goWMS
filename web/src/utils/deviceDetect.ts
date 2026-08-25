@@ -14,6 +14,13 @@ export function isHandheld(): boolean {
   return result
 }
 
+/** Read the stored device preference (explicit override or last auto-detect cache). */
+export function getDeviceOverride(): 'handheld' | 'desk' | null {
+  const v = localStorage.getItem(KEY)
+  if (v === 'handheld' || v === 'desk') return v
+  return null
+}
+
 /** Force-override (useful for testing from a desktop browser with devtools mobile emulation).
  *  Pass null to clear and re-detect on next isHandheld() call. */
 export function setDeviceOverride(v: 'handheld' | 'desk' | null) {
