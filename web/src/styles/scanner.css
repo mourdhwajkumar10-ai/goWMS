@@ -117,6 +117,73 @@
 .floor-main { display: flex; flex-direction: column; min-height: 100dvh; }
 .floor-content { flex: 1; overflow-y: auto; }
 
+/* ─── Floor task launcher ─── */
+.floor-launcher {
+  padding: 20px 16px 32px;
+  max-width: 448px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.floor-launcher-title {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-family: var(--sm-font);
+  color: var(--foreground, var(--sm-fg));
+}
+.floor-launcher-sub {
+  font-size: 13px;
+  color: var(--muted-foreground, var(--sm-muted-fg));
+  margin-bottom: 8px;
+  font-family: var(--sm-font);
+}
+.floor-launcher-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.floor-launcher-tile {
+  min-height: 96px;
+  padding: 16px;
+  border-radius: var(--radius-lg, var(--sm-radius));
+  border: 1px solid oklch(0.912 0.005 250 / 0.7);
+  background: var(--card, var(--sm-card));
+  box-shadow: var(--sm-shadow, 0 1px 2px rgba(16, 19, 24, 0.06));
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--sm-font);
+  color: var(--foreground, var(--sm-fg));
+}
+.floor-launcher-tile:active { transform: scale(0.98); }
+.floor-launcher-tile-label {
+  font-size: 15px;
+  font-weight: 600;
+}
+.floor-launcher-empty {
+  padding: 24px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-family: var(--sm-font);
+}
+.floor-launcher-empty-msg {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--foreground, var(--sm-fg));
+  margin: 0;
+}
+.floor-launcher-empty-hint {
+  font-size: 13px;
+  color: var(--muted-foreground, var(--sm-muted-fg));
+  margin: 0;
+  line-height: 1.4;
+}
+
 /* ─── Scanner Layout (shared page shell) ─── */
 .scanner-root {
   display: flex; flex-direction: column;
