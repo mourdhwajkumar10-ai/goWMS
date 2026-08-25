@@ -1,6 +1,10 @@
 // @vitest-environment node
 import { describe, expect, it, beforeEach } from 'vitest'
-import { setDeviceOverride } from '../utils/deviceDetect'
+import {
+  getDeviceOverride,
+  isHandheld,
+  setDeviceOverride,
+} from '../utils/deviceDetect'
 import { getEffectiveShell, canSwitchToShell } from '../utils/shellMode'
 import { storeDevicePolicy, clearPermissions } from '../utils/permissions'
 
@@ -21,6 +25,32 @@ beforeEach(() => {
   resetStorage()
   clearPermissions()
   setDeviceOverride(null)
+})
+
+describe('device override vs auto cache', () => {
+  it('getDeviceOverride ignores auto-detect cache', () => {
+    localStorage.setItem('gowms_device', 'handheld')
+    expect(getDeviceOverride()).toBeNull()
+    expect(isHandheld()).toBe(true)
+  })
+
+  it('setDeviceOverride writes override key only', () => {
+    localStorage.setItem('gowms_device', 'desk')
+    setDeviceOverride('handheld')
+    expect(localStorage.getItem('gowms_device_override')).toBe('handheld')
+    expect(localStorage.getItem('gowms_device')).toBe('desk')
+    expect(getDeviceOverride()).toBe('handheld')
+    expect(isHandheld()).toBe(true)
+  })
+
+  it('clearing override leaves auto cache and restores auto path', () => {
+    localStorage.setItem('gowms_device', 'desk')
+    setDeviceOverride('handheld')
+    setDeviceOverride(null)
+    expect(getDeviceOverride()).toBeNull()
+    expect(localStorage.getItem('gowms_device')).toBe('desk')
+    expect(isHandheld()).toBe(false)
+  })
 })
 
 describe('getEffectiveShell / canSwitchToShell', () => {
@@ -52,5 +82,11 @@ describe('getEffectiveShell / canSwitchToShell', () => {
     storeDevicePolicy({ desktop: false, handheld: false, camera: false })
     setDeviceOverride('handheld')
     expect(getEffectiveShell()).toBe('desk')
+  })
+
+  it('auto cache alone does not count as override for shell', () => {
+    localStorage.setItem('gowms_device', 'handheld')
+    expect(getDeviceOverride()).toBeNull()
+    expect(getEffectiveShell()).toBe('floor')
   })
 })
