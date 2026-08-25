@@ -1,6 +1,6 @@
 # Floor and Desk Shell Views Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Ship a Floor task launcher and scoped Desk sidebar so ground staff are not overwhelmed, while managers keep breadth on desk and can switch Floor/Desk on the same login.
 
@@ -81,7 +81,7 @@
   ```
 - Consumes: `hasPermission` semantics — when `permissions.length === 0`, use `rolesFallback`; when non-empty, item visible if any `permissions` entry matches via existing `hasPermission` **or** direct includes (prefer calling `hasPermission` after `storePermissions` in tests).
 
-- [ ] **Step 1: Write failing tests for catalog filters**
+- [x] **Step 1: Write failing tests for catalog filters**
 
 Create `web/src/__tests__/navCatalog.test.ts`:
 
@@ -147,12 +147,12 @@ describe('listDeskNavItems', () => {
 })
 ```
 
-- [ ] **Step 2: Run tests — expect fail**
+- [x] **Step 2: Run tests — expect fail**
 
 Run: `cd web && npm test -- src/__tests__/navCatalog.test.ts`  
 Expected: FAIL module not found / exports missing.
 
-- [ ] **Step 3: Implement `navCatalog.ts`**
+- [x] **Step 3: Implement `navCatalog.ts`**
 
 Populate `NAV_CATALOG` from current `Layout.tsx` `sections` + `FloorLayout.tsx` `floorPages`. Rules when `permissions` arg is empty:
 
@@ -167,12 +167,12 @@ Floor tiles: `floor: true` items whose path is in `floorPathsForDevice(role)` wh
 
 Keep `roleAccess.ts` public functions working — either reimplement them to call catalog or leave tables and make catalog the single source; prefer **catalog as source**, thin wrappers in `roleAccess.ts`.
 
-- [ ] **Step 4: Re-run tests — expect pass**
+- [x] **Step 4: Re-run tests — expect pass**
 
 Run: `cd web && npm test -- src/__tests__/navCatalog.test.ts`  
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/utils/navCatalog.ts web/src/utils/roleAccess.ts web/src/__tests__/navCatalog.test.ts
@@ -204,7 +204,7 @@ EOF
   ```
 - Consumes: `isHandheld` detection path, `setDeviceOverride`, `canUseDevice` from `permissions.ts`
 
-- [ ] **Step 1: Write failing shellMode tests**
+- [x] **Step 1: Write failing shellMode tests**
 
 ```ts
 // @vitest-environment node
@@ -250,11 +250,11 @@ it('blocks floor when device_policy.handheld is false', () => {
 })
 ```
 
-- [ ] **Step 2: Run — expect fail**
+- [x] **Step 2: Run — expect fail**
 
 Run: `cd web && npm test -- src/__tests__/shellMode.test.ts`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `deviceDetect.ts`:
 
@@ -274,11 +274,11 @@ Note: today `isHandheld()` treats any cached value as authoritative. `getEffecti
 
 Implement `getEffectiveShell` / `canSwitchToShell` in `shellMode.ts` accordingly.
 
-- [ ] **Step 4: Tests pass**
+- [x] **Step 4: Tests pass**
 
 Run: `cd web && npm test -- src/__tests__/shellMode.test.ts`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/utils/shellMode.ts web/src/utils/deviceDetect.ts web/src/__tests__/shellMode.test.ts
@@ -305,7 +305,7 @@ EOF
 - Consumes: `listFloorTiles(getRole(), getPermissions())`, `useNavigate`
 - Produces: Floor home page component default export
 
-- [ ] **Step 1: Add CSS for launcher**
+- [x] **Step 1: Add CSS for launcher**
 
 In `scanner.css`:
 
@@ -358,7 +358,7 @@ In `scanner.css`:
 }
 ```
 
-- [ ] **Step 2: Implement `FloorTaskLauncher` + `FloorHome`**
+- [x] **Step 2: Implement `FloorTaskLauncher` + `FloorHome`**
 
 ```tsx
 // FloorHome.tsx — sketch
@@ -381,12 +381,12 @@ export default function FloorHome() {
 
 Tiles navigate with `navigate(tile.to)`. Empty state copy per spec.
 
-- [ ] **Step 3: Manual check in browser** (dev server)
+- [x] **Step 3: Manual check in browser** (dev server)
 
 Force floor: in console `localStorage.setItem('gowms_device','handheld'); location.reload()`  
 Open `/` after login as picker-like role — expect tile grid.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/pages/FloorHome.tsx web/src/components/FloorTaskLauncher.tsx web/src/styles/scanner.css
@@ -411,7 +411,7 @@ EOF
 - Consumes: `getEffectiveShell`, `listFloorTiles`, `FloorHome`
 - Produces: Floor drawer from catalog; index route shows FloorHome when shell is floor
 
-- [ ] **Step 1: Change `AppShell`**
+- [x] **Step 1: Change `AppShell`**
 
 ```tsx
 import { getEffectiveShell } from './utils/shellMode'
@@ -422,7 +422,7 @@ function AppShell() {
 }
 ```
 
-- [ ] **Step 2: Floor home routing**
+- [x] **Step 2: Floor home routing**
 
 Options (pick one and stick to it):
 
@@ -445,16 +445,16 @@ Update login success navigate and `RoleHome` to use `homePathForSession`. Keep `
 
 Add `<Route path="floor" element={<FloorHome />} />` under the authenticated layout.
 
-- [ ] **Step 3: Rebuild FloorLayout drawer from `listFloorTiles`**
+- [x] **Step 3: Rebuild FloorLayout drawer from `listFloorTiles`**
 
 Replace hard-coded `floorPages` filter with catalog tiles (icon map: keep a `Record<string, Icon>` keyed by `to`).
 
-- [ ] **Step 4: Smoke**
+- [x] **Step 4: Smoke**
 
 - Handheld override: `/floor` shows launcher; drawer matches tiles.
 - Desk override: `/` shows dashboard for admin; sidebar present.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/src/App.tsx web/src/components/FloorLayout.tsx web/src/utils/roleAccess.ts web/src/pages/FloorHome.tsx
@@ -478,7 +478,7 @@ EOF
 - Consumes: `listDeskNavItems(getRole(), getPermissions())`
 - Produces: Sidebar sections built by grouping catalog `section` field
 
-- [ ] **Step 1: Replace `sections` constant usage**
+- [x] **Step 1: Replace `sections` constant usage**
 
 Keep Lucide icon map in Layout (`ICONS: Record<string, NavIcon>` keyed by `to`). Build visible items:
 
@@ -489,16 +489,16 @@ const bySection = /* group by section order: home, inward, stock, buying, sellin
 
 Remove `itemVisible` / `canSeeAdminNav` duplication once catalog encodes the rules. Keep search awesomebar over the same filtered list.
 
-- [ ] **Step 2: Verify supervisor vs admin**
+- [x] **Step 2: Verify supervisor vs admin**
 
 Manual or unit: supervisor paths exclude `/roles`, `/employees`; admin includes both.
 
-- [ ] **Step 3: Run full frontend tests**
+- [x] **Step 3: Run full frontend tests**
 
 Run: `cd web && npm test`  
 Expected: PASS (update any brittle tests).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add web/src/components/Layout.tsx web/src/__tests__/navCatalog.test.ts
@@ -521,7 +521,7 @@ EOF
 **Interfaces:**
 - Consumes: `getEffectiveShell`, `canSwitchToShell`, `setDeviceOverride`, `getDeviceOverride`, `homePathForSession`
 
-- [ ] **Step 1: Add menu actions**
+- [x] **Step 1: Add menu actions**
 
 Under theme toggle, add:
 
@@ -531,11 +531,11 @@ Under theme toggle, add:
 
 Full reload is intentional so `AppShell` remounts.
 
-- [ ] **Step 2: Manual verify**
+- [x] **Step 2: Manual verify**
 
 On wide desktop: switch to floor → FloorLayout + launcher. Switch back → Desk. Automatic clears key.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add web/src/components/UserMenu.tsx

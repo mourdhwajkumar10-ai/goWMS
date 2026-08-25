@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+**Status:** Core implementation complete (2026-08-25). Remaining ops/E2E items tracked in `docs/superpowers/specs/2026-08-25-role-aware-rollout-verification.md`.
+
 **Goal:** Make goWMS use one server-authorized permission model with consistent desktop and handheld receiving flows and explicit mobile camera permission states.
 
 **Architecture:** Keep the existing JWT authentication and Fiber routes. Add a server-authoritative permission resolver and warehouse-scope checks at the API boundary, expose additive session metadata to the frontend, and use shared receiving data with separate desktop/handheld presentation shells. Camera access remains browser-controlled and falls back to manual scanning.

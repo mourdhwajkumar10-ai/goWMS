@@ -1,8 +1,8 @@
 # Role-Aware Desktop and Mobile Architecture
 
 **Date:** 2026-08-24  
-**Branch:** `frebuff`  
-**Status:** Draft for review
+**Branch:** `feat/role-aware-permissions-rf-camera`  
+**Status:** Implemented (core) — see `docs/superpowers/specs/2026-08-25-role-aware-rollout-verification.md` for verification and deferred ops checks
 
 ## 1. Goal
 
