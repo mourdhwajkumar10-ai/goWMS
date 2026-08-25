@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { clearSession, getRole, getUsername } from "../services/api";
+import { getDeviceOverride, setDeviceOverride } from "../utils/deviceDetect";
+import { homePathForSession } from "../utils/roleAccess";
+import { canSwitchToShell, getEffectiveShell } from "../utils/shellMode";
 
 type Theme = "light" | "dark";
 
@@ -36,6 +39,26 @@ const Icon = {
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
+  ),
+  monitor: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
+    </svg>
+  ),
+  smartphone: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="5" y="2" width="14" height="20" rx="2" />
+      <line x1="12" y1="18" x2="12.01" y2="18" />
+    </svg>
+  ),
+  refresh: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <polyline points="23 4 23 10 17 10" />
+      <polyline points="1 20 1 14 7 14" />
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
     </svg>
   ),
 };
@@ -84,7 +107,16 @@ export default function UserMenu() {
     navigate(path);
   };
 
+  const switchShell = (override: "handheld" | "desk" | null) => {
+    setDeviceOverride(override);
+    window.location.assign(homePathForSession(getRole()));
+  };
+
   const isAdmin = (role || "").toLowerCase() === "admin";
+  const effectiveShell = getEffectiveShell();
+  const hasOverride = getDeviceOverride() != null;
+  const showFloorSwitch = canSwitchToShell("floor") && effectiveShell !== "floor";
+  const showDeskSwitch = canSwitchToShell("desk") && effectiveShell !== "desk";
 
   return (
     <div className="user-menu" ref={rootRef}>
@@ -135,6 +167,27 @@ export default function UserMenu() {
               </button>
             </span>
           </div>
+
+          {showFloorSwitch && (
+            <button type="button" className="user-menu-item" role="menuitem" onClick={() => switchShell("handheld")}>
+              <span className="user-menu-item-icon">{Icon.smartphone}</span>
+              Use floor view
+            </button>
+          )}
+
+          {showDeskSwitch && (
+            <button type="button" className="user-menu-item" role="menuitem" onClick={() => switchShell("desk")}>
+              <span className="user-menu-item-icon">{Icon.monitor}</span>
+              Use desk view
+            </button>
+          )}
+
+          {hasOverride && (
+            <button type="button" className="user-menu-item" role="menuitem" onClick={() => switchShell(null)}>
+              <span className="user-menu-item-icon">{Icon.refresh}</span>
+              Use automatic detection
+            </button>
+          )}
 
           <button type="button" className="user-menu-item user-menu-item-danger" role="menuitem" onClick={logout}>
             <span className="user-menu-item-icon">{Icon.logout}</span>
