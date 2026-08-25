@@ -70,6 +70,15 @@ describe('listDeskNavItems', () => {
     expect(paths).not.toContain('/pack')
     expect(paths).not.toContain('/items')
   })
+
+  it('desk sidebar excludes floor-only paths and keeps section order', () => {
+    const items = listDeskNavItems('admin', [])
+    const paths = items.map((t) => t.to)
+    expect(paths).not.toContain('/dock-receiving')
+    expect(paths).not.toContain('/notifications')
+    const sections = [...new Set(items.map((t) => t.section))]
+    expect(sections).toEqual(['home', 'inward', 'stock', 'buying', 'selling', 'masters'])
+  })
 })
 
 describe('qi floor tiles', () => {
