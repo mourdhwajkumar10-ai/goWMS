@@ -37,6 +37,17 @@ func RequirePermission(perm string) fiber.Handler {
 	}
 }
 
+// UserMayAccessWarehouse reports whether a user with the given role and assigned
+// warehouse may access targetWarehouseID. Admin always passes. Pure helper so
+// warehouse-scope policy can be unit-tested without a database.
+func UserMayAccessWarehouse(role string, userWarehouseID *int, targetWarehouseID int) bool {
+	role = strings.TrimSpace(role)
+	if strings.EqualFold(role, "admin") {
+		return true
+	}
+	return userWarehouseID != nil && *userWarehouseID == targetWarehouseID
+}
+
 // RequireWarehouseAccess returns a middleware that verifies the authenticated
 // user may access the target warehouse. It derives the user's warehouse scope
 // from the employees or users table and rejects cross-warehouse access.
@@ -44,12 +55,6 @@ func RequireWarehouseAccess(db *pgxpool.Pool, targetWarehouseID int) fiber.Handl
 	return func(c *fiber.Ctx) error {
 		userID, _ := c.Locals("user_id").(int)
 		role, _ := c.Locals("role").(string)
-		role = strings.TrimSpace(role)
-
-		// Admin bypasses warehouse scope.
-		if strings.EqualFold(role, "admin") {
-			return c.Next()
-		}
 
 		var userWarehouseID *int
 		// Try employees table first (PIN-login users).
@@ -63,7 +68,7 @@ func RequireWarehouseAccess(db *pgxpool.Pool, targetWarehouseID int) fiber.Handl
 				userID).Scan(&userWarehouseID)
 		}
 
-		if userWarehouseID == nil || *userWarehouseID != targetWarehouseID {
+		if !UserMayAccessWarehouse(role, userWarehouseID, targetWarehouseID) {
 			return shared.Err(c, fiber.StatusForbidden, "access denied for this warehouse")
 		}
 		return c.Next()

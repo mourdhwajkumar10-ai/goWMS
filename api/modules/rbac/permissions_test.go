@@ -136,17 +136,28 @@ func TestCodesUnknownRole(t *testing.T) {
 	}
 }
 
+func fineGrainedSet(role string) map[string]struct{} {
+	set := map[string]struct{}{}
+	for _, code := range FineGrainedPermissions()[role] {
+		set[code] = struct{}{}
+	}
+	return set
+}
+
 func TestReceivingOperatorCanScanButCannotApprove(t *testing.T) {
+	fg := fineGrainedSet("receiving_operator")
+	if _, ok := fg["receiving.scan_box"]; !ok {
+		t.Fatal("FineGrainedPermissions: receiving_operator should have receiving.scan_box")
+	}
+	if _, ok := fg["receiving.scan_item"]; !ok {
+		t.Fatal("FineGrainedPermissions: receiving_operator should have receiving.scan_item")
+	}
+	if _, ok := fg["receiving.approve"]; ok {
+		t.Fatal("FineGrainedPermissions: receiving_operator should NOT have receiving.approve")
+	}
+
 	store := &Store{byRole: map[string]map[string]struct{}{
-		"receiving_operator": {
-			"receiving.view":      {},
-			"receiving.start":     {},
-			"receiving.scan_box":  {},
-			"receiving.scan_item": {},
-			"receiving.reject_item": {},
-			"receiving.complete":  {},
-			"po.view":             {},
-		},
+		"receiving_operator": fg,
 	}}
 
 	if !store.Has("receiving_operator", "receiving.scan_box") {
@@ -161,14 +172,16 @@ func TestReceivingOperatorCanScanButCannotApprove(t *testing.T) {
 }
 
 func TestSupervisorCanApproveReceiving(t *testing.T) {
+	fg := fineGrainedSet("supervisor")
+	if _, ok := fg["receiving.approve"]; !ok {
+		t.Fatal("FineGrainedPermissions: supervisor should have receiving.approve")
+	}
+	if _, ok := fg["receiving.scan_box"]; !ok {
+		t.Fatal("FineGrainedPermissions: supervisor should have receiving.scan_box")
+	}
+
 	store := &Store{byRole: map[string]map[string]struct{}{
-		"supervisor": {
-			"receiving.view":    {},
-			"receiving.approve": {},
-			"receiving.scan_box":  {},
-			"receiving.scan_item": {},
-			"reports.view":      {},
-		},
+		"supervisor": fg,
 	}}
 
 	if !store.Has("supervisor", "receiving.approve") {
@@ -180,13 +193,22 @@ func TestSupervisorCanApproveReceiving(t *testing.T) {
 }
 
 func TestViewerCannotMutateReceiving(t *testing.T) {
+	fg := fineGrainedSet("viewer")
+	if _, ok := fg["receiving.view"]; !ok {
+		t.Fatal("FineGrainedPermissions: viewer should have receiving.view")
+	}
+	if _, ok := fg["receiving.start"]; ok {
+		t.Fatal("FineGrainedPermissions: viewer should NOT have receiving.start")
+	}
+	if _, ok := fg["inventory.adjust"]; ok {
+		t.Fatal("FineGrainedPermissions: viewer should NOT have inventory.adjust")
+	}
+	if _, ok := fg["masterdata.manage"]; ok {
+		t.Fatal("FineGrainedPermissions: viewer should NOT have masterdata.manage")
+	}
+
 	store := &Store{byRole: map[string]map[string]struct{}{
-		"viewer": {
-			"receiving.view": {},
-			"inventory.view": {},
-			"reports.view":   {},
-			"po.view":        {},
-		},
+		"viewer": fg,
 	}}
 
 	if !store.Has("viewer", "receiving.view") {
@@ -200,5 +222,28 @@ func TestViewerCannotMutateReceiving(t *testing.T) {
 	}
 	if store.Has("viewer", "masterdata.manage") {
 		t.Fatal("viewer should NOT have masterdata.manage")
+	}
+}
+
+// TestRequireWarehouseAccessRejectsForeignWarehouse exercises the pure
+// UserMayAccessWarehouse helper used by RequireWarehouseAccess. Full Fiber+DB
+// middleware coverage needs a live employees/users warehouse_id row.
+func TestRequireWarehouseAccessRejectsForeignWarehouse(t *testing.T) {
+	wh1, wh2 := 1, 2
+
+	if UserMayAccessWarehouse("receiving_operator", &wh1, wh2) {
+		t.Fatal("foreign warehouse should be rejected")
+	}
+	if !UserMayAccessWarehouse("receiving_operator", &wh1, wh1) {
+		t.Fatal("same warehouse should be allowed")
+	}
+	if UserMayAccessWarehouse("qi", nil, wh1) {
+		t.Fatal("nil assigned warehouse should be rejected")
+	}
+	if !UserMayAccessWarehouse("admin", nil, wh2) {
+		t.Fatal("admin should bypass warehouse scope")
+	}
+	if !UserMayAccessWarehouse("ADMIN", &wh1, wh2) {
+		t.Fatal("ADMIN (case-insensitive) should bypass warehouse scope")
 	}
 }

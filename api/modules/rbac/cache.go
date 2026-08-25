@@ -2,6 +2,7 @@ package rbac
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -103,20 +104,25 @@ func (s *Store) Has(role, perm string) bool {
 	return ok
 }
 
-// Codes returns permission codes for a role (for UI / debug).
+// Codes returns sorted unique permission codes for a role (for UI / debug).
+// Unknown roles and nil stores return nil (not an empty slice).
 func (s *Store) Codes(role string) []string {
 	if s == nil {
 		return nil
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	set := s.byRole[role]
-	if set == nil {
-		set = s.byRole[strings.ToLower(role)]
+	set, ok := s.byRole[role]
+	if !ok {
+		set, ok = s.byRole[strings.ToLower(role)]
+	}
+	if !ok {
+		return nil
 	}
 	out := make([]string, 0, len(set))
 	for p := range set {
 		out = append(out, p)
 	}
+	sort.Strings(out)
 	return out
 }
