@@ -18,6 +18,10 @@ describe('camera state errors', () => {
     expect(cameraErrorMessage('SecurityError')).toMatch(/HTTPS|secure/i)
   })
 
+  it('explains InsecureContext', () => {
+    expect(cameraErrorMessage('InsecureContext')).toMatch(/HTTPS|secure/i)
+  })
+
   it('explains NotReadableError', () => {
     expect(cameraErrorMessage('NotReadableError')).toMatch(/busy|unavailable|camera apps/i)
   })

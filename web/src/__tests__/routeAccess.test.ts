@@ -8,6 +8,7 @@ import {
   canUseDevice,
   clearPermissions,
 } from '../utils/permissions'
+import { canOpenPath, canOpenPermissionedPath } from '../utils/roleAccess'
 
 function resetStorage() {
   const store = new Map<string, string>();
@@ -20,6 +21,10 @@ function resetStorage() {
     get length() { return store.size; },
     key: (_i: number) => null,
   };
+}
+
+function setRole(role: string) {
+  localStorage.setItem('gowms_role', role)
 }
 
 describe('receiving operator route access', () => {
@@ -110,5 +115,34 @@ describe('non-admin hidden controls', () => {
     expect(hasPermission('roles.manage')).toBe(false)
     expect(hasPermission('employees.manage')).toBe(false)
     expect(hasPermission('masterdata.manage')).toBe(false)
+  })
+})
+
+describe('canOpenPermissionedPath', () => {
+  beforeEach(resetStorage)
+
+  it('billing with permissions cannot open /receiving', () => {
+    setRole('billing')
+    storePermissions(['po.view', 'reports.view', 'notifications.view'])
+    expect(canOpenPermissionedPath('/receiving')).toBe(false)
+  })
+
+  it('picker with permissions can open /pick', () => {
+    setRole('picker')
+    storePermissions(['picking.access', 'inventory.view', 'notifications.view'])
+    expect(canOpenPermissionedPath('/pick')).toBe(true)
+  })
+
+  it('empty permissions: falls back to role canOpenPath', () => {
+    setRole('picker')
+    clearPermissions()
+    expect(canOpenPermissionedPath('/pick')).toBe(canOpenPath('picker', '/pick'))
+    expect(canOpenPermissionedPath('/receiving')).toBe(canOpenPath('picker', '/receiving'))
+    expect(canOpenPermissionedPath('/pick')).toBe(true)
+    expect(canOpenPermissionedPath('/receiving')).toBe(false)
+
+    setRole('admin')
+    expect(canOpenPermissionedPath('/receiving')).toBe(canOpenPath('admin', '/receiving'))
+    expect(canOpenPermissionedPath('/receiving')).toBe(true)
   })
 })

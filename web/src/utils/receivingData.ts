@@ -87,6 +87,7 @@ export function cameraErrorMessage(name?: string): string {
     case 'NotFoundError':
       return 'No camera found on this device.'
     case 'SecurityError':
+    case 'InsecureContext':
       return 'Camera requires a secure HTTPS connection.'
     case 'NotReadableError':
       return 'Camera is busy or unavailable. Close other camera apps and try again.'

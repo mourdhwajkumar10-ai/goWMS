@@ -2,8 +2,19 @@ import {
   FLOOR_NAV,
   floorDeskPathsForRole,
   handheldPathsForRole,
+  listDeskNavItems,
+  listFloorTiles,
 } from './navCatalog'
+import { getPermissions } from './permissions'
 import { getEffectiveShell } from './shellMode'
+
+function readRole(): string | null {
+  try {
+    return localStorage.getItem('gowms_role')
+  } catch {
+    return null
+  }
+}
 
 /** Desk roles see the full Warehouse Desk. Everyone else is floor. */
 export function isDeskRole(role?: string | null) {
@@ -46,6 +57,25 @@ export function canOpenPath(role: string | null | undefined, path: string) {
   if (!allowed) return true
   const p = path.split('?')[0]
   return allowed.some(a => p === a || p.startsWith(`${a}/`))
+}
+
+/**
+ * Path open check that respects stored permissions when present.
+ * Empty permissions → role canOpenPath fallback (compat, including desk = all).
+ * With permissions → path must match a visible desk or floor nav item prefix.
+ */
+export function canOpenPermissionedPath(path: string): boolean {
+  const role = readRole()
+  const permissions = getPermissions()
+  const p = path.split('?')[0]
+  if (permissions.length === 0) {
+    return canOpenPath(role, p)
+  }
+  const visible = [
+    ...listDeskNavItems(role, permissions),
+    ...listFloorTiles(role, permissions),
+  ]
+  return visible.some((item) => p === item.to || p.startsWith(`${item.to}/`))
 }
 
 export function deskLabel(role?: string | null) {

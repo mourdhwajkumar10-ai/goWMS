@@ -11,6 +11,8 @@ interface CameraScannerProps {
   onScan: (value: string) => void | boolean | ScanOutcome | Promise<void | boolean | ScanOutcome>;
   continuous?: boolean;
   embedded?: boolean;
+  /** Scanmaster RF layout — video + brackets only, no HUD chrome */
+  minimal?: boolean;
   title?: string;
   footer?: ReactNode;
 }
@@ -41,6 +43,7 @@ export default function CameraScanner({
   onScan,
   continuous = true,
   embedded = false,
+  minimal = false,
   title = "QR Code Scanner",
   footer,
 }: CameraScannerProps) {
@@ -108,6 +111,7 @@ export default function CameraScanner({
     setError("");
     setScreenFlash(null);
     setLastCode("");
+    setCameraState("starting");
     setCameraOn(true);
     setGen((n) => n + 1);
   }, [bumpSession]);
@@ -121,10 +125,12 @@ export default function CameraScanner({
       setError("");
       setScreenFlash(null);
       setCameraOn(false);
+      setCameraState("manual");
       return;
     }
     cameraOnRef.current = true;
     setError("");
+    setCameraState("starting");
     setCameraOn(true);
     setGen((n) => n + 1);
   }, [bumpSession]);
@@ -169,6 +175,7 @@ export default function CameraScanner({
       killCamera();
       setScanning(false);
       setTorchOn(false);
+      if (open && !cameraOn) setCameraState("manual");
       return;
     }
 
@@ -181,6 +188,27 @@ export default function CameraScanner({
 
     (async () => {
       try {
+        setCameraState("starting");
+        const host = typeof window !== "undefined" ? window.location.hostname : "";
+        const insecure =
+          typeof window !== "undefined" &&
+          !window.isSecureContext &&
+          host !== "localhost" &&
+          host !== "127.0.0.1";
+        if (insecure) {
+          if (!stale()) {
+            setCameraState("unsupported");
+            setError(cameraErrorMessage("InsecureContext"));
+          }
+          return;
+        }
+        if (!navigator.mediaDevices?.getUserMedia) {
+          if (!stale()) {
+            setCameraState("unsupported");
+            setError(cameraErrorMessage("NoMediaDevices"));
+          }
+          return;
+        }
         const chosenId = deviceIdRef.current;
         const video: MediaTrackConstraints = chosenId
           ? { deviceId: { exact: chosenId }, width: { ideal: 1280 }, height: { ideal: 720 } }
@@ -322,7 +350,7 @@ export default function CameraScanner({
         : "idle";
 
   return (
-    <div className={`cam-overlay${embedded ? " cam-embedded" : ""}`}>
+    <div className={`cam-overlay${embedded ? " cam-embedded" : ""}${minimal ? " cam-minimal" : ""}`}>
       <div className="cam-page">
         {!embedded && (
           <header className="cam-header">
@@ -356,58 +384,66 @@ export default function CameraScanner({
               <div className="cam-crosshair-line cam-crosshair-br" />
             </div>
             {scanning && cameraOn && <div className="cam-scan-line" />}
-            <div className={`cam-hud-status cam-status-${statusKind}`}>{status}</div>
-            <button
-              type="button"
-              className={`cam-icon-btn cam-icon-power ${cameraOn ? "on" : ""}`}
-              onClick={toggleCamera}
-              aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
-              title={cameraOn ? "Turn camera off" : "Turn camera on"}
-            >
-              {cameraOn ? (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18.6 18.6A9 9 0 0 1 5.4 5.4" />
-                  <path d="M9 9v.01M15 15v.01" />
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                  <path d="M2 2l20 20" />
-                </svg>
-              ) : (
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                  <circle cx="12" cy="13" r="4" />
-                </svg>
+            <>
+              {!minimal && (
+                <div className={`cam-hud-status cam-status-${statusKind}`}>{status}</div>
               )}
-            </button>
-            <button
-              type="button"
-              className={`cam-icon-btn cam-icon-torch ${torchOn ? "on" : ""}`}
-              onClick={toggleTorch}
-              disabled={!cameraOn}
-              aria-label={torchOn ? "Light on" : "Light off"}
-              title={torchOn ? "Light on" : "Light"}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18h6M10 22h4M12 2v1M15 9.354a4 4 0 1 0-5.646 5.646" /></svg>
-            </button>
-            <button
-              type="button"
-              className="cam-icon-btn cam-icon-flip"
-              onClick={() => { void flipCamera(); }}
-              aria-label="Flip camera"
-              title="Flip camera"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M17 1l4 4-4 4" />
-                <path d="M3 11V9a4 4 0 0 1 4-4h14" />
-                <path d="M7 23l-4-4 4-4" />
-                <path d="M21 13v2a4 4 0 0 1-4 4H3" />
-              </svg>
-            </button>
-          </div>
-          <div className="cam-quick">
-            {footer}
-            <button type="button" className="cam-restart-btn" onClick={handleRestart}>Restart scanner</button>
-          </div>
-          {lastCode && <div className="cam-last-code">{lastCode}</div>}
+              <button
+                  type="button"
+                  className={`cam-icon-btn cam-icon-power ${cameraOn ? "on" : ""}`}
+                  onClick={toggleCamera}
+                  aria-label={cameraOn ? "Turn camera off" : "Turn camera on"}
+                  title={cameraOn ? "Turn camera off" : "Turn camera on"}
+                >
+                  {cameraOn ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M18.6 18.6A9 9 0 0 1 5.4 5.4" />
+                      <path d="M9 9v.01M15 15v.01" />
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <path d="M2 2l20 20" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
+                    </svg>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  className={`cam-icon-btn cam-icon-torch ${torchOn ? "on" : ""}`}
+                  onClick={toggleTorch}
+                  disabled={!cameraOn}
+                  aria-label={torchOn ? "Flash on" : "Flash off"}
+                  title={torchOn ? "Flash on" : "Flash"}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18h6M10 22h4M12 2v1M15 9.354a4 4 0 1 0-5.646 5.646" /></svg>
+                </button>
+                {!minimal && (
+                  <button
+                    type="button"
+                    className="cam-icon-btn cam-icon-flip"
+                    onClick={() => { void flipCamera(); }}
+                    aria-label="Flip camera"
+                    title="Flip camera"
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M17 1l4 4-4 4" />
+                      <path d="M3 11V9a4 4 0 0 1 4-4h14" />
+                      <path d="M7 23l-4-4 4-4" />
+                      <path d="M21 13v2a4 4 0 0 1-4 4H3" />
+                    </svg>
+                  </button>
+                )}
+              </>
+            </div>
+          {!minimal && (
+            <div className="cam-quick">
+              {footer}
+              <button type="button" className="cam-restart-btn" onClick={handleRestart}>Restart scanner</button>
+            </div>
+          )}
+          {!minimal && lastCode && <div className="cam-last-code">{lastCode}</div>}
         </div>
 
         {!embedded && (
