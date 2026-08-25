@@ -1,7 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api, { setSession } from "../services/api";
-import { canOpenPath, homePathForRole } from "../utils/roleAccess";
+import { canOpenPath, homePathForSession } from "../utils/roleAccess";
 
 function looksLikeWarehouseScan(s: string) {
   return /^(BOX|PART|ITEM|INV|PO|GRN)[-_]/i.test((s || "").trim());
@@ -21,7 +21,7 @@ export default function Login() {
 
   const goHome = (role: string) => {
     const last = localStorage.getItem("gowms_last_path") || "";
-    const next = last.startsWith("/") && canOpenPath(role, last) ? last : homePathForRole(role);
+    const next = last.startsWith("/") && canOpenPath(role, last) ? last : homePathForSession(role);
     navigate(next);
   };
 

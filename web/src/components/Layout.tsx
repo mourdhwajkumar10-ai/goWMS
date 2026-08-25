@@ -33,7 +33,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getRole } from "../services/api";
-import { deskLabel, canOpenPath, homePathForRole, isDeskRole } from "../utils/roleAccess";
+import { deskLabel, canOpenPath, homePathForSession, isDeskRole } from "../utils/roleAccess";
 import { listDeskNavItems, type NavSectionId } from "../utils/navCatalog";
 import { getPermissions } from "../utils/permissions";
 import NotificationBell from "./NotificationBell";
@@ -134,7 +134,7 @@ export default function Layout() {
       localStorage.setItem("gowms_last_path", location.pathname);
     }
     if (!canOpenPath(role, location.pathname)) {
-      navigate(homePathForRole(role), { replace: true });
+      navigate(homePathForSession(role), { replace: true });
     }
     setMobileOpen(false);
     setNavOpen(false);
@@ -242,7 +242,7 @@ export default function Layout() {
           </div>
         </header>
         <main className="content">
-          {canOpenPath(getRole(), location.pathname) ? <Outlet /> : <Navigate to={homePathForRole(getRole())} replace />}
+          {canOpenPath(getRole(), location.pathname) ? <Outlet /> : <Navigate to={homePathForSession(getRole())} replace />}
         </main>
       </div>
     </div>
