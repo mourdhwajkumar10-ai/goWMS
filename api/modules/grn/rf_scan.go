@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -16,16 +17,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// RegisterRFScan registers /api/receiving scan routes
+// RegisterRFScan registers /api/receiving scan routes with named permissions.
+// Group middleware should require receiving.view; each mutating route adds a stricter check.
 func RegisterRFScan(r fiber.Router, db *pgxpool.Pool) {
-	r.Post("/scan-box", scanBoxHandler(db))
-	r.Post("/confirm-box", confirmBoxHandler(db))
-	r.Post("/sign-off-boxes", signOffBoxesHandler(db))
-	r.Post("/scan-item", scanItemHandler(db))
-	r.Post("/reject-item", rejectItemHandler(db))
-	r.Post("/complete-box", completeBoxHandler(db))
-	r.Post("/route-exception", routeExceptionHandler(db))
-	r.Post("/override-route", overrideRouteHandler(db))
+	r.Post("/scan-box", rbac.RequirePermission("receiving.scan_box"), scanBoxHandler(db))
+	r.Post("/confirm-box", rbac.RequirePermission("receiving.scan_box"), confirmBoxHandler(db))
+	r.Post("/sign-off-boxes", rbac.RequirePermission("receiving.scan_box"), signOffBoxesHandler(db))
+	r.Post("/scan-item", rbac.RequirePermission("receiving.scan_item"), scanItemHandler(db))
+	r.Post("/reject-item", rbac.RequirePermission("receiving.reject_item"), rejectItemHandler(db))
+	r.Post("/complete-box", rbac.RequirePermission("receiving.complete"), completeBoxHandler(db))
+	r.Post("/route-exception", rbac.RequirePermission("receiving.complete"), routeExceptionHandler(db))
+	r.Post("/override-route", rbac.RequirePermission("receiving.complete"), overrideRouteHandler(db))
 	r.Get("/stats", getStatsHandler(db))
 	r.Get("/exceptions", listSessionExceptions(db))
 }

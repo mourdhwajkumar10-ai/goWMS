@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -16,7 +17,7 @@ import (
 func RegisterManagement(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/import-file", importPackingListFile(db))
 	r.Get("/list", listPackingLists(db))
-	r.Post("/:id/approve", approvePackingList(db))
+	r.Post("/:id/approve", rbac.RequirePermission("receiving.approve"), approvePackingList(db))
 	r.Get("/:id", getPackingList(db))
 }
 

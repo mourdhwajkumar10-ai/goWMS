@@ -139,9 +139,10 @@ func main() {
 	receivingGroup.Use(rbac.RequirePermission("receiving.view"))
 	packinglist.RegisterReceiving(receivingGroup, pool)
 
-	// RF scan operations (scan-box, scan-item, reject, complete) require scan permission.
+	// RF scan routes share /receiving; group requires view, RegisterRFScan
+	// attaches finer perms (scan_box / scan_item / reject_item / complete) per route.
 	rfGroup := api.Group("/receiving")
-	rfGroup.Use(rbac.RequirePermission("receiving.scan_box"))
+	rfGroup.Use(rbac.RequirePermission("receiving.view"))
 	grn.RegisterRFScan(rfGroup, pool)
 	packinglist.RegisterGRNAlias(api.Group("/grn"), pool) // docs alias: /grn/:id/import-packing-list
 	packinglist.RegisterSupplierAlias(api.Group("/suppliers"), pool)

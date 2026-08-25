@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -21,20 +22,21 @@ import (
 )
 
 func registerGapRoutes(md fiber.Router, db *pgxpool.Pool) {
-	md.Post("/items/import", importItemsCSV(db))
-	md.Post("/items/import-file", importItemsFile(db))
+	manage := rbac.RequirePermission("masterdata.manage")
+	md.Post("/items/import", manage, importItemsCSV(db))
+	md.Post("/items/import-file", manage, importItemsFile(db))
 
 	md.Get("/item-groups", listItemGroups(db))
-	md.Post("/item-groups", createItemGroup(db))
-	md.Put("/item-groups/:id", updateItemGroup(db))
-	md.Delete("/item-groups/:id", deleteItemGroup(db))
+	md.Post("/item-groups", manage, createItemGroup(db))
+	md.Put("/item-groups/:id", manage, updateItemGroup(db))
+	md.Delete("/item-groups/:id", manage, deleteItemGroup(db))
 
 	md.Get("/suppliers/:id", getSupplier(db))
-	md.Put("/suppliers/:id", updateSupplier(db))
-	md.Patch("/suppliers/:id", updateSupplier(db))
+	md.Put("/suppliers/:id", manage, updateSupplier(db))
+	md.Patch("/suppliers/:id", manage, updateSupplier(db))
 
 	md.Get("/carriers", listCarriers(db))
-	md.Post("/carriers", createCarrier(db))
+	md.Post("/carriers", manage, createCarrier(db))
 
 	registerTransportRoutes(md, db)
 }
@@ -42,7 +44,7 @@ func registerGapRoutes(md fiber.Router, db *pgxpool.Pool) {
 // RegisterCarriersRoot mounts /carriers at API root (QA/docs path).
 func RegisterCarriersRoot(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/carriers", listCarriers(db))
-	r.Post("/carriers", createCarrier(db))
+	r.Post("/carriers", rbac.RequirePermission("masterdata.manage"), createCarrier(db))
 }
 
 func importItemsCSV(db *pgxpool.Pool) fiber.Handler {

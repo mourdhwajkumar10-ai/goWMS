@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -19,12 +20,128 @@ import (
 
 // RegisterReceiving registers routing for /api/receiving endpoints
 func RegisterReceiving(r fiber.Router, db *pgxpool.Pool) {
+	r.Post("/start", rbac.RequirePermission("receiving.start"), startReceivingSession(db))
 	r.Post("/import", importReceiving(db))
 	r.Get("/invoices", listReceivingInvoices(db))
 	r.Get("/delivery-notes", listReceivingDeliveryNotes(db))
 	r.Get("/boxes", listReceivingBoxes(db))
 	r.Get("/drivers", listDrivers(db))
 	r.Get("/pending-pos", listPendingPOs(db))
+}
+
+// startReceivingSession creates or resumes a GRN session for a purchase order.
+// DockReceiving posts { purchase_order_id } and expects { id, expected_boxes|total_boxes }.
+func startReceivingSession(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		var body struct {
+			PurchaseOrderID int    `json:"purchase_order_id"`
+			ReceivingMode   string `json:"receiving_mode"`
+		}
+		if err := shared.Bind(c, &body); err != nil {
+			return err
+		}
+		if body.PurchaseOrderID <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "purchase_order_id required")
+		}
+
+		var poName, supplierName string
+		err := db.QueryRow(c.Context(),
+			`SELECT name, COALESCE(supplier_name,'') FROM purchase_orders WHERE id=$1`,
+			body.PurchaseOrderID).Scan(&poName, &supplierName)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "purchase order not found")
+		}
+
+		mode := strings.ToLower(strings.TrimSpace(body.ReceivingMode))
+		if mode == "" {
+			mode = "packing_list"
+		}
+		if mode != "packing_list" && mode != "invoice_only" {
+			return shared.Err(c, fiber.StatusBadRequest, "receiving_mode must be packing_list or invoice_only")
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var sessionID int
+		var sessionNo string
+		var boxesTotal int
+		err = tx.QueryRow(c.Context(), `
+			SELECT id, session_no, COALESCE(boxes_total, 0)
+			FROM grn_sessions
+			WHERE (purchase_order_id = $1 OR purchase_receipt_no = $2)
+			  AND status NOT IN ('closed','completed')
+			ORDER BY id DESC LIMIT 1`, body.PurchaseOrderID, poName).
+			Scan(&sessionID, &sessionNo, &boxesTotal)
+		if err == nil && sessionID > 0 {
+			if boxesTotal == 0 {
+				n, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+				if n > 0 {
+					boxesTotal = n
+					_, _ = tx.Exec(c.Context(),
+						`UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1 AND COALESCE(boxes_total,0) < $2`,
+						sessionID, n)
+				}
+			}
+			if err = tx.Commit(c.Context()); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			return shared.OK(c, fiber.Map{
+				"id":             sessionID,
+				"session_no":     sessionNo,
+				"expected_boxes": boxesTotal,
+				"total_boxes":    boxesTotal,
+				"resumed":        true,
+			})
+		}
+
+		warehouseID, werr := shared.EnsureDefaultWarehouse(c.Context(), db)
+		if werr != nil {
+			warehouseID = 1
+		}
+
+		err = tx.QueryRow(c.Context(), `
+			INSERT INTO grn_sessions (
+				session_no, warehouse_id, status, receiving_mode, packing_list_available,
+				purchase_receipt_no, supplier_name, purchase_order_id, arrival_at, created_by
+			) VALUES (
+				'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
+				$1, 'receiving', $2, $3,
+				$4, $5, $6, NOW(), NULLIF($7, 0)
+			) RETURNING id, session_no`,
+			warehouseID, mode, mode == "packing_list",
+			poName, supplierName, body.PurchaseOrderID, userID(c),
+		).Scan(&sessionID, &sessionNo)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to create session: "+err.Error())
+		}
+
+		createdBoxes, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+		if createdBoxes > 0 {
+			boxesTotal = createdBoxes
+			_, _ = tx.Exec(c.Context(), `UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1`, sessionID, createdBoxes)
+		}
+
+		plNo := strings.Replace(sessionNo, "GRN-", "PL-", 1)
+		_, _ = tx.Exec(c.Context(), `
+			UPDATE grn_sessions SET packing_list_no = COALESCE(NULLIF(packing_list_no,''), $2) WHERE id=$1`,
+			sessionID, plNo)
+
+		if err = tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		return shared.OK(c, fiber.Map{
+			"id":             sessionID,
+			"session_no":     sessionNo,
+			"expected_boxes": boxesTotal,
+			"total_boxes":    boxesTotal,
+			"resumed":        false,
+		})
+	}
 }
 
 func importReceiving(db *pgxpool.Pool) fiber.Handler {

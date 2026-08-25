@@ -3,6 +3,7 @@ package masterdata
 import (
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -100,6 +101,6 @@ func adjustStock(db *pgxpool.Pool) fiber.Handler {
 }
 
 func registerStockRoutes(md fiber.Router, db *pgxpool.Pool) {
-	md.Post("/stock/adjust", adjustStock(db))
+	md.Post("/stock/adjust", rbac.RequirePermission("inventory.adjust"), adjustStock(db))
 	md.Get("/stock/by-item/:code", itemInventory(db))
 }

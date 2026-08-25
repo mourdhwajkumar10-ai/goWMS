@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -16,37 +17,38 @@ import (
 // Register wires master-data routes under /masterdata (matches the React client).
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	md := r.Group("/masterdata")
+	manage := rbac.RequirePermission("masterdata.manage")
 
 	md.Get("/items", listItems(db))
 	md.Get("/items/suggest", suggestItems(db))
-	md.Post("/items", createItem(db))
+	md.Post("/items", manage, createItem(db))
 	md.Get("/items/export", exportItemsCSV(db))
-	md.Patch("/items/:id", updateItem(db))
-	md.Post("/items/complete", completeItemMaster(db))
+	md.Patch("/items/:id", manage, updateItem(db))
+	md.Post("/items/complete", manage, completeItemMaster(db))
 	md.Get("/items/:code/inventory", itemInventory(db))
 	md.Get("/items/check/:code", checkItem(db))
 	md.Get("/scan-lookup", scanLookup(db))
 
 	md.Get("/warehouses", listWarehouses(db))
-	md.Post("/warehouses", createWarehouse(db))
-	md.Patch("/warehouses/:id", updateWarehouse(db))
+	md.Post("/warehouses", manage, createWarehouse(db))
+	md.Patch("/warehouses/:id", manage, updateWarehouse(db))
 	md.Get("/warehouses/:id/locations", listWarehouseLocations(db))
-	md.Post("/warehouses/:id/locations", createLocation(db))
-	md.Post("/warehouses/:id/locations/bulk", bulkCreateLocations(db))
-	md.Post("/warehouses/:id/locations/qr-labels", locationQRLabels(db))
+	md.Post("/warehouses/:id/locations", manage, createLocation(db))
+	md.Post("/warehouses/:id/locations/bulk", manage, bulkCreateLocations(db))
+	md.Post("/warehouses/:id/locations/qr-labels", manage, locationQRLabels(db))
 
-	md.Patch("/locations/:id", updateLocation(db))
+	md.Patch("/locations/:id", manage, updateLocation(db))
 	md.Get("/locations/:id/inventory", locationInventory(db))
 	md.Get("/locations/:id/qr-label", locationQRLabel(db))
 	md.Get("/locations", listAllLocations(db))
 
 	md.Get("/suppliers", listSuppliers(db))
-	md.Post("/suppliers", createSupplier(db))
+	md.Post("/suppliers", manage, createSupplier(db))
 	md.Get("/suppliers/by-barcode/:code", supplierByBarcode(db))
 	md.Get("/suppliers/:id/vehicles", getSupplierVehicles(db))
-	md.Put("/suppliers/:id/vehicles", setSupplierVehicles(db))
+	md.Put("/suppliers/:id/vehicles", manage, setSupplierVehicles(db))
 	md.Get("/batches", listBatches(db))
-	md.Post("/batches", createBatch(db))
+	md.Post("/batches", manage, createBatch(db))
 	md.Get("/delivery-notes", listDeliveryNotes(db))
 	md.Get("/delivery-notes/:id", getDeliveryNote(db))
 	md.Post("/delivery-notes/:id/confirm", confirmDeliveryNote(db))

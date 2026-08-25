@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,9 +12,10 @@ import (
 )
 
 func registerTransportRoutes(md fiber.Router, db *pgxpool.Pool) {
+	manage := rbac.RequirePermission("masterdata.manage")
 	md.Get("/transports", listTransports(db))
-	md.Post("/transports", createTransport(db))
-	md.Put("/transports/:id", updateTransport(db))
+	md.Post("/transports", manage, createTransport(db))
+	md.Put("/transports/:id", manage, updateTransport(db))
 }
 
 type transportBody struct {

@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -11,13 +12,14 @@ import (
 )
 
 // Register wires the purchase order routes.
+// Group middleware typically requires po.view; mutate routes add stricter checks.
 func Register(r fiber.Router, db *pgxpool.Pool) {
-	r.Post("/", createPO(db))
+	r.Post("/", rbac.RequirePermission("po.create"), createPO(db))
 	r.Get("/list", listPOs(db))
 	r.Get("/search", searchPO(db)) // must be registered BEFORE /:id (route shadowing)
 	r.Get("/:id", getPO(db))
-	r.Post("/:id/submit", submitPO(db))
-	r.Delete("/:id", deletePO(db))
+	r.Post("/:id/submit", rbac.RequirePermission("po.edit"), submitPO(db))
+	r.Delete("/:id", rbac.RequirePermission("po.edit"), deletePO(db))
 }
 
 func createPO(db *pgxpool.Pool) fiber.Handler {
