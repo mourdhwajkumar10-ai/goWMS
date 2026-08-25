@@ -104,7 +104,7 @@ export const FLOOR_NAV: Record<string, string[]> = {
 
 /** Per-role subset of handheld / floor pages. Desk roles get all floor:true paths. */
 export const HANDHELD_BY_ROLE: Record<string, string[]> = {
-  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/putaway', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
+  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
   picker: ['/pick', '/stock-scan', '/cycle-count', '/quick-count', '/notifications'],
   packer: ['/pack', '/notifications'],
   dispatcher: ['/dispatch', '/notifications'],
@@ -138,12 +138,19 @@ function deskItemVisibleByRole(role: string | null, item: NavItemDef): boolean {
 }
 
 function itemVisibleByPermissions(item: NavItemDef, permissions: string[], role: string | null): boolean {
-  if (permissions.includes('*')) return true
+  if (item.desk === false) return false
+  if (permissions.includes('*')) {
+    // Wildcard still respects floor-role desk allowlists (spec §6).
+    if (!isDeskRole(role)) return floorDeskPathsForRole(role).includes(item.to)
+    return true
+  }
   if (!item.permissions || item.permissions.length === 0) {
     return deskItemVisibleByRole(role, item)
   }
-  // Prefer hasPermission (reads storePermissions); also accept direct includes on the arg.
-  return item.permissions.some((p) => hasPermission(p) || permissions.includes(p))
+  const permitted = item.permissions.some((p) => hasPermission(p) || permissions.includes(p))
+  if (!permitted) return false
+  if (!isDeskRole(role)) return floorDeskPathsForRole(role).includes(item.to)
+  return true
 }
 
 /** Desk sidebar items for the current role / permission set. */

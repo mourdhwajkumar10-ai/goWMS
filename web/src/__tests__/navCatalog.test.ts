@@ -62,4 +62,19 @@ describe('listDeskNavItems', () => {
     const paths = listDeskNavItems('wm', ['receiving.view', 'reports.view']).map(t => t.to)
     expect(paths).not.toContain('/items')
   })
+
+  it('picker with inventory.view stays on picker desk allowlist', () => {
+    storePermissions(['inventory.view'])
+    const paths = listDeskNavItems('picker', ['inventory.view']).map(t => t.to)
+    expect(paths).toContain('/pick')
+    expect(paths).not.toContain('/pack')
+    expect(paths).not.toContain('/items')
+  })
+})
+
+describe('qi floor tiles', () => {
+  it('includes box verification', () => {
+    const paths = listFloorTiles('qi', []).map(t => t.to)
+    expect(paths).toContain('/box-verification')
+  })
 })
