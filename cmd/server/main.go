@@ -62,6 +62,20 @@ func main() {
 	app := fiber.New(fiber.Config{
 		AppName:   "goWMS",
 		BodyLimit: 32 * 1024 * 1024, // spare-parts CSV import can be tens of thousands of JSON rows
+		// shared.Err writes JSON then returns *fiber.Error so nested callers stop.
+		// Skip rewrite when the body was already sent.
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			if len(c.Response().Body()) > 0 {
+				return nil
+			}
+			code := fiber.StatusInternalServerError
+			msg := err.Error()
+			if e, ok := err.(*fiber.Error); ok {
+				code = e.Code
+				msg = e.Message
+			}
+			return c.Status(code).JSON(fiber.Map{"error": msg, "ok": false})
+		},
 	})
 	app.Use(logger.New())
 

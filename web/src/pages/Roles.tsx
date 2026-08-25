@@ -143,7 +143,7 @@ export default function Roles() {
   )
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h2 className="text-lg font-semibold">Roles & Access</h2>

@@ -49,9 +49,9 @@ import StockPeek from "./pages/StockPeek";
 import QuickCount from "./pages/QuickCount";
 import BoxVerification from "./pages/BoxVerification";
 import FloorHome from "./pages/FloorHome";
+import { useRfUi } from "./hooks/useRfUi";
 import { getRole, getToken } from "./services/api";
 import { homePathForSession } from "./utils/roleAccess";
-import { getEffectiveShell } from "./utils/shellMode";
 
 function RoleHome() {
   const role = getRole();
@@ -66,7 +66,9 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 }
 
 function AppShell() {
-  if (getEffectiveShell() === "floor") return <FloorLayout />;
+  // Floor shell, or narrow phone/tablet viewport → RF chrome (not desk sidebar).
+  const rf = useRfUi();
+  if (rf) return <FloorLayout />;
   return <Layout />;
 }
 

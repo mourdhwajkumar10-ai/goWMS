@@ -1,10 +1,13 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { Navigate } from 'react-router-dom'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ScannerInput from '../components/ScannerInput'
 import CameraScanner from '../components/CameraScanner'
 import ButtonPress from '../components/ButtonPress'
 import { useHaptic } from '../hooks/useHaptic'
+import { useRfUi } from '../hooks/useRfUi'
+import { useLoadMore } from '../hooks/useLoadMore'
 import '../styles/putaway-wizard.css'
 
 function SkeletonCards({ count = 3 }: { count?: number }) {
@@ -117,6 +120,7 @@ const ZONE_COLORS: Record<string, string> = {
 }
 
 export default function PutawayWizard() {
+  const rf = useRfUi()
   const [step, setStep] = useState<WizardStep>('mode_select')
   const [transitionDir, setTransitionDir] = useState<'forward' | 'backward'>('forward')
   const [mode, setMode] = useState<'zone' | 'item' | null>(null)
@@ -392,6 +396,14 @@ export default function PutawayWizard() {
   const totalCount = toteItems.length
   const progressPct = totalCount > 0 ? (placedCount / totalCount) * 100 : 0
 
+  const zoneItemsForPick = selectedZone
+    ? queue.filter(q => q.zone === selectedZone)
+    : queue
+  const queueMore = useLoadMore(zoneItemsForPick, 10, `${selectedZone ?? ''}|${step}`)
+
+  // RF / floor: always use scan-first runner (desk keeps this wizard at /putaway).
+  if (rf) return <Navigate to="/putaway-runner" replace />
+
   // ─── MODE SELECT ───
   if (step === 'mode_select') {
     return (
@@ -500,9 +512,7 @@ export default function PutawayWizard() {
 
   // ─── ITEM PICK ───
   if (step === 'item_pick') {
-    const zoneItems = selectedZone
-      ? queue.filter(q => q.zone === selectedZone)
-      : queue
+    const zoneItems = zoneItemsForPick
     const totePicked = toteItems.filter(i => i.status === 'picked')
 
     return (
@@ -604,33 +614,46 @@ export default function PutawayWizard() {
               message="Pick items from staging to start putaway"
             />
           ) : (
-            zoneItems.map(q => (
-              <div key={q.id} className="pw-item-row">
-                <div className="pw-item-row-info">
-                  <div className="pw-item-row-code">{q.item_code}</div>
-                  <div className="pw-item-row-name">{q.item_name || ''}</div>
-                  <div className="pw-item-row-meta">
-                    <span>From {q.location_code}</span>
-                    {q.batch_no && <span>· Batch {q.batch_no}</span>}
-                  </div>
-                  {q.suggested_location_code && (
-                    <div className="text-dim text-xs" style={{ marginTop: 4 }}>
-                      Suggested: <span style={{ color: 'var(--accent)' }}>{q.suggested_location_code}</span>
+            <>
+              {queueMore.visible.map(q => (
+                <div key={q.id} className="pw-item-row">
+                  <div className="pw-item-row-info">
+                    <div className="pw-item-row-code">{q.item_code}</div>
+                    <div className="pw-item-row-name">{q.item_name || ''}</div>
+                    <div className="pw-item-row-meta">
+                      <span>From {q.location_code}</span>
+                      {q.batch_no && <span>· Batch {q.batch_no}</span>}
                     </div>
-                  )}
+                    {q.suggested_location_code && (
+                      <div className="text-dim text-xs" style={{ marginTop: 4 }}>
+                        Suggested: <span style={{ color: 'var(--accent)' }}>{q.suggested_location_code}</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="pw-item-row-actions">
+                    <span className="pw-qty-badge">{q.qty} pcs</span>
+                    <ButtonPress
+                      className={`erpnext-btn-secondary ${pickingItemId === q.id ? 'pw-picking' : ''}`}
+                      disabled={pickingItemId === q.id}
+                      onClick={() => void handlePick(q)}
+                    >
+                      {pickingItemId === q.id ? 'Picking...' : 'Pick'}
+                    </ButtonPress>
+                  </div>
                 </div>
-                <div className="pw-item-row-actions">
-                  <span className="pw-qty-badge">{q.qty} pcs</span>
+              ))}
+              {queueMore.hasMore && (
+                <div style={{ marginTop: 8 }}>
                   <ButtonPress
-                  className={`erpnext-btn-secondary ${pickingItemId === q.id ? 'pw-picking' : ''}`}
-                  disabled={pickingItemId === q.id}
-                  onClick={() => void handlePick(q)}
-                >
-                  {pickingItemId === q.id ? 'Picking...' : 'Pick'}
-                </ButtonPress>
-              </div>
-            </div>
-          )))}
+                    className="erpnext-btn-secondary w-full"
+                    onClick={queueMore.loadMore}
+                  >
+                    Load more ({queueMore.remaining} left)
+                  </ButtonPress>
+                </div>
+              )}
+            </>
+          )}
         </div>
       </div>
     )

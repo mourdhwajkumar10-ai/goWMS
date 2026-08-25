@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
+import CameraScanner from '../components/CameraScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
+import RfShell from '../components/RfShell'
+import '../styles/scanner.css'
 
 interface QiInspection {
   id: number
@@ -19,10 +25,13 @@ interface QiInspection {
 }
 
 export default function Qi() {
+  const rf = useRfUi()
   const [list, setList] = useState<QiInspection[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [msg, setMsg] = useState('')
+  const [rfQuery, setRfQuery] = useState('')
+  const [showNew, setShowNew] = useState(false)
 
   const [itemCode, setItemCode] = useState('')
   const [referenceType, setReferenceType] = useState('Purchase Receipt')
@@ -165,8 +174,223 @@ export default function Qi() {
     return <span className={`erpnext-badge ${cls}`}>{status}</span>
   }
 
+  const rfList = pager.filtered.filter(q => {
+    const qStr = rfQuery.trim().toLowerCase()
+    if (!qStr) return true
+    return `${q.inspection_no} ${q.item_code} ${q.reference_name || ''} ${q.status || ''}`.toLowerCase().includes(qStr)
+  })
+  const rfListMore = useLoadMore(rfList, 10, `${rfQuery}|${rfList.length}`)
+
+  const qiStat = selected
+    ? String(readings.filter((r: any) => r.value).length)
+    : String(list.filter(q => (q.status || '').toLowerCase() === 'accepted').length)
+  const qiStatOf = selected ? `/ ${readings.length}` : undefined
+
+  if (rf) {
+    return (
+      <RfShell
+        title="Quality Inspection"
+        stat={qiStat}
+        statOf={qiStatOf}
+        meta={selected ? selected.inspection_no : undefined}
+      >
+        {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+
+        {!selected ? (
+          <>
+            <div className="scan-bottom-bar">
+              <div className="scan-input-chip">
+                <Search size={16} strokeWidth={1.8} />
+                <input
+                  type="search"
+                  value={rfQuery}
+                  onChange={e => setRfQuery(e.target.value)}
+                  placeholder="Search inspections…"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                className="scan-icon-btn primary"
+                onClick={() => setShowNew(!showNew)}
+                aria-label="New inspection"
+              >
+                <Plus size={18} strokeWidth={1.8} />
+              </button>
+            </div>
+
+            {showNew && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">Create inspection</div>
+                <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 140 }}>
+                  <CameraScanner
+                    open
+                    embedded
+                    minimal
+                    continuous
+                    onClose={() => {}}
+                    onScan={(code) => {
+                      const clean = String(code || '').trim()
+                      if (clean) setItemCode(clean)
+                    }}
+                  />
+                </div>
+                <div className="scan-input-chip">
+                  <ScanLine size={16} strokeWidth={1.8} />
+                  <input
+                    value={itemCode}
+                    onChange={e => setItemCode(e.target.value)}
+                    placeholder="Item code…"
+                    autoComplete="off"
+                  />
+                  <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan item">
+                    <ScanLine size={16} />
+                  </button>
+                </div>
+                <select className="scan-count-input" value={templateId} onChange={e => setTemplateId(e.target.value)}>
+                  <option value="">No template</option>
+                  {templates.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                </select>
+                <select className="scan-count-input" value={referenceType} onChange={e => setReferenceType(e.target.value)}>
+                  <option>Purchase Receipt</option>
+                  <option>Purchase Order</option>
+                  <option>Stock Entry</option>
+                </select>
+                <input className="scan-count-input" value={referenceName} onChange={e => setReferenceName(e.target.value)} placeholder="Reference name" />
+                <input className="scan-count-input" type="number" value={sampleSize} onChange={e => setSampleSize(e.target.value)} placeholder="Sample size" />
+                <button type="button" className="scan-btn scan-btn-primary" onClick={() => { void createInspection(); setShowNew(false) }}>Create</button>
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => setShowNew(false)}>Cancel</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {rfListMore.visible.map(q => (
+                <button
+                  key={q.id}
+                  type="button"
+                  className="scan-select-card"
+                  onClick={() => openInspection(q.id)}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                >
+                  <div className="scan-select-card-title">{q.inspection_no}</div>
+                  <div className="scan-select-card-sub">{q.item_code} · {q.reference_name || '—'}</div>
+                  <div className="scan-select-card-meta">
+                    <span>{q.status || 'pending'}</span>
+                    <span>sample {q.sample_size ?? '—'}</span>
+                    <span style={{ color: 'var(--primary)' }}>Open →</span>
+                  </div>
+                </button>
+              ))}
+              {rfListMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfListMore.loadMore}>
+                  Load more ({rfListMore.remaining} left)
+                </button>
+              )}
+              {rfList.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No inspections yet</p>
+                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => setShowNew(true)}>
+                    <Plus size={16} /> New inspection
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelected(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+              <ArrowLeft size={16} strokeWidth={1.8} /> Back to list
+            </button>
+
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{selected.inspection_no}</div>
+              <div className="scan-select-card-sub">
+                {selected.item_code} · {selected.reference_name || '—'} · {selected.status || 'pending'}
+              </div>
+              <div className="scan-select-card-meta" style={{ marginTop: 8 }}>
+                <span>Sample {selected.sample_size ?? '—'}</span>
+              </div>
+            </div>
+
+            <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="scan-section-title" style={{ margin: 0 }}>Checklist readings</div>
+                {selected.status === 'pending' && (
+                  <button
+                    type="button"
+                    className="scan-btn scan-btn-outline scan-btn-sm"
+                    style={{ width: 'auto' }}
+                    onClick={() => setReadings([...readings, { specification: '', value: '', status: 'pending' }])}
+                  >
+                    + Spec
+                  </button>
+                )}
+              </div>
+
+              {readings.map((rd: any, idx: number) => (
+                <div key={rd.id || idx} style={{ display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 10, borderBottom: idx < readings.length - 1 ? '1px solid var(--border)' : undefined }}>
+                  {rd.id ? (
+                    <div className="scan-row-code">{rd.specification}</div>
+                  ) : (
+                    <input
+                      className="scan-count-input"
+                      value={rd.specification || ''}
+                      onChange={e => updateReading(idx, 'specification', e.target.value)}
+                      placeholder="Spec name"
+                      disabled={selected.status !== 'pending'}
+                    />
+                  )}
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
+                    Expected: {rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} – ${rd.max_value ?? '—'}` : '—')}
+                  </div>
+                  <input
+                    className="scan-count-input"
+                    value={rd.value || ''}
+                    onChange={e => updateReading(idx, 'value', e.target.value)}
+                    placeholder="Actual reading"
+                    disabled={selected.status !== 'pending'}
+                  />
+                  <div style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>Result: {rd.status || 'pending'}</div>
+                </div>
+              ))}
+
+              {selected.status === 'pending' && (
+                <button
+                  type="button"
+                  className="scan-btn scan-btn-outline"
+                  disabled={readingsBusy}
+                  onClick={() => { void saveReadings() }}
+                >
+                  {readingsBusy ? 'Saving…' : 'Save readings'}
+                </button>
+              )}
+            </div>
+
+            {selected.status === 'pending' && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">Inspection result</div>
+                <input
+                  className="scan-count-input"
+                  value={rejectReason}
+                  onChange={e => setRejectReason(e.target.value)}
+                  placeholder="Reject reason (if rejecting)"
+                />
+                <button type="button" className="scan-btn scan-btn-success" onClick={() => void acceptInspection()}>
+                  Accept
+                </button>
+                <button type="button" className="scan-btn scan-btn-danger" onClick={() => void rejectInspection()}>
+                  Reject
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </RfShell>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
       <div className="flex items-center justify-between">
@@ -238,27 +462,29 @@ export default function Qi() {
               <h3 className="font-semibold">Inspections</h3>
               <ListPager pager={pager} placeholder="Search inspections…" />
             </div>
-            <table className="erpnext-table">
-              <thead>
-                <tr><th>Inspection No</th><th>Item</th><th>Reference</th><th>Sample</th><th>Status</th><th>Created</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map(q => (
-                  <tr key={q.id}>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openInspection(q.id)}>{q.inspection_no}</td>
-                    <td>{q.item_code}</td>
-                    <td>{q.reference_name || '—'}</td>
-                    <td>{q.sample_size ?? '—'}</td>
-                    <td>{statusBadge(q.status || 'pending')}</td>
-                    <td>{new Date(q.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <button onClick={() => openInspection(q.id)} className="erpnext-btn-secondary text-xs">Open</button>
-                    </td>
-                  </tr>
-                ))}
-                {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections</td></tr>}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="erpnext-table">
+                <thead>
+                  <tr><th>Inspection No</th><th>Item</th><th>Reference</th><th>Sample</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map(q => (
+                    <tr key={q.id}>
+                      <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openInspection(q.id)}>{q.inspection_no}</td>
+                      <td>{q.item_code}</td>
+                      <td>{q.reference_name || '—'}</td>
+                      <td>{q.sample_size ?? '—'}</td>
+                      <td>{statusBadge(q.status || 'pending')}</td>
+                      <td>{new Date(q.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <button onClick={() => openInspection(q.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       ) : (
@@ -286,32 +512,34 @@ export default function Qi() {
                 <h4 className="font-medium text-sm">Checklist readings</h4>
                 <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => setReadings([...readings, { specification: '', value: '', status: 'pending' }])}>+ Spec</button>
               </div>
-              <table className="erpnext-table text-sm">
-                <thead>
-                  <tr>
-                    <th>Specification</th>
-                    <th>Expected</th>
-                    <th>Actual</th>
-                    <th>Result</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {readings.map((rd: any, idx: number) => (
-                    <tr key={rd.id || idx}>
-                      <td>
-                        {rd.id ? rd.specification : (
-                          <input className="erpnext-input" value={rd.specification || ''} onChange={e => updateReading(idx, 'specification', e.target.value)} placeholder="Spec name" />
-                        )}
-                      </td>
-                      <td style={{ color: 'var(--text-dim)' }}>{rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} – ${rd.max_value ?? '—'}` : '—')}</td>
-                      <td>
-                        <input className="erpnext-input" value={rd.value || ''} onChange={e => updateReading(idx, 'value', e.target.value)} placeholder="Reading" disabled={selected.status !== 'pending'} />
-                      </td>
-                      <td>{statusBadge(rd.status || 'pending')}</td>
+              <div className="table-wrap">
+                <table className="erpnext-table text-sm">
+                  <thead>
+                    <tr>
+                      <th>Specification</th>
+                      <th>Expected</th>
+                      <th>Actual</th>
+                      <th>Result</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {readings.map((rd: any, idx: number) => (
+                      <tr key={rd.id || idx}>
+                        <td>
+                          {rd.id ? rd.specification : (
+                            <input className="erpnext-input" value={rd.specification || ''} onChange={e => updateReading(idx, 'specification', e.target.value)} placeholder="Spec name" />
+                          )}
+                        </td>
+                        <td style={{ color: 'var(--text-dim)' }}>{rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} – ${rd.max_value ?? '—'}` : '—')}</td>
+                        <td>
+                          <input className="erpnext-input" value={rd.value || ''} onChange={e => updateReading(idx, 'value', e.target.value)} placeholder="Reading" disabled={selected.status !== 'pending'} />
+                        </td>
+                        <td>{statusBadge(rd.status || 'pending')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {selected.status === 'pending' && (
                 <button className="erpnext-btn-secondary text-xs mt-2" disabled={readingsBusy} onClick={() => { void saveReadings() }}>
                   {readingsBusy ? 'Saving…' : 'Save readings'}

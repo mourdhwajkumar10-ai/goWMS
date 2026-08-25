@@ -95,11 +95,11 @@ func listLogs(db *pgxpool.Pool) fiber.Handler {
 
 		query := `
 			SELECT pl.id, pl.log_no, pl.item_code, i.name, pl.quantity,
-			       COALESCE(sl1.code, '') as source_location_code,
+			       COALESCE(NULLIF(BTRIM(sl1.code), ''), NULLIF(BTRIM(pl.source_warehouse), ''), '') as source_location_code,
 			       COALESCE(sl1.aisle, '') as source_aisle,
 			       COALESCE(sl1.shelf, '') as source_shelf,
 			       COALESCE(sl1.level, '') as source_level,
-			       COALESCE(sl2.code, '') as target_location_code,
+			       COALESCE(NULLIF(BTRIM(sl2.code), ''), NULLIF(BTRIM(pl.target_location), ''), '') as target_location_code,
 			       COALESCE(sl2.aisle, '') as target_aisle,
 			       COALESCE(sl2.shelf, '') as target_shelf,
 			       COALESCE(sl2.level, '') as target_level,
@@ -877,15 +877,44 @@ func createLog(db *pgxpool.Pool) fiber.Handler {
 			grnLineID = body.GRNLineID
 		}
 
+		// Keep GRN packing-list "Location" in sync with the bin stock actually moved to.
+		if body.GRNLineID != 0 {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_lines SET route_location=$2 WHERE id=$1`, body.GRNLineID, targetCode)
+		} else {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_lines gl SET route_location=$2
+				WHERE UPPER(gl.item_code)=UPPER($1)
+				  AND COALESCE(gl.scanned_qty,0) > 0
+				  AND (
+				    NULLIF(BTRIM(gl.route_location),'') IS NULL
+				    OR UPPER(gl.route_location) LIKE 'INCOMING%'
+				    OR UPPER(gl.route_location) LIKE 'HOLD%'
+				    OR UPPER(gl.route_location) LIKE 'STAGING%'
+				  )
+				  AND EXISTS (
+				    SELECT 1 FROM grn_sessions gs
+				    WHERE gs.id = gl.grn_session_id
+				      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
+				  )`, body.ItemCode, targetCode)
+		}
+
+		var sourceCode string
+		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, *sourceID).Scan(&sourceCode)
+		sourceWarehouse := strings.TrimSpace(body.SourceWarehouse)
+		if sourceWarehouse == "" {
+			sourceWarehouse = sourceCode
+		}
+
 		var id int
 		var logNo string
 		reason := strings.TrimSpace(body.ExceptionReason)
 		err = tx.QueryRow(c.Context(),
-			`INSERT INTO putaway_logs (log_no,grn_line_id,item_code,batch_no,source_warehouse,target_location,quantity,placed_at,placed_by,exception_reason,is_override)
-			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,$5,$6,NOW(),$7,NULLIF($8,''),$9)
+			`INSERT INTO putaway_logs (log_no,grn_line_id,item_code,batch_no,source_warehouse,target_location,quantity,placed_at,placed_by,exception_reason,is_override,source_location_id)
+			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,$5,$6,NOW(),$7,NULLIF($8,''),$9,$10)
 			 RETURNING id, log_no`,
-			grnLineID, body.ItemCode, nullBatch(batch), body.SourceWarehouse,
-			targetCode, body.Quantity, userID(c), reason, body.IsOverride).Scan(&id, &logNo)
+			grnLineID, body.ItemCode, nullBatch(batch), sourceWarehouse,
+			targetCode, body.Quantity, userID(c), reason, body.IsOverride, *sourceID).Scan(&id, &logNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}

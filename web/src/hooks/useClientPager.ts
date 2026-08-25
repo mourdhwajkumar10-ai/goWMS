@@ -45,6 +45,7 @@ export function useClientPager<T>(rows: T[], textOf?: (row: T) => string) {
     setPage,
     pages,
     total: filtered.length,
+    filtered,
     pageItems,
     pageSize: PAGE_SIZE,
     from,

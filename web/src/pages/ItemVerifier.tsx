@@ -1,7 +1,10 @@
 import { useState, useCallback, useEffect } from 'react'
+import { Search, Box, Flag, ArrowRight, Inbox } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
+import CameraScanner from '../components/CameraScanner'
 import { useScanFeedback } from '../hooks/useScanFeedback'
+import { useLoadMore } from '../hooks/useLoadMore'
 import '../styles/scanner.css'
 
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string }
@@ -17,18 +20,34 @@ export default function ItemVerifier() {
   const [itemScan, setItemScan] = useState('')
   const [damageMode, setDamageMode] = useState(false)
   const [sessions, setSessions] = useState<any[]>([])
+  const [cameraKey, setCameraKey] = useState(0)
 
   useEffect(() => {
-    api.get('/grn/sessions?status=item_verification&limit=5').then((r: any) => {
-      if (r.ok) setSessions((r.data ?? []).slice(0, 5))
+    api.get('/grn/sessions?status=item_verification').then((r: any) => {
+      if (r.ok) setSessions(r.data ?? [])
     }).catch(() => {})
   }, [])
 
-  const openBox = useCallback(async () => {
-    if (!sid || !box.trim()) return
-    const r: any = await api.post(`/grn/session/${sid}/open-box`, { carton_no: box.trim() })
-    if (r.ok) { setActiveBox(r.data as ActiveBox); setBox(''); fb.ok(); toast(`Box ${r.data.carton_no} opened`, 'ok') }
-    else { fb.err(); toast(r.error ?? 'Box not found', 'err'); setFlash('err'); setTimeout(() => setFlash(null), 300) }
+  const sessionMore = useLoadMore(sessions, 10, sessions.length)
+  const boxItems = activeBox?.items ?? []
+  const itemMore = useLoadMore(boxItems, 10, activeBox?.box_number ?? '')
+
+  const openBox = useCallback(async (code?: string) => {
+    const carton = (code ?? box).trim()
+    if (!sid || !carton) return
+    const r: any = await api.post(`/grn/session/${sid}/open-box`, { carton_no: carton })
+    if (r.ok) {
+      setActiveBox(r.data as ActiveBox)
+      setBox('')
+      setCameraKey((k) => k + 1)
+      fb.ok()
+      toast(`Box ${r.data.carton_no} opened`, 'ok')
+    } else {
+      fb.err()
+      toast(r.error ?? 'Box not found', 'err')
+      setFlash('err')
+      setTimeout(() => setFlash(null), 300)
+    }
   }, [sid, box, fb, toast])
 
   const verifyItem = useCallback(async (code: string) => {
@@ -37,8 +56,13 @@ export default function ItemVerifier() {
     const r: any = await api.post(`/grn/session/${sid}/verify-item`, { item_code: cleanCode, qty: 1 })
     if (r.ok) {
       fb.ok()
-      if (r.data.box_auto_closed) { toast(`Box ${activeBox.box_number} complete!`, 'ok'); setActiveBox(null) }
-      else { toast(`${cleanCode} +1`, 'ok') }
+      if (r.data.box_auto_closed) {
+        toast(`Box ${activeBox.box_number} complete!`, 'ok')
+        setActiveBox(null)
+        setCameraKey((k) => k + 1)
+      } else {
+        toast(`${cleanCode} +1`, 'ok')
+      }
       const fresh: any = await api.get(`/grn/session/${sid}/active-box`)
       if (fresh.ok) setActiveBox(fresh.data as ActiveBox)
     } else if (r.data?.wrong_item) {
@@ -50,30 +74,35 @@ export default function ItemVerifier() {
   }, [sid, activeBox, fb, toast])
 
   return (
-    <ScannerLayout title="Item Verifier" flash={flash} meta={sid ? `S#${sid}` : undefined} noBack>
+    <ScannerLayout title="Item Verifier" flash={flash} meta={sid ? `S#${sid}` : undefined}>
       <ScannerToastBar toasts={toasts} />
 
       {!sid && (
         <>
           <div className="scan-empty" style={{ padding: '20px 0' }}>
-            <div className="scan-empty-icon">🔍</div>
+            <div className="scan-empty-icon"><Search size={40} strokeWidth={1.8} /></div>
             <div className="scan-empty-title">Item Verifier</div>
             <div className="scan-empty-msg">Pick a session to verify boxes</div>
           </div>
           {sessions.length === 0 && (
             <div className="scan-empty">
-              <div className="scan-empty-icon" style={{ fontSize: 28 }}>📭</div>
+              <div className="scan-empty-icon"><Inbox size={28} strokeWidth={1.8} /></div>
               <div className="scan-empty-msg">No sessions waiting</div>
             </div>
           )}
           <div className="scan-select-list">
-            {sessions.map((s: any) => (
+            {sessionMore.visible.map((s: any) => (
               <div key={s.id} className="scan-select-card" onClick={() => setSid(s.id)}>
                 <div className="scan-select-card-title">{s.session_no ?? `GRN-${s.id}`}</div>
                 <div className="scan-select-card-sub">{s.supplier_name ?? 'Unknown'} · {s.status}</div>
               </div>
             ))}
           </div>
+          {sessionMore.hasMore && (
+            <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 8 }} onClick={sessionMore.loadMore}>
+              Load more ({sessionMore.remaining} left)
+            </button>
+          )}
         </>
       )}
 
@@ -85,19 +114,33 @@ export default function ItemVerifier() {
               Scan box to open
             </span>
           </div>
+          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160, marginBottom: 8 }}>
+            <CameraScanner
+              key={`box-${cameraKey}`}
+              embedded
+              minimal
+              open
+              continuous
+              onClose={() => {}}
+              onScan={(code) => {
+                const clean = String(code || '').trim()
+                if (clean) void openBox(clean)
+              }}
+            />
+          </div>
           <div className="scan-bottom-bar">
             <div className="scan-input-chip">
-              <span style={{ fontSize: 18, flexShrink: 0 }}>📦</span>
+              <Box size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
               <input
                 type="text" value={box}
                 onChange={e => setBox(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); openBox() } }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void openBox() } }}
                 placeholder="Box number…"
                 autoFocus autoComplete="off"
               />
             </div>
-            <button className="scan-icon-btn primary" onClick={openBox} disabled={!box.trim()} aria-label="Open">
-              ↵
+            <button className="scan-icon-btn primary" onClick={() => void openBox()} disabled={!box.trim()} aria-label="Open">
+              <ArrowRight size={18} strokeWidth={1.8} />
             </button>
           </div>
         </>
@@ -106,17 +149,32 @@ export default function ItemVerifier() {
       {activeBox && (
         <>
           <div className="scan-card">
-            <div className="scan-card-icon blue">📦</div>
+            <div className="scan-card-icon blue"><Box size={20} strokeWidth={1.8} /></div>
             <div className="scan-card-body">
               <div className="scan-card-code">{activeBox.box_number}</div>
               <div className="scan-card-detail">{activeBox.items.length} line(s)</div>
             </div>
-            <button className="scan-btn-outline scan-btn-sm" onClick={() => setActiveBox(null)} style={{ width: 'auto', minHeight: 36 }}>
+            <button className="scan-btn-outline scan-btn-sm" onClick={() => { setActiveBox(null); setCameraKey((k) => k + 1) }} style={{ width: 'auto', minHeight: 36 }}>
               Close box
             </button>
           </div>
 
-          {activeBox.items.map((it, i) => {
+          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160, marginBottom: 8 }}>
+            <CameraScanner
+              key={`item-${cameraKey}-${activeBox.box_number}`}
+              embedded
+              minimal
+              open
+              continuous
+              onClose={() => {}}
+              onScan={(code) => {
+                const clean = String(code || '').trim()
+                if (clean) void verifyItem(clean)
+              }}
+            />
+          </div>
+
+          {itemMore.visible.map((it, i) => {
             const done = it.status === 'full_match' || Number(it.scanned_qty) >= Number(it.expected_qty)
             const partial = Number(it.scanned_qty) > 0 && !done
             return (
@@ -134,29 +192,34 @@ export default function ItemVerifier() {
               </div>
             )
           })}
+          {itemMore.hasMore && (
+            <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 8 }} onClick={itemMore.loadMore}>
+              Load more ({itemMore.remaining} left)
+            </button>
+          )}
 
           <div className="scan-bottom-bar" style={{ marginTop: 4 }}>
             <div className="scan-input-chip">
-              <span style={{ fontSize: 18, flexShrink: 0 }}>🔍</span>
+              <Search size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
               <input
                 type="text" value={itemScan}
                 onChange={e => setItemScan(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); verifyItem(itemScan) } }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void verifyItem(itemScan) } }}
                 placeholder="Scan item barcode…"
                 autoFocus autoComplete="off"
               />
             </div>
-            <button className="scan-icon-btn primary" onClick={() => verifyItem(itemScan)} disabled={!itemScan.trim()} aria-label="Verify">
-              ↵
+            <button className="scan-icon-btn primary" onClick={() => void verifyItem(itemScan)} disabled={!itemScan.trim()} aria-label="Verify">
+              <ArrowRight size={18} strokeWidth={1.8} />
             </button>
           </div>
 
           <button
             className={`scan-btn-outline scan-btn-sm`}
             onClick={() => setDamageMode(!damageMode)}
-            style={{ minHeight: 40, background: damageMode ? 'var(--red-50)' : undefined, borderColor: damageMode ? 'var(--red-500)' : undefined }}
+            style={{ minHeight: 40, background: damageMode ? 'var(--red-50)' : undefined, borderColor: damageMode ? 'var(--red-500)' : undefined, display: 'inline-flex', alignItems: 'center', gap: 6 }}
           >
-            🚩 {damageMode ? 'Damage mode ON' : 'Flag damage'}
+            <Flag size={14} strokeWidth={1.8} /> {damageMode ? 'Damage mode ON' : 'Flag damage'}
           </button>
         </>
       )}

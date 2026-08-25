@@ -4,12 +4,14 @@ import {
   AlertTriangle,
   Archive,
   ArrowDownToLine,
+  ArrowLeft,
   ArrowLeftRight,
   BarChart3,
   Box,
   Boxes,
   Building2,
   CheckSquare,
+  ChevronLeft,
   ClipboardList,
   FileText,
   GitBranch,
@@ -33,22 +35,20 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { getRole } from "../services/api";
-import { deskLabel, canOpenPermissionedPath, homePathForSession, isDeskRole } from "../utils/roleAccess";
-import { listDeskNavItems, type NavSectionId } from "../utils/navCatalog";
+import { deskLabel, canOpenPermissionedPath, goBackOrHome, homePathForSession, isDeskRole } from "../utils/roleAccess";
+import { groupNavBySection, listDeskNavItems } from "../utils/navCatalog";
+import {
+  isSectionOpen,
+  readSectionOpenMap,
+  readSidebarCollapsed,
+  toggleSectionOpen,
+  writeSidebarCollapsed,
+  type SectionOpenMap,
+} from "../utils/navCollapse";
 import { getPermissions } from "../utils/permissions";
+import CollapsibleNavSection from "./CollapsibleNavSection";
 import NotificationBell from "./NotificationBell";
 import UserMenu from "./UserMenu";
-
-const SECTION_ORDER: NavSectionId[] = ["home", "inward", "stock", "buying", "selling", "masters"];
-
-const SECTION_TITLES: Record<string, string> = {
-  home: "Home",
-  inward: "Inward",
-  stock: "Stock",
-  buying: "Buying",
-  selling: "Selling",
-  masters: "Masters",
-};
 
 const ICONS: Record<string, LucideIcon> = {
   "/": Home,
@@ -96,22 +96,18 @@ export default function Layout() {
   const location = useLocation();
   const role = getRole();
   const brandSub = deskLabel(role);
+  const homePath = homePathForSession(role);
   const showAwesomebar = isDeskRole(role);
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("gowms_nav") === "collapsed");
+  const [collapsed, setCollapsed] = useState(() => readSidebarCollapsed());
+  const [sectionOpen, setSectionOpen] = useState<SectionOpenMap>(() => readSectionOpenMap());
   const [mobileOpen, setMobileOpen] = useState(false);
   const [navQuery, setNavQuery] = useState("");
   const [navOpen, setNavOpen] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const deskItems = listDeskNavItems(role, getPermissions());
-
-  const sections = useMemo(() => {
-    return SECTION_ORDER.map((id) => ({
-      id,
-      title: SECTION_TITLES[id] || id,
-      items: deskItems.filter((item) => item.section === id),
-    })).filter((section) => section.items.length > 0);
-  }, [deskItems]);
+  const sections = useMemo(() => groupNavBySection(deskItems), [deskItems]);
+  const onHome = location.pathname === homePath || (homePath === "/" && location.pathname === "/");
 
   const visibleItems = useMemo(() => {
     return sections.flatMap((section) =>
@@ -119,14 +115,21 @@ export default function Layout() {
     );
   }, [sections]);
 
+  const setSidebarCollapsed = (next: boolean) => {
+    setCollapsed(next);
+    writeSidebarCollapsed(next);
+  };
+
   const toggleMenu = () => {
     if (window.matchMedia("(max-width: 640px)").matches) {
       setMobileOpen((v) => !v);
       return;
     }
-    const next = !collapsed;
-    setCollapsed(next);
-    localStorage.setItem("gowms_nav", next ? "collapsed" : "expanded");
+    setSidebarCollapsed(!collapsed);
+  };
+
+  const onToggleSection = (id: string) => {
+    setSectionOpen((prev) => toggleSectionOpen(id, prev));
   };
 
   useEffect(() => {
@@ -165,41 +168,78 @@ export default function Layout() {
     <div className="shell">
       {mobileOpen && <div className="nav-backdrop" onClick={() => setMobileOpen(false)} />}
       <aside className={`sidebar ${collapsed ? "collapsed" : ""} ${mobileOpen ? "mobile-open" : ""}`}>
-        <div className="brand">
+        <button
+          type="button"
+          className="brand brand-home"
+          onClick={() => navigate(homePath)}
+          aria-label="Go to home"
+        >
           <span className="brand-mark">gW</span>
           <div className="brand-text">
             <strong>goWMS</strong>
             <small>{brandSub}</small>
           </div>
-        </div>
+        </button>
         <nav className="nav">
-          {sections.map((section) => (
-            <div key={section.id}>
-              <div className="nav-section">{section.title}</div>
-              {section.items.map((item) => {
-                const Icon = ICONS[item.to];
-                return (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    end={item.to !== "/grn"}
-                    title={item.label}
-                    className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
-                  >
-                    {Icon ? <Icon className="nav-icon" size={16} strokeWidth={1.8} /> : null}
-                    <span className="nav-link-label">{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </div>
-          ))}
+          {sections.map((section) => {
+            const open = collapsed || isSectionOpen(section.id, sectionOpen);
+            return (
+              <CollapsibleNavSection
+                key={section.id}
+                id={section.id}
+                title={section.title}
+                open={open}
+                onToggle={() => onToggleSection(section.id)}
+              >
+                {section.items.map((item) => {
+                  const Icon = ICONS[item.to];
+                  return (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      end={item.to !== "/grn"}
+                      title={item.label}
+                      className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+                    >
+                      {Icon ? <Icon className="nav-icon" size={16} strokeWidth={1.8} /> : null}
+                      <span className="nav-link-label">{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </CollapsibleNavSection>
+            );
+          })}
         </nav>
+        <button
+          type="button"
+          className="sidebar-rail-toggle"
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-pressed={collapsed}
+          onClick={() => setSidebarCollapsed(!collapsed)}
+        >
+          <ChevronLeft
+            size={16}
+            strokeWidth={2}
+            className={collapsed ? "sidebar-rail-chevron flipped" : "sidebar-rail-chevron"}
+            aria-hidden
+          />
+        </button>
       </aside>
       <div className="main">
         <header className="topbar">
           <button type="button" className="hamburger" aria-label="Toggle menu" onClick={toggleMenu}>
             <Menu size={18} strokeWidth={1.8} />
           </button>
+          {!onHome && (
+            <button
+              type="button"
+              className="topbar-back"
+              aria-label="Go back"
+              onClick={() => goBackOrHome(navigate, homePath)}
+            >
+              <ArrowLeft size={18} strokeWidth={1.8} />
+            </button>
+          )}
           {showAwesomebar ? (
           <div className="awesomebar">
             <Search size={16} style={{ color: 'var(--muted-foreground)', flexShrink: 0 }} strokeWidth={1.8} />

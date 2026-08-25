@@ -976,10 +976,35 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 				(SELECT COUNT(*) FROM purchase_order_items WHERE purchase_order_id = po.id) AS item_count,
 				(SELECT COALESCE(SUM(qty), 0) FROM purchase_order_items WHERE purchase_order_id = po.id) AS total_qty,
 				(SELECT COALESCE(SUM(received_qty), 0) FROM purchase_order_items WHERE purchase_order_id = po.id) AS received_qty,
-				(SELECT COUNT(*) FROM grn_sessions gs WHERE gs.purchase_receipt_no = po.name AND gs.status NOT IN ('closed','completed')) AS open_sessions,
-				(SELECT gs.id FROM grn_sessions gs WHERE gs.purchase_receipt_no = po.name AND gs.status NOT IN ('closed','completed') ORDER BY gs.id DESC LIMIT 1) AS resume_session_id
+				(SELECT COUNT(*) FROM grn_sessions gs
+				  WHERE (gs.purchase_receipt_no = po.name OR gs.purchase_order_id = po.id)
+				    AND gs.status NOT IN ('closed','completed','cancelled')) AS open_sessions,
+				(SELECT gs.id FROM grn_sessions gs
+				  WHERE (gs.purchase_receipt_no = po.name OR gs.purchase_order_id = po.id)
+				    AND gs.status NOT IN ('closed','completed','cancelled')
+				  ORDER BY COALESCE(gs.boxes_total, 0) DESC, gs.id DESC
+				  LIMIT 1) AS resume_session_id,
+				(SELECT gs.session_no FROM grn_sessions gs
+				  WHERE (gs.purchase_receipt_no = po.name OR gs.purchase_order_id = po.id)
+				    AND gs.status NOT IN ('closed','completed','cancelled')
+				  ORDER BY COALESCE(gs.boxes_total, 0) DESC, gs.id DESC
+				  LIMIT 1) AS session_no,
+				(SELECT COALESCE(gs.packing_list_no,'') FROM grn_sessions gs
+				  WHERE (gs.purchase_receipt_no = po.name OR gs.purchase_order_id = po.id)
+				    AND gs.status NOT IN ('closed','completed','cancelled')
+				  ORDER BY COALESCE(gs.boxes_total, 0) DESC, gs.id DESC
+				  LIMIT 1) AS packing_list_no,
+				(SELECT COALESCE(
+					NULLIF(gs.boxes_total, 0),
+					(SELECT COUNT(*) FROM grn_cartons gc WHERE gc.grn_session_id = gs.id),
+					0
+				 ) FROM grn_sessions gs
+				  WHERE (gs.purchase_receipt_no = po.name OR gs.purchase_order_id = po.id)
+				    AND gs.status NOT IN ('closed','completed','cancelled')
+				  ORDER BY COALESCE(gs.boxes_total, 0) DESC, gs.id DESC
+				  LIMIT 1) AS boxes_total
 			FROM purchase_orders po
-			WHERE po.status IN ('draft','submitted','To Receive and Bill','To Receive','Partially Received')
+			WHERE po.status IN ('draft','submitted','To Receive and Bill','To Receive','Partially Received','open')
 			  AND COALESCE(po.per_received, 0) < 100
 			  AND EXISTS (
 				SELECT 1 FROM purchase_order_items poi
@@ -1004,14 +1029,29 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 			ReceivedQty     float64 `json:"received_qty"`
 			OpenSessions    int     `json:"open_sessions"`
 			ResumeSessionID *int    `json:"resume_session_id"`
+			SessionNo       string  `json:"session_no"`
+			PackingListNo   string  `json:"packing_list_no"`
+			BoxesTotal      int     `json:"boxes_total"`
 		}
 
 		var list []poInfo
 		for rows.Next() {
 			var p poInfo
+			var sessionNo, packingListNo *string
+			var boxesTotal *int
 			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.GrandTotal,
-				&p.ScheduleDate, &p.ItemCount, &p.TotalQty, &p.ReceivedQty, &p.OpenSessions, &p.ResumeSessionID); err != nil {
+				&p.ScheduleDate, &p.ItemCount, &p.TotalQty, &p.ReceivedQty, &p.OpenSessions, &p.ResumeSessionID,
+				&sessionNo, &packingListNo, &boxesTotal); err != nil {
 				continue
+			}
+			if sessionNo != nil {
+				p.SessionNo = *sessionNo
+			}
+			if packingListNo != nil {
+				p.PackingListNo = *packingListNo
+			}
+			if boxesTotal != nil {
+				p.BoxesTotal = *boxesTotal
 			}
 			list = append(list, p)
 		}

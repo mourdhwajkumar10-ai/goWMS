@@ -1,6 +1,6 @@
 import { hasPermission } from './permissions'
 
-export type NavSectionId = 'home' | 'inward' | 'stock' | 'buying' | 'selling' | 'masters' | 'floor'
+export type NavSectionId = 'home' | 'inbound' | 'outbound' | 'inventory' | 'system'
 
 export type NavItemDef = {
   to: string
@@ -14,6 +14,49 @@ export type NavItemDef = {
   floor?: boolean
   /** Desk sidebar only — default true when omitted */
   desk?: boolean
+}
+
+export const NAV_SECTION_ORDER: NavSectionId[] = [
+  'home',
+  'inbound',
+  'outbound',
+  'inventory',
+  'system',
+]
+
+/** Floor drawer / launcher omit Home (desk dashboard). */
+export const FLOOR_SECTION_ORDER: NavSectionId[] = [
+  'inbound',
+  'outbound',
+  'inventory',
+  'system',
+]
+
+export const NAV_SECTION_TITLES: Record<NavSectionId, string> = {
+  home: 'Home',
+  inbound: 'Inbound',
+  outbound: 'Outbound',
+  inventory: 'Inventory management',
+  system: 'System',
+}
+
+export type NavSectionGroup = {
+  id: NavSectionId
+  title: string
+  items: NavItemDef[]
+}
+
+export function groupNavBySection(
+  items: NavItemDef[],
+  order: NavSectionId[] = NAV_SECTION_ORDER,
+): NavSectionGroup[] {
+  return order
+    .map((id) => ({
+      id,
+      title: NAV_SECTION_TITLES[id],
+      items: items.filter((item) => item.section === id),
+    }))
+    .filter((section) => section.items.length > 0)
 }
 
 function isDeskRole(role?: string | null) {
@@ -33,60 +76,59 @@ export const NAV_CATALOG: NavItemDef[] = [
   { to: '/', label: 'Dashboard', section: 'home', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
   { to: '/analytics', label: 'Analytics', section: 'home', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
 
-  // ── Inward ──
-  { to: '/receiving-management', label: 'Receiving', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
-  { to: '/receiving', label: 'RF Scanner', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
-  { to: '/exceptions', label: 'Exceptions', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
-  { to: '/follow-up', label: 'Follow-Up Receipts', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
-  { to: '/grn-audit', label: 'Random Audit', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
-  { to: '/putaway', label: 'Putaway', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/putaway/logs', label: 'Putaway Logs', section: 'inward', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  // ── Inbound ──
+  { to: '/receiving-management', label: 'Receiving', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
+  { to: '/receiving', label: 'RF Scanner', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
+  { to: '/exceptions', label: 'Exceptions', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
+  { to: '/follow-up', label: 'Follow-Up Receipts', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
+  { to: '/grn-audit', label: 'Random Audit', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
+  // Desk wizard at /putaway. Floor uses /putaway-runner (scan-first) — one "Putaway" tile only.
+  { to: '/putaway', label: 'Putaway', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/putaway/logs', label: 'Putaway Logs', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/qi', label: 'Quality Inspection', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
+  { to: '/po', label: 'Purchase Order', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
+  { to: '/purchase-invoices', label: 'Purchase Invoice', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
+  { to: '/suppliers', label: 'Supplier', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
 
-  // ── Stock ──
-  { to: '/pick', label: 'Picking', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/pack', label: 'Packing', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/dispatch', label: 'Dispatch', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/cycle-count', label: 'Cycle Count', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/stock-scan', label: 'Stock Scan', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
-  { to: '/inventory-health', label: 'Inventory Health', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
-  { to: '/transfers', label: 'Transfers', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
-  { to: '/stock-entries', label: 'Stock Entry', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
-  { to: '/stock-reconciliations', label: 'Stock Reconciliation', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
-  { to: '/serial', label: 'Serial No', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
-  { to: '/batches', label: 'Batch', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
-  { to: '/qi', label: 'Quality Inspection', section: 'stock', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
+  // ── Outbound ──
+  { to: '/pick', label: 'Picking', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/pack', label: 'Packing', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/dispatch', label: 'Dispatch', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/sales-orders', label: 'Sales Order', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
+  { to: '/delivery-notes', label: 'Delivery Note', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
+  { to: '/backorders', label: 'Backorders', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/returns', label: 'Returns', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/customers', label: 'Customer', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
 
-  // ── Buying ──
-  { to: '/po', label: 'Purchase Order', section: 'buying', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
-  { to: '/purchase-invoices', label: 'Purchase Invoice', section: 'buying', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
-  { to: '/suppliers', label: 'Supplier', section: 'buying', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
+  // ── Inventory management ──
+  { to: '/cycle-count', label: 'Cycle Count', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/stock-scan', label: 'Stock Scan', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/inventory-health', label: 'Inventory Health', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/transfers', label: 'Transfers', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
+  { to: '/stock-entries', label: 'Stock Entry', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
+  { to: '/stock-reconciliations', label: 'Stock Reconciliation', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
+  { to: '/serial', label: 'Serial No', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/batches', label: 'Batch', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
+  { to: '/items', label: 'Item', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
+  { to: '/warehouses', label: 'Warehouse', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
+  { to: '/locations', label: 'Locations', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
+  { to: '/transports', label: 'Transport', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
 
-  // ── Selling ──
-  { to: '/sales-orders', label: 'Sales Order', section: 'selling', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
-  { to: '/delivery-notes', label: 'Delivery Note', section: 'selling', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
-  { to: '/backorders', label: 'Backorders', section: 'selling', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
-  { to: '/returns', label: 'Returns', section: 'selling', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
-  { to: '/customers', label: 'Customer', section: 'selling', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-
-  // ── Masters ──
-  { to: '/items', label: 'Item', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-  { to: '/warehouses', label: 'Warehouse', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-  { to: '/locations', label: 'Locations', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-  { to: '/transports', label: 'Transport', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-  { to: '/employees', label: 'Employees', section: 'masters', rolesFallback: ['admin', 'wm'], permissions: ['users.manage'] },
-  { to: '/roles', label: 'Roles', section: 'masters', rolesFallback: ['admin'], permissions: ['roles.manage'] },
-  { to: '/workflow', label: 'Workflow', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
-  { to: '/reports', label: 'Reports', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
-  { to: '/audit-logs', label: 'Transaction Logs', section: 'masters', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
+  // ── System ──
+  { to: '/employees', label: 'Employees', section: 'system', rolesFallback: ['admin', 'wm'], permissions: ['users.manage'] },
+  { to: '/roles', label: 'Roles', section: 'system', rolesFallback: ['admin'], permissions: ['roles.manage'] },
+  { to: '/workflow', label: 'Workflow', section: 'system', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['masterdata.manage'] },
+  { to: '/reports', label: 'Reports', section: 'system', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
+  { to: '/audit-logs', label: 'Transaction Logs', section: 'system', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['reports.view'] },
 
   // ── Floor-only tiles (not in desk sidebar) ──
-  { to: '/dock-receiving', label: 'Dock Receiving', section: 'floor', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
-  { to: '/item-verifier', label: 'Item Verifier', section: 'floor', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
-  { to: '/box-verification', label: 'Box Verification', section: 'floor', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
-  { to: '/putaway-runner', label: 'Putaway Runner', section: 'floor', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
-  { to: '/quick-count', label: 'Quick Count', section: 'floor', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
-  { to: '/stock-peek', label: 'Stock Peek', section: 'floor', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
-  { to: '/notifications', label: 'Notifications', section: 'floor', rolesFallback: '*', permissions: ['notifications.view'], floor: true, desk: false },
+  { to: '/dock-receiving', label: 'Dock Receiving', section: 'inbound', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
+  { to: '/item-verifier', label: 'Item Verifier', section: 'inbound', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
+  { to: '/box-verification', label: 'Box Verification', section: 'inbound', rolesFallback: '*', permissions: ['receiving.view'], floor: true, desk: false },
+  { to: '/putaway-runner', label: 'Putaway', section: 'inbound', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
+  { to: '/quick-count', label: 'Quick Count', section: 'inventory', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
+  { to: '/stock-peek', label: 'Stock Peek', section: 'inventory', rolesFallback: '*', permissions: ['inventory.view'], floor: true, desk: false },
+  { to: '/notifications', label: 'Notifications', section: 'system', rolesFallback: '*', permissions: ['notifications.view'], floor: true, desk: false },
 ]
 
 /**
@@ -104,7 +146,7 @@ export const FLOOR_NAV: Record<string, string[]> = {
 
 /** Per-role subset of handheld / floor pages. Desk roles get all floor:true paths. */
 export const HANDHELD_BY_ROLE: Record<string, string[]> = {
-  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
+  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
   picker: ['/pick', '/stock-scan', '/cycle-count', '/quick-count', '/notifications'],
   packer: ['/pack', '/notifications'],
   dispatcher: ['/dispatch', '/notifications'],

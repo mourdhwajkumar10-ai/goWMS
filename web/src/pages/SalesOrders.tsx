@@ -117,6 +117,9 @@ export default function SalesOrders() {
 
   useEffect(() => {
     loadList()
+  }, [statusFilter])
+
+  useEffect(() => {
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
   }, [])
 
@@ -222,25 +225,26 @@ export default function SalesOrders() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Sales Orders</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Priority queue · confirm · create pick</p>
+    <div className="desk-page space-y-3">
+      <div className="page-head desk-page-head">
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <h1 className="page-title">Sales Orders</h1>
+          <p className="page-sub">Priority queue · confirm · create pick</p>
         </div>
-        <div className="flex gap-2">
+        <div className="page-actions">
           <button
-            className="erpnext-btn-secondary"
+            type="button"
+            className="erpnext-btn-secondary text-xs"
             onClick={async () => {
               const r = await api.soDecayPriorities()
               if (r.ok) notify({ type: 'success', title: 'Priority decay', message: `Updated ${r.data.decayed} orders` })
               else notify({ type: 'error', title: 'Decay failed', message: r.error || '' })
               loadList()
             }}
-          >Run SLA Decay</button>
+          >SLA Decay</button>
           <CSVImport onImport={handleImport} />
-          <button onClick={() => { setShowNew(!showNew); setSelected(null) }} className="erpnext-btn-primary">
-            {showNew ? 'Cancel' : '+ New Sales Order'}
+          <button type="button" onClick={() => { setShowNew(!showNew); setSelected(null) }} className="erpnext-btn-primary text-xs">
+            {showNew ? 'Cancel' : '+ New SO'}
           </button>
         </div>
       </div>
@@ -345,27 +349,29 @@ export default function SalesOrders() {
       )}
 
       {!selected ? (
-        <div className="erpnext-card">
-          <div className="px-4 py-3 flex flex-wrap gap-2 items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
-            <h3 className="font-semibold">Orders (priority DESC)</h3>
-            <div className="flex gap-2">
-              <select className="erpnext-input text-sm" value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+        <div className="erpnext-card desk-list-card p-2">
+          <ListPager
+            pager={pager}
+            placeholder="Search sales orders…"
+            leading={
+              <select
+                className="erpnext-input desk-filter-status text-xs"
+                value={statusFilter}
+                onChange={e => setStatusFilter(e.target.value)}
+                aria-label="Filter by status"
+              >
                 <option value="">All statuses</option>
                 <option value="draft">Draft</option>
                 <option value="confirmed">Confirmed</option>
                 <option value="picking">Picking</option>
                 <option value="cancelled">Cancelled</option>
               </select>
-              <button onClick={loadList} className="erpnext-btn-secondary text-sm">Filter</button>
-            </div>
-          </div>
-          <div className="px-4 pt-3">
-            <ListPager pager={pager} placeholder="Search sales orders…" />
-          </div>
-          <div className="p-4 overflow-x-auto">
-            <table className="erpnext-table">
+            }
+          />
+          <div className="table-wrap desk-table-scroll">
+            <table className="erpnext-table desk-table">
               <thead>
-                <tr><th>SO</th><th>Customer</th><th>Priority</th><th>Status</th><th>Delivery</th><th>Total</th><th>Lines</th><th>Picked%</th><th></th></tr>
+                <tr><th>SO</th><th>Customer</th><th>Priority</th><th>Status</th><th>Delivery</th><th>Total</th><th>Lines</th><th>Picked%</th><th className="desk-col-actions">Actions</th></tr>
               </thead>
               <tbody>
                 {pager.pageItems.map(o => (

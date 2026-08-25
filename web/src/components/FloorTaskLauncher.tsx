@@ -15,7 +15,7 @@ import {
   Truck,
   type LucideIcon,
 } from 'lucide-react'
-import type { NavItemDef } from '../utils/navCatalog'
+import { FLOOR_SECTION_ORDER, groupNavBySection, type NavItemDef } from '../utils/navCatalog'
 import { canUseDevice } from '../utils/permissions'
 
 const TILE_ICONS: Record<string, LucideIcon> = {
@@ -23,8 +23,7 @@ const TILE_ICONS: Record<string, LucideIcon> = {
   '/dock-receiving': Box,
   '/item-verifier': CheckSquare,
   '/box-verification': ScanLine,
-  '/putaway': ArrowDownToLine,
-  '/putaway-runner': Truck,
+  '/putaway-runner': ArrowDownToLine,
   '/pick': CheckSquare,
   '/pack': Square,
   '/dispatch': Truck,
@@ -46,6 +45,7 @@ type Props = {
 export default function FloorTaskLauncher({ title, subtitle, tiles }: Props) {
   const navigate = useNavigate()
   const suggestDesk = canUseDevice('desktop')
+  const sections = groupNavBySection(tiles, FLOOR_SECTION_ORDER)
 
   return (
     <div className="floor-launcher">
@@ -62,22 +62,27 @@ export default function FloorTaskLauncher({ title, subtitle, tiles }: Props) {
           )}
         </div>
       ) : (
-        <div className="floor-launcher-grid">
-          {tiles.map((tile) => {
-            const Icon = TILE_ICONS[tile.to]
-            return (
-              <button
-                key={tile.to}
-                type="button"
-                className="floor-launcher-tile"
-                onClick={() => navigate(tile.to)}
-              >
-                {Icon ? <Icon size={22} strokeWidth={1.8} aria-hidden /> : null}
-                <span className="floor-launcher-tile-label">{tile.label}</span>
-              </button>
-            )
-          })}
-        </div>
+        sections.map((section) => (
+          <div key={section.id} className="floor-launcher-section">
+            <div className="floor-launcher-section-label">{section.title}</div>
+            <div className="floor-launcher-grid">
+              {section.items.map((tile) => {
+                const Icon = TILE_ICONS[tile.to]
+                return (
+                  <button
+                    key={tile.to}
+                    type="button"
+                    className="floor-launcher-tile"
+                    onClick={() => navigate(tile.to)}
+                  >
+                    {Icon ? <Icon size={22} strokeWidth={1.8} aria-hidden /> : null}
+                    <span className="floor-launcher-tile-label">{tile.label}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        ))
       )}
     </div>
   )

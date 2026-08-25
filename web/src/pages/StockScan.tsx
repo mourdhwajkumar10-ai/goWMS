@@ -1,15 +1,25 @@
 import { useEffect, useRef, useState } from 'react'
+import { ArrowRight, Box, MapPin, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
+import CameraScanner from '../components/CameraScanner'
+import RfShell from '../components/RfShell'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
 import { parsePackedItemQR } from '../utils/parsePackedQR'
+import { PageHead } from '../components/desktop/PageHead'
+import { Card } from '../components/ui/Card'
+import { Badge, statusToVariant } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
 
 type Mode = 'auto' | 'item' | 'location'
 
 export default function StockScan() {
+  const rf = useRfUi()
   const [mode, setMode] = useState<Mode>('auto')
   const [code, setCode] = useState('')
   const [showScanner, setShowScanner] = useState(false)
@@ -41,65 +51,252 @@ export default function StockScan() {
     }
   }
 
-  const onScan = (scanned: string) => {
-    setShowScanner(false)
-    // Only item scans carry the packed "itemcode-qty_price" label; location
-    // scans (A-01-01-03) must be looked up verbatim, so only strip the label
-    // when the mode is explicitly item.
+  const applyScanned = (scanned: string) => {
     if (mode === 'item') {
       const packed = parsePackedItemQR(scanned)
-      if (packed) { lookup(packed.itemCode); return }
+      if (packed) { void lookup(packed.itemCode); return }
     }
-    lookup(scanned)
+    void lookup(scanned)
   }
 
-  const allocBadge = (status: string) => {
-    const cls =
-      status === 'available' || status === 'allocatable' ? 'erpnext-badge-green'
-        : status === 'unallocatable' ? 'erpnext-badge-yellow'
-          : status === 'partial' ? 'erpnext-badge-yellow'
-            : 'erpnext-badge-red'
-    return <span className={`erpnext-badge ${cls}`}>{status}</span>
+  const onScan = (scanned: string) => {
+    setShowScanner(false)
+    applyScanned(scanned)
   }
+
+  const allocBadge = (status: string) => <Badge variant={statusToVariant(status)}>{status}</Badge>
 
   const summary = result?.summary
   const rows: any[] = result?.rows ?? []
   const pager = useClientPager(rows)
+  const rfRowsMore = useLoadMore(rows, 10, `${result?.kind ?? ''}|${summary?.item_code ?? summary?.location_code ?? ''}|${rows.length}`)
 
-  return (
-    <div className="space-y-6">
-      {showScanner && <BarcodeScanner onScan={onScan} onClose={() => setShowScanner(false)} />}
+  if (rf) {
+    return (
+      <RfShell title="Stock Scan">
+        {showScanner && <BarcodeScanner onScan={onScan} onClose={() => setShowScanner(false)} />}
 
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Stock Scan</h1>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            Scan an item to see allocatable vs unallocatable stock, or scan a location to list everything in that bin.
-          </p>
-        </div>
-        <button className="erpnext-btn-secondary" onClick={() => setShowScanner(true)}>📷 Camera</button>
-      </div>
-
-      <div className="erpnext-card p-4 space-y-3">
-        <div className="flex gap-2 flex-wrap">
+        <div className="scan-tabs">
           {([
-            ['auto', 'Auto (location first)'],
-            ['item', 'Item only'],
-            ['location', 'Location only'],
+            ['auto', 'Auto'],
+            ['item', 'Item'],
+            ['location', 'Location'],
           ] as const).map(([m, label]) => (
             <button
               key={m}
-              className={`erpnext-btn-secondary text-xs ${mode === m ? 'erpnext-btn-primary' : ''}`}
-              onClick={() => setMode(m)}
+              type="button"
+              className={`scan-tab${mode === m ? ' active' : ''}`}
+              onClick={() => { setMode(m); setResult(null) }}
             >
               {label}
             </button>
           ))}
         </div>
 
-        <div className="flex gap-2 flex-wrap items-end">
-          <div className="flex-1 min-w-[220px]">
-            <label className="erpnext-label">Scan / type code</label>
+        <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
+          <CameraScanner
+            open
+            embedded
+            minimal
+            continuous
+            onClose={() => {}}
+            onScan={(scanned) => {
+              const clean = String(scanned || '').trim()
+              if (!clean) return
+              applyScanned(clean)
+            }}
+          />
+        </div>
+
+        <div className="scan-bottom-bar">
+          <div className="scan-input-chip">
+            {mode === 'item' ? (
+              <Box size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
+            ) : mode === 'location' ? (
+              <MapPin size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
+            ) : (
+              <Search size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
+            )}
+            <input
+              type="text"
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void lookup() } }}
+              placeholder={
+                mode === 'item' ? 'Scan item…' : mode === 'location' ? 'Scan location…' : 'Scan anything…'
+              }
+              autoFocus
+              autoComplete="off"
+            />
+            <button
+              type="button"
+              className="scan-icon-btn"
+              style={{ width: 36, height: 36 }}
+              onClick={() => setShowScanner(true)}
+              aria-label="Open camera"
+            >
+              <ScanLine size={16} />
+            </button>
+          </div>
+          <button
+            type="button"
+            className="scan-icon-btn primary"
+            onClick={() => void lookup()}
+            disabled={!code.trim() || loading}
+            aria-label="Lookup"
+          >
+            {loading ? '…' : <ArrowRight size={16} strokeWidth={1.8} />}
+          </button>
+        </div>
+
+        {result?.kind === 'item' && (
+          <>
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{result.item?.code}</div>
+              <div className="scan-select-card-sub">{result.item?.name || '—'}</div>
+              <div className="scan-stock-grid" style={{ marginTop: 10 }}>
+                <div className="scan-stock-cell">
+                  <div className="scan-stock-cell-label">Total</div>
+                  <div className="scan-stock-cell-value">{summary?.total_qty ?? 0}</div>
+                </div>
+                <div className="scan-stock-cell">
+                  <div className="scan-stock-cell-label">Allocatable</div>
+                  <div className="scan-stock-cell-value" style={{ color: '#286840' }}>{summary?.allocatable_qty ?? 0}</div>
+                </div>
+                <div className="scan-stock-cell">
+                  <div className="scan-stock-cell-label">Unalloc</div>
+                  <div className="scan-stock-cell-value" style={{ color: '#9c4621' }}>{summary?.unallocatable_qty ?? 0}</div>
+                </div>
+                <div className="scan-stock-cell">
+                  <div className="scan-stock-cell-label">Bins</div>
+                  <div className="scan-stock-cell-value">{rows.length}</div>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rfRowsMore.visible.map((row: any) => (
+                <div key={row.id} className="scan-row">
+                  <div className="scan-row-info">
+                    <div className="scan-row-code">{row.location_code}</div>
+                    <div className="scan-row-desc">
+                      {row.location_type} · {row.batch_no || 'no batch'} · {row.allocation_status}
+                    </div>
+                  </div>
+                  <div className="scan-row-meta">
+                    <div className="scan-row-qty">{row.actual_qty}</div>
+                    <div className="scan-row-label">qty</div>
+                  </div>
+                </div>
+              ))}
+              {rfRowsMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfRowsMore.loadMore}>
+                  Load more ({rfRowsMore.remaining} left)
+                </button>
+              )}
+              {rows.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No stock</p>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: 13, lineHeight: 1.4 }}>
+                    This item has no location quantity.
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {result?.kind === 'location' && (
+          <>
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{result.location?.code}</div>
+              <div className="scan-select-card-sub">
+                {result.location?.location_type}
+                {result.location?.aisle ? ` · Aisle ${result.location.aisle}` : ''}
+                {result.location?.bay ? ` · Bay ${result.location.bay}` : ''}
+                {result.location?.level ? ` · Level ${result.location.level}` : ''}
+                {' · '}{result.item_count ?? rows.length} SKU(s)
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {rfRowsMore.visible.map((row: any) => (
+                <div key={row.id} className="scan-row">
+                  <div className="scan-row-info">
+                    <div className="scan-row-code">{row.item_code}</div>
+                    <div className="scan-row-desc">
+                      {row.item_name || '—'} · {row.batch_no || 'no batch'} · {row.allocation_status}
+                    </div>
+                  </div>
+                  <div className="scan-row-meta">
+                    <div className="scan-row-qty">{row.actual_qty}</div>
+                    <div className="scan-row-label">qty</div>
+                  </div>
+                </div>
+              ))}
+              {rfRowsMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfRowsMore.loadMore}>
+                  Load more ({rfRowsMore.remaining} left)
+                </button>
+              )}
+              {rows.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>Empty location</p>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: 13, lineHeight: 1.4 }}>
+                    No items in this bin. Scan another code to look up stock.
+                  </p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {!result && (
+          <div className="scan-section-card" style={{ textAlign: 'center' }}>
+            <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>Scan to look up</p>
+            <p style={{ color: 'var(--muted-foreground)', fontSize: 13, lineHeight: 1.4 }}>
+              Point the camera at an item or location barcode, or type a code and tap lookup.
+            </p>
+          </div>
+        )}
+      </RfShell>
+    )
+  }
+
+  return (
+    <div className="desk-page space-y-3">
+      {showScanner && <BarcodeScanner onScan={onScan} onClose={() => setShowScanner(false)} />}
+
+      <PageHead
+        eyebrow="Stock"
+        title="Stock Scan"
+        subtitle="Item or location lookup"
+        actions={
+          <Button variant="outline" onClick={() => setShowScanner(true)}>
+            <ScanLine size={14} /> Camera
+          </Button>
+        }
+      />
+
+      <Card className="p-3">
+        <div className="desk-filter-bar" style={{ marginBottom: 0 }}>
+          <div className="desk-chip-row">
+            {([
+              ['auto', 'Auto'],
+              ['item', 'Item'],
+              ['location', 'Location'],
+            ] as const).map(([m, label]) => (
+              <button
+                key={m}
+                type="button"
+                className={`erpnext-btn-secondary text-xs ${mode === m ? 'erpnext-btn-primary' : ''}`}
+                onClick={() => setMode(m)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="desk-filter-search" style={{ minWidth: 180 }}>
             {mode === 'item' ? (
               <ItemAutocomplete
                 value={code}
@@ -114,23 +311,24 @@ export default function StockScan() {
             ) : (
               <input
                 ref={inputRef}
-                className="erpnext-input"
+                className="erpnext-input desk-filter-search"
+                style={{ width: '100%' }}
                 value={code}
                 onChange={e => setCode(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); lookup() } }}
-                placeholder={mode === 'location' ? 'A-01-01-01 or INCOMING-01' : 'Scan item or location…'}
+                placeholder={mode === 'location' ? 'A-01-01-01' : 'Scan item or location…'}
                 autoFocus
               />
             )}
           </div>
-          <button className="erpnext-btn-primary" onClick={() => lookup()} disabled={loading}>
+          <Button onClick={() => lookup()} disabled={loading}>
             {loading ? 'Looking up…' : 'Lookup'}
-          </button>
+          </Button>
         </div>
-      </div>
+      </Card>
 
       {result?.kind === 'item' && (
-        <div className="erpnext-card space-y-0">
+        <Card className="space-y-0" style={{ padding: 0 } as any}>
           <div className="px-6 py-4 border-b flex flex-wrap gap-4 items-center justify-between" style={{ borderColor: 'var(--border)' }}>
             <div>
               <h2 className="text-lg font-semibold">{result.item?.code}</h2>
@@ -166,33 +364,35 @@ export default function StockScan() {
               <div className="text-xl font-semibold">{rows.length}</div>
             </div>
           </div>
-          <div className="px-6 pb-6 overflow-x-auto">
+          <div className="px-6 pb-6">
             <div className="mb-3">
               <ListPager pager={pager} placeholder="Search stock…" />
             </div>
-            <table className="erpnext-table text-sm">
-              <thead>
-                <tr style={{ background: 'var(--panel-2)' }}>
-                  <th>Location</th><th>Type</th><th>Batch</th><th className="text-right">Qty</th><th>Allocation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map((row: any) => (
-                  <tr key={row.id}>
-                    <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
-                    <td>{row.location_type}</td>
-                    <td>{row.batch_no || '—'}</td>
-                    <td className="text-right">{row.actual_qty}</td>
-                    <td>{allocBadge(row.allocation_status)}</td>
+            <div className="table-wrap">
+              <table className="erpnext-table text-sm">
+                <thead>
+                  <tr style={{ background: 'var(--panel-2)' }}>
+                    <th>Location</th><th>Type</th><th>Batch</th><th className="text-right">Qty</th><th>Allocation</th>
                   </tr>
-                ))}
-                {pager.total === 0 && (
-                  <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No stock for this item</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map((row: any) => (
+                    <tr key={row.id}>
+                      <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.location_code}</td>
+                      <td>{row.location_type}</td>
+                      <td>{row.batch_no || '—'}</td>
+                      <td className="text-right">{row.actual_qty}</td>
+                      <td>{allocBadge(row.allocation_status)}</td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && (
+                    <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>No stock for this item</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
-        </div>
+        </Card>
       )}
 
       {result?.kind === 'location' && (
@@ -207,31 +407,33 @@ export default function StockScan() {
               {' · '}{result.item_count ?? rows.length} SKU(s)
             </p>
           </div>
-          <div className="p-6 overflow-x-auto">
+          <div className="p-6">
             <div className="mb-3">
               <ListPager pager={pager} placeholder="Search items…" />
             </div>
-            <table className="erpnext-table text-sm">
-              <thead>
-                <tr style={{ background: 'var(--panel-2)' }}>
-                  <th>Item</th><th>Name</th><th>Batch</th><th className="text-right">Qty</th><th>Allocation</th>
-                </tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map((row: any) => (
-                  <tr key={row.id}>
-                    <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.item_code}</td>
-                    <td>{row.item_name || '—'}</td>
-                    <td>{row.batch_no || '—'}</td>
-                    <td className="text-right">{row.actual_qty}</td>
-                    <td>{allocBadge(row.allocation_status)}</td>
+            <div className="table-wrap">
+              <table className="erpnext-table text-sm">
+                <thead>
+                  <tr style={{ background: 'var(--panel-2)' }}>
+                    <th>Item</th><th>Name</th><th>Batch</th><th className="text-right">Qty</th><th>Allocation</th>
                   </tr>
-                ))}
-                {pager.total === 0 && (
-                  <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>Empty location</td></tr>
-                )}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map((row: any) => (
+                    <tr key={row.id}>
+                      <td className="font-medium" style={{ color: 'var(--accent)' }}>{row.item_code}</td>
+                      <td>{row.item_name || '—'}</td>
+                      <td>{row.batch_no || '—'}</td>
+                      <td className="text-right">{row.actual_qty}</td>
+                      <td>{allocBadge(row.allocation_status)}</td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && (
+                    <tr><td colSpan={5} className="text-center py-6" style={{ color: 'var(--text-dim)' }}>Empty location</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
       )}

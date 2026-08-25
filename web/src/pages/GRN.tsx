@@ -215,20 +215,15 @@ export default function GRN() {
 
   // ─── Render ───
   return (
-    <div className="space-y-6">
-      {/* ═══ Page Header ═══ */}
-      <div className="erpnext-card">
-        <div
-          className="px-6 py-5 flex items-center justify-between border-b"
-          style={{ borderColor: "var(--border)" }}
-        >
-          <div>
-            <h1 className="text-xl font-bold">📦 Receiving Management</h1>
-            <p className="text-sm mt-1" style={{ color: "var(--text-dim)" }}>
-              Upload, manage, and approve packing lists for receiving
-            </p>
-          </div>
+    <div className="desk-page space-y-3">
+      <div className="page-head desk-page-head">
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <h1 className="page-title">Receiving Management</h1>
+          <p className="page-sub">Upload, manage, and approve packing lists</p>
+        </div>
+        <div className="page-actions">
           <button
+            type="button"
             className="erpnext-btn-primary"
             onClick={() => {
               setImportResult(null);
@@ -238,19 +233,20 @@ export default function GRN() {
             + Upload Packing List
           </button>
         </div>
+      </div>
 
         {/* Import Success Banner */}
         {importResult && (
           <div
-            className="mx-6 my-4 p-4 rounded-lg"
+            className="p-3 rounded-lg"
             style={{ background: "#d4edda", border: "1px solid #28a745" }}
           >
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-2 flex-wrap">
               <div>
-                <div className="font-semibold" style={{ color: "#155724" }}>
-                  ✅ Packing List Imported Successfully!
+                <div className="font-semibold text-sm" style={{ color: "#155724" }}>
+                  Packing List Imported Successfully
                 </div>
-                <div className="text-sm mt-2" style={{ color: "#155724" }}>
+                <div className="text-sm mt-1" style={{ color: "#155724" }}>
                   <div>
                     <strong>Session:</strong> {importResult.session_no}
                   </div>
@@ -273,7 +269,7 @@ export default function GRN() {
                   ) : null}
                 </div>
               </div>
-              <div className="flex gap-2">
+              <div className="page-actions">
                 <button
                   className="erpnext-btn-primary text-xs"
                   onClick={() => handleStartReceiving(importResult.grn_session_id)}
@@ -291,41 +287,38 @@ export default function GRN() {
           </div>
         )}
 
-        {/* Status Filter Tabs */}
-        <div className="px-6 py-3 flex gap-2 flex-wrap">
-          {[
-            ["all", "All"],
-            ["open", "Open"],
-            ["receiving", "Receiving"],
-            ["completed", "Completed"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              className={`erpnext-btn-secondary text-xs ${statusFilter === key ? "erpnext-btn-primary" : ""}`}
-              onClick={() => setStatusFilter(key)}
-            >
-              {label} ({statusCounts[key] || 0})
-            </button>
-          ))}
-        </div>
-      </div>
-
       {/* ═══ Packing Lists Table ═══ */}
-      <div className="erpnext-card">
-        <div className="px-6 py-4 border-b" style={{ borderColor: "var(--border)" }}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-lg font-semibold">Packing Lists</h2>
-            <input
-              className="erpnext-input"
-              style={{ width: 280 }}
-              placeholder="Search session, supplier, PO..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+      <div className="erpnext-card desk-list-card">
+        <div className="desk-filter-bar" style={{ padding: "8px 12px 0" }}>
+          <div className="desk-seg" role="tablist" aria-label="Session status">
+            {[
+              ["all", "All"],
+              ["open", "Open"],
+              ["receiving", "Receiving"],
+              ["completed", "Done"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={statusFilter === key}
+                className={`desk-seg-item${statusFilter === key ? " is-active" : ""}`}
+                onClick={() => setStatusFilter(key)}
+              >
+                {label} ({statusCounts[key] || 0})
+              </button>
+            ))}
           </div>
+          <input
+            className="erpnext-input desk-filter-search"
+            placeholder="Search session, supplier, PO…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            aria-label="Search packing lists"
+          />
         </div>
-        <div className="p-4">
-          <table className="erpnext-table text-sm">
+        <div className="p-3 desk-table-scroll">
+          <table className="erpnext-table text-sm desk-table">
             <thead>
               <tr style={{ background: "var(--panel-2)" }}>
                 <th>PO</th>

@@ -40,16 +40,30 @@ type rfItemSummary struct {
 	Status      string  `json:"status"`
 }
 
+// rfPhaseFromStatus maps session status → RF wizard phase.
+// Once the transporter has signed off (item_verification+), the session phase
+// wins over any client-requested phase so the UI cannot fall back to dock receive.
 func rfPhaseFromStatus(sessionStatus, requested string) string {
+	switch canonicalStatus(sessionStatus) {
+	case "item_verification", "item_verification_complete", "exception_pending",
+		"putaway_pending", "putaway_in_progress", "completed", "closed":
+		return "item_verify"
+	}
 	req := strings.ToLower(strings.TrimSpace(requested))
 	if req == "item_verify" || req == "box_verify" {
 		return req
 	}
+	return "box_verify"
+}
+
+// transporterAlreadySignedOff is true after dock sign-off (item verification phase).
+func transporterAlreadySignedOff(sessionStatus string) bool {
 	switch canonicalStatus(sessionStatus) {
-	case "item_verification", "item_verification_complete", "exception_pending":
-		return "item_verify"
+	case "item_verification", "item_verification_complete", "exception_pending",
+		"putaway_pending", "putaway_in_progress", "completed", "closed":
+		return true
 	default:
-		return "box_verify"
+		return false
 	}
 }
 
@@ -326,6 +340,28 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 				"message":     "Box already item-verified",
 			})
 		}
+		// Already counted at dock — do not re-log BOX_RECEIVED or bump counters.
+		if isDuplicateBoxStatus(status) {
+			items, _ := loadCartonItemsTx(c.Context(), tx, cartonID)
+			phase := rfPhaseFromStatus(sessStatus, "")
+			next := "already_scanned"
+			msg := "Box already counted at the dock"
+			if phase == "item_verify" {
+				next = "scan_items"
+				msg = "Box already counted — scan item QR codes to verify"
+			}
+			_ = tx.Rollback(c.Context())
+			return shared.OK(c, fiber.Map{
+				"box_number":  body.BoxNumber,
+				"box_status":  status,
+				"condition":   condition,
+				"items":       items,
+				"item_count":  len(items),
+				"next_action": next,
+				"message":     msg,
+				"duplicate":   true,
+			})
+		}
 
 		uid := nullableUserID(c)
 		_, err = tx.Exec(c.Context(), `
@@ -449,6 +485,23 @@ func signOffBoxesHandler(db *pgxpool.Pool) fiber.Handler {
 		missing := cartonTotal - received
 		if missing < 0 {
 			missing = 0
+		}
+
+		// Idempotent: already signed off — do not insert another TRANSPORT_SIGNED.
+		if transporterAlreadySignedOff(sessStatus) {
+			_ = tx.Rollback(c.Context())
+			msg := fmt.Sprintf("Already signed off — %d of %d boxes received. Continue item verification.", received, cartonTotal)
+			return shared.OK(c, fiber.Map{
+				"session_id":     body.SessionID,
+				"status":         canonicalStatus(sessStatus),
+				"phase":          "item_verify",
+				"boxes_received": received,
+				"boxes_verified": verified,
+				"boxes_total":    cartonTotal,
+				"missing":        missing,
+				"already_signed": true,
+				"message":        msg,
+			})
 		}
 
 		_, err = tx.Exec(c.Context(), `
@@ -932,6 +985,21 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			progressPct = int(math.Round(float64(boxesVerified) / float64(totalBoxes) * 100))
 		}
 		allVerified := totalBoxes > 0 && boxesVerified >= totalBoxes
+		sessionNext := ""
+		if allVerified {
+			var openExc int
+			_ = db.QueryRow(c.Context(), `
+				SELECT COUNT(*) FROM grn_exceptions WHERE grn_session_id=$1 AND status='open'`, body.SessionID).Scan(&openExc)
+			sessionNext = "item_verification_complete"
+			if openExc > 0 {
+				sessionNext = "exception_pending"
+			} else {
+				sessionNext = "putaway_pending"
+			}
+			_, _ = db.Exec(c.Context(), `
+				UPDATE grn_sessions SET status=$2, active_verify_carton_id=NULL, updated_at=now() WHERE id=$1
+				  AND status NOT IN ('closed','completed')`, body.SessionID, sessionNext)
+		}
 
 		return shared.OK(c, fiber.Map{
 			"box_number":      body.BoxNumber,
@@ -941,6 +1009,7 @@ func completeBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			"has_exceptions":  hasExceptions,
 			"exception_count": exceptionCount,
 			"all_verified":    allVerified,
+			"session_status":  sessionNext,
 			"delivery_progress": fiber.Map{
 				"boxes_received": boxesReceived,
 				"boxes_verified": boxesVerified,

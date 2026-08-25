@@ -374,16 +374,32 @@ export default function CameraScanner({
                   <path d="M2 2l20 20" />
                 </svg>
                 <span>Camera off</span>
+                <span className="cam-fallback-hint">Type the code in the scan field below</span>
+              </div>
+            )}
+            {cameraOn && error && (
+              <div className="cam-off-mask cam-fallback-mask" role="status">
+                <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
+                  <path d="M3 7V5a2 2 0 0 1 2-2h2" />
+                  <path d="M17 3h2a2 2 0 0 1 2 2v2" />
+                  <path d="M21 17v2a2 2 0 0 1-2 2h-2" />
+                  <path d="M7 21H5a2 2 0 0 1-2-2v-2" />
+                  <path d="M7 12h10" />
+                </svg>
+                <span>{error}</span>
+                <span className="cam-fallback-hint">Type the code in the scan field below</span>
               </div>
             )}
             {screenFlash && <div className={`cam-screen-flash ${screenFlash}`} />}
-            <div className="cam-crosshair">
-              <div className="cam-crosshair-line cam-crosshair-tl" />
-              <div className="cam-crosshair-line cam-crosshair-tr" />
-              <div className="cam-crosshair-line cam-crosshair-bl" />
-              <div className="cam-crosshair-line cam-crosshair-br" />
-            </div>
-            {scanning && cameraOn && <div className="cam-scan-line" />}
+            {!error && cameraOn && (
+              <div className="cam-crosshair">
+                <div className="cam-crosshair-line cam-crosshair-tl" />
+                <div className="cam-crosshair-line cam-crosshair-tr" />
+                <div className="cam-crosshair-line cam-crosshair-bl" />
+                <div className="cam-crosshair-line cam-crosshair-br" />
+              </div>
+            )}
+            {scanning && cameraOn && !error && <div className="cam-scan-line" />}
             <>
               {!minimal && (
                 <div className={`cam-hud-status cam-status-${statusKind}`}>{status}</div>
@@ -413,7 +429,7 @@ export default function CameraScanner({
                   type="button"
                   className={`cam-icon-btn cam-icon-torch ${torchOn ? "on" : ""}`}
                   onClick={toggleTorch}
-                  disabled={!cameraOn}
+                  disabled={!cameraOn || !!error}
                   aria-label={torchOn ? "Flash on" : "Flash off"}
                   title={torchOn ? "Flash on" : "Flash"}
                 >

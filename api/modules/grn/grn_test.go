@@ -230,8 +230,15 @@ func TestRfPhaseFromStatus(t *testing.T) {
 	if got := rfPhaseFromStatus("item_verification", ""); got != "item_verify" {
 		t.Errorf("item_verification: %q", got)
 	}
-	if got := rfPhaseFromStatus("item_verification", "box_verify"); got != "box_verify" {
-		t.Errorf("explicit box_verify: %q", got)
+	// After transporter sign-off, session status wins — client cannot force box_verify.
+	if got := rfPhaseFromStatus("item_verification", "box_verify"); got != "item_verify" {
+		t.Errorf("item_verification locks phase: %q", got)
+	}
+	if got := rfPhaseFromStatus("receiving", "item_verify"); got != "item_verify" {
+		t.Errorf("explicit item_verify before sign-off: %q", got)
+	}
+	if !transporterAlreadySignedOff("item_verification") || transporterAlreadySignedOff("receiving") {
+		t.Error("transporterAlreadySignedOff helpers")
 	}
 }
 

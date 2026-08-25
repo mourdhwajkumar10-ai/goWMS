@@ -1003,7 +1003,7 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO stock_ledger_entries (item_code, warehouse, actual_qty, qty_after_transaction, voucher_type, voucher_no, posting_date, creation, batch_no)
-			VALUES ($1,$2,$3,$3,'GRN', $5, CURRENT_DATE, NOW(), $6)`,
+			VALUES ($1,$2,$3,$3,'GRN',$4,CURRENT_DATE,NOW(),$5)`,
 			l.itemCode, whCode, l.scanned, voucherNo, batchArg); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -1235,17 +1235,41 @@ func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 			UPDATE stock_location_balances SET allocation_status='allocatable', updated_at=now()
 			WHERE item_code=$1 AND location_id=$2`, body.ItemCode, targetID)
 
+		sw := strings.TrimSpace(body.SourceWarehouse)
+		if sw == "" {
+			sw = srcCode
+		}
+		var sourceLocID any
+		if sourceID > 0 {
+			sourceLocID = sourceID
+		}
 		var id int
 		var logNo string
 		err = db.QueryRow(c.Context(),
-			`INSERT INTO putaway_logs (log_no,item_code,batch_no,source_warehouse,target_location,quantity,placed_at,placed_by)
-			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,$5,NOW(),$6)
+			`INSERT INTO putaway_logs (log_no,item_code,batch_no,source_warehouse,target_location,quantity,placed_at,placed_by,source_location_id)
+			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,$5,NOW(),$6,$7)
 			 RETURNING id, log_no`,
-			body.ItemCode, nullStr(body.BatchNo), body.SourceWarehouse, targetCode, body.Quantity, userID(c)).
+			body.ItemCode, nullStr(body.BatchNo), sw, targetCode, body.Quantity, userID(c), sourceLocID).
 			Scan(&id, &logNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		_, _ = db.Exec(c.Context(), `
+			UPDATE grn_lines gl SET route_location=$2
+			WHERE UPPER(gl.item_code)=UPPER($1)
+			  AND COALESCE(gl.scanned_qty,0) > 0
+			  AND (
+			    NULLIF(BTRIM(gl.route_location),'') IS NULL
+			    OR UPPER(gl.route_location) LIKE 'INCOMING%'
+			    OR UPPER(gl.route_location) LIKE 'HOLD%'
+			    OR UPPER(gl.route_location) LIKE 'STAGING%'
+			  )
+			  AND EXISTS (
+			    SELECT 1 FROM grn_sessions gs
+			    WHERE gs.id = gl.grn_session_id
+			      AND ($3=0 OR gs.id=$3)
+			      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
+			  )`, body.ItemCode, targetCode, body.GRNSessionID)
 		if body.GRNSessionID > 0 {
 			recordPutawayProgress(c, db, body.GRNSessionID, body.ItemCode, body.Quantity, targetCode, false)
 		}

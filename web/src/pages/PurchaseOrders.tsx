@@ -5,6 +5,7 @@ import Comments from '../components/Comments'
 import CSVImport from '../components/CSVTools'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
+import SupplierAutocomplete, { type SupplierSuggestion } from '../components/SupplierAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
 import { parsePackedItemQR } from '../utils/parsePackedQR'
@@ -86,10 +87,11 @@ export default function PurchaseOrders() {
 
   const populateItem = (idx: number, item: any) => {
     const code = String(item.code || '').trim()
+    const packQty = Number(item.carton_qty ?? item.pack_qty ?? item.min_order_qty) || 0
     if (code) {
       const dupIdx = items.findIndex((r, i) => i !== idx && r.item_code.trim().toUpperCase() === code.toUpperCase())
       if (dupIdx >= 0) {
-        const qtyToAdd = items[idx].qty > 0 ? items[idx].qty : 1
+        const qtyToAdd = items[idx].qty > 0 ? items[idx].qty : (packQty > 0 ? packQty : 1)
         const rate = +item.standard_rate || +item.mrp || items[idx].rate || 0
         const { newQty } = mergeScannedItem(idx, code, qtyToAdd, rate)
         setItems(prev => {
@@ -114,6 +116,10 @@ export default function PurchaseOrders() {
         return
       }
     }
+    const cur = Number(items[idx].qty)
+    const curOk = Number.isFinite(cur) && cur > 0
+    // Autofill pack/carton qty from master when the line still has the default qty.
+    const nextQty = packQty > 0 && (!curOk || cur === 1) ? packQty : (curOk ? cur : 1)
     const updated = [...items]
     updated[idx] = {
       ...updated[idx],
@@ -124,6 +130,7 @@ export default function PurchaseOrders() {
       item_group: item.abc_tier || '',
       rate: +item.standard_rate || +item.mrp || 0,
       uom: UOM_OPTIONS.includes(item.uom) ? item.uom : 'Nos',
+      qty: nextQty,
     }
     updated[idx].amount = updated[idx].qty * updated[idx].rate
     setItems(withTrailingEmptyRow(updated, poItemFilled, () => ({
@@ -342,6 +349,13 @@ export default function PurchaseOrders() {
     }
   }
 
+  const applySupplier = (row: SupplierSuggestion) => {
+    setSupplier(row.name || '')
+    // Prefer known contact channels into Contact Person when empty / still placeholder
+    const contact = [row.contact_phone, row.contact_email].filter(Boolean).join(' · ')
+    if (contact) setContactPerson(prev => prev.trim() ? prev : contact)
+  }
+
   const resetForm = () => {
     setSupplier(''); setCompany('Nirvana'); setCurrency('INR'); setTxnDate(new Date().toISOString().slice(0, 10))
     setSchDate(''); setSetWarehouse(''); setCostCenter(''); setProject(''); setPaymentTerms('')
@@ -422,7 +436,7 @@ export default function PurchaseOrders() {
   const totalDiscount = items.reduce((s, i) => s + i.discount_amount, 0)
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleBarcodeScan} onClose={() => { setShowScanner(false); setScanRowIdx(null) }} />}
 
       <div className="page-head">
@@ -451,20 +465,26 @@ export default function PurchaseOrders() {
       )}
 
       {showNew && (
-        <div className="erpnext-card">
+        <div className="erpnext-card po-create-card">
           <div className="card-header">
             <h2 style={{ margin: 0 }}>New Purchase Order</h2>
             <button type="button" onClick={() => { setShowNew(false); resetForm() }} className="erpnext-btn-secondary">
               Cancel
             </button>
           </div>
-          <div className="card-body space-y-6">
+          <div className="card-body space-y-6 po-create-form">
             <div className="form-section">
               <div className="form-section-title">Essential Details</div>
               <div className="form-grid">
                 <div className="form-control">
                   <label className="erpnext-label">Supplier Name *</label>
-                  <input className="erpnext-input" value={supplier} onChange={e => setSupplier(e.target.value)} placeholder="Enter supplier name" />
+                  <SupplierAutocomplete
+                    value={supplier}
+                    onChangeText={setSupplier}
+                    onSelect={applySupplier}
+                    placeholder="Type to search supplier…"
+                    ariaLabel="Supplier Name"
+                  />
                 </div>
                 <div className="form-control">
                   <label className="erpnext-label">Company</label>
@@ -571,43 +591,56 @@ export default function PurchaseOrders() {
               </p>
               <div className="po-items-wrap rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
                   <table className="erpnext-table po-items-table text-sm w-full">
+                    <colgroup>
+                      <col className="col-idx" />
+                      <col className="col-item-code" />
+                      <col className="col-item-name" />
+                      <col className="col-qty" />
+                      <col className="col-rate" />
+                      <col className="col-batch" />
+                      <col className="col-uom" />
+                      <col className="col-disc" />
+                      <col className="col-amount" />
+                      <col className="col-actions" />
+                    </colgroup>
                     <thead>
                       <tr style={{ background: 'var(--gray-50)' }}>
-                        <th className="w-10">#</th>
-                        <th className="w-10"></th>
-                        <th style={{ minWidth: 150 }}>Item Code *</th>
-                        <th style={{ minWidth: 150 }}>Item Name</th>
-                        <th className="w-20">Qty *</th>
-                        <th className="w-24">Rate</th>
-                        <th className="w-28">Batch</th>
-                        <th className="w-24">UOM</th>
-                        <th className="w-20">Disc %</th>
-                        <th className="w-24 text-right">Amount</th>
-                        <th className="w-10"></th>
+                        <th className="col-idx">#</th>
+                        <th className="col-item-code">Item Code *</th>
+                        <th className="col-item-name">Item Name</th>
+                        <th className="col-qty">Qty *</th>
+                        <th className="col-rate">Rate</th>
+                        <th className="col-batch">Batch</th>
+                        <th className="col-uom">UOM</th>
+                        <th className="col-disc">Disc %</th>
+                        <th className="col-amount">Amount</th>
+                        <th className="col-actions" aria-label="Remove" />
                       </tr>
                     </thead>
                     <tbody>
                       {items.map((item, idx) => (
                         <tr key={idx}>
-                          <td data-label="#" className="text-center" style={{ color: 'var(--text-muted)' }}>{idx + 1}</td>
-                          <td data-label="Scan" className="text-center">
-                            <button
-                              type="button"
-                              onClick={() => { setScanRowIdx(idx); setShowScanner(true) }}
-                              className="link-btn"
-                              title="Scan barcode"
-                            >Scan</button>
+                          <td data-label="#" className="col-idx">{idx + 1}</td>
+                          <td data-label="Item code" className="col-item-code">
+                            <div className="po-item-code-cell">
+                              <ItemAutocomplete
+                                value={item.item_code}
+                                onSelect={(found) => populateItem(idx, found)}
+                                onChangeText={(text) => handleItemCodeChange(idx, text)}
+                                onCommit={(text) => commitItemCode(idx, text)}
+                                placeholder="Scan or type..."
+                              />
+                              <button
+                                type="button"
+                                onClick={() => { setScanRowIdx(idx); setShowScanner(true) }}
+                                className="po-scan-btn"
+                                title="Scan barcode"
+                              >
+                                Scan
+                              </button>
+                            </div>
                           </td>
-                          <td data-label="Item code">
-                            <ItemAutocomplete
-                              value={item.item_code}
-                              onSelect={(found) => populateItem(idx, found)}
-                              onChangeText={(text) => handleItemCodeChange(idx, text)}
-                              onCommit={(text) => commitItemCode(idx, text)}
-                              placeholder="Scan or type..."
-                            />
-                          </td>
-                          <td data-label="Item name">
+                          <td data-label="Item name" className="col-item-name">
                             <ItemAutocomplete
                               display="name"
                               value={item.item_name}
@@ -616,28 +649,67 @@ export default function PurchaseOrders() {
                               placeholder="Search item name..."
                             />
                           </td>
-                          <td data-label="Qty">
-                            <input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} />
+                          <td data-label="Qty" className="col-qty">
+                            <input
+                              className="erpnext-input text-sm w-full"
+                              type="number"
+                              min={0}
+                              step="any"
+                              inputMode="decimal"
+                              value={Number.isFinite(Number(item.qty)) ? Number(item.qty) : 0}
+                              onChange={e => {
+                                const raw = e.target.value
+                                if (raw === '') { updateItem(idx, 'qty', 0); return }
+                                const n = Number(raw)
+                                if (Number.isFinite(n)) updateItem(idx, 'qty', n)
+                              }}
+                            />
                           </td>
-                          <td data-label="Rate">
-                            <input className="erpnext-input text-sm w-full" type="number" value={item.rate} onChange={e => updateItem(idx, 'rate', +e.target.value)} />
+                          <td data-label="Rate" className="col-rate">
+                            <input
+                              className="erpnext-input text-sm w-full"
+                              type="number"
+                              min={0}
+                              step="any"
+                              inputMode="decimal"
+                              value={Number.isFinite(Number(item.rate)) ? Number(item.rate) : 0}
+                              onChange={e => {
+                                const raw = e.target.value
+                                if (raw === '') { updateItem(idx, 'rate', 0); return }
+                                const n = Number(raw)
+                                if (Number.isFinite(n)) updateItem(idx, 'rate', n)
+                              }}
+                            />
                           </td>
-                          <td data-label="Batch">
-                            <input className="erpnext-input text-sm w-full" value={item.batch_no} onChange={e => updateItem(idx, 'batch_no', e.target.value)} placeholder="LOT-001" />
+                          <td data-label="Batch" className="col-batch">
+                            <input className="erpnext-input text-sm w-full" value={item.batch_no} onChange={e => updateItem(idx, 'batch_no', e.target.value)} placeholder="LOT-001" title={item.batch_no || undefined} />
                           </td>
-                          <td data-label="UOM">
+                          <td data-label="UOM" className="col-uom">
                             <select className="erpnext-input text-sm w-full" value={item.uom} onChange={e => updateItem(idx, 'uom', e.target.value)}>
                               {UOM_OPTIONS.map(u => <option key={u}>{u}</option>)}
                             </select>
                           </td>
-                          <td data-label="Disc %">
-                            <input className="erpnext-input text-sm w-full" type="number" value={item.discount_percentage} onChange={e => updateItem(idx, 'discount_percentage', +e.target.value)} />
+                          <td data-label="Disc %" className="col-disc">
+                            <input
+                              className="erpnext-input text-sm w-full"
+                              type="number"
+                              min={0}
+                              step="any"
+                              inputMode="decimal"
+                              value={Number.isFinite(Number(item.discount_percentage)) ? Number(item.discount_percentage) : 0}
+                              onChange={e => {
+                                const raw = e.target.value
+                                if (raw === '') { updateItem(idx, 'discount_percentage', 0); return }
+                                const n = Number(raw)
+                                if (Number.isFinite(n)) updateItem(idx, 'discount_percentage', n)
+                              }}
+                            />
                           </td>
-                          <td data-label="Amount" className="text-right font-medium">
-                            {(item.qty * item.rate).toFixed(2)}
+                          <td data-label="Amount" className="col-amount font-medium">
+                            {(Number(item.qty) * Number(item.rate)).toFixed(2)}
                           </td>
-                          <td data-label="" className="text-center">
-                            <button type="button" onClick={() => removeItem(idx)} className="link-btn" style={{ color: 'var(--red)' }}>✕</button>
+                          <td data-label="" className="col-actions">
+                            <button type="button" onClick={() => removeItem(idx)} className="po-row-remove" aria-label="Remove line">✕</button>
                           </td>
                         </tr>
                       ))}

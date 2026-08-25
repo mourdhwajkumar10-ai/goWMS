@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react'
+import { ArrowLeft, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
+import CameraScanner from '../components/CameraScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
+import RfShell from '../components/RfShell'
 import { parsePackedItemQR } from '../utils/parsePackedQR'
+import '../styles/scanner.css'
 
 interface Sheet {
   id: number
@@ -27,10 +33,14 @@ interface CountLine {
 }
 
 export default function CycleCount() {
+  const rf = useRfUi()
   const [sheets, setSheets] = useState<Sheet[]>([])
   const [selectedSheet, setSelectedSheet] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [msg, setMsg] = useState('')
+  const [rfQuery, setRfQuery] = useState('')
+  const [showNew, setShowNew] = useState(false)
+  const [countDrafts, setCountDrafts] = useState<Record<number, string>>({})
 
   const [tier, setTier] = useState('A')
   const [scheduledDate, setScheduledDate] = useState('')
@@ -123,8 +133,236 @@ export default function CycleCount() {
     return <span className={`erpnext-badge ${cls}`}>{status}</span>
   }
 
+  const rfSheets = pager.filtered.filter(s => {
+    const q = rfQuery.trim().toLowerCase()
+    if (!q) return true
+    return `${s.sheet_no} ${s.tier || ''} ${s.status || ''}`.toLowerCase().includes(q)
+  })
+  const rfSheetMore = useLoadMore(rfSheets, 10, `${rfQuery}|${rfSheets.length}`)
+
+  const countedStat = selectedSheet
+    ? String((selectedSheet.lines || []).filter((l: CountLine) => l.counted_qty != null).length)
+    : String(sheets.filter(s => (s.status || '').toLowerCase() === 'completed').length)
+  const countedOf = selectedSheet ? `/ ${(selectedSheet.lines || []).length}` : undefined
+
+  if (rf) {
+    return (
+      <RfShell
+        title="Cycle Count"
+        stat={countedStat}
+        statOf={countedOf}
+        meta={selectedSheet ? selectedSheet.sheet_no : undefined}
+      >
+        {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+
+        {!selectedSheet ? (
+          <>
+            <div className="scan-bottom-bar">
+              <div className="scan-input-chip">
+                <Search size={16} strokeWidth={1.8} />
+                <input
+                  type="search"
+                  value={rfQuery}
+                  onChange={e => setRfQuery(e.target.value)}
+                  placeholder="Search sheets…"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                className="scan-icon-btn primary"
+                onClick={() => setShowNew(!showNew)}
+                aria-label="New sheet"
+              >
+                <Plus size={18} strokeWidth={1.8} />
+              </button>
+            </div>
+
+            {showNew && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">Create count sheet</div>
+                <select className="scan-count-input" value={tier} onChange={e => setTier(e.target.value)}>
+                  <option value="A">A (Fast)</option>
+                  <option value="B">B (Medium)</option>
+                  <option value="C">C (Slow)</option>
+                </select>
+                <input className="scan-count-input" type="date" value={scheduledDate} onChange={e => setScheduledDate(e.target.value)} />
+                <select className="scan-count-input" value={warehouse} onChange={e => setWarehouse(e.target.value)}>
+                  <option value="">Warehouse</option>
+                  {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.code}</option>)}
+                </select>
+                <input className="scan-count-input" value={aisle} onChange={e => setAisle(e.target.value)} placeholder="Aisle (optional)" />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+                  <input type="checkbox" checked={autoGen} onChange={e => setAutoGen(e.target.checked)} />
+                  Auto-fill from location stock
+                </label>
+                <button type="button" className="scan-btn scan-btn-primary" onClick={() => { void createSheet(); setShowNew(false) }}>Create sheet</button>
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => setShowNew(false)}>Cancel</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {rfSheetMore.visible.map(s => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="scan-select-card"
+                  onClick={() => openSheet(s.id)}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                >
+                  <div className="scan-select-card-title">{s.sheet_no}</div>
+                  <div className="scan-select-card-sub">
+                    Tier {s.tier || '—'} · {s.scheduled_date ? new Date(s.scheduled_date).toLocaleDateString() : 'unscheduled'}
+                  </div>
+                  <div className="scan-select-card-meta">
+                    <span>{s.status || 'pending'}</span>
+                    <span style={{ color: 'var(--primary)' }}>Open to count →</span>
+                  </div>
+                </button>
+              ))}
+              {rfSheetMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfSheetMore.loadMore}>
+                  Load more ({rfSheetMore.remaining} left)
+                </button>
+              )}
+              {rfSheets.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No sheets yet</p>
+                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => setShowNew(true)}>
+                    <Plus size={16} /> New sheet
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelectedSheet(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+              <ArrowLeft size={16} strokeWidth={1.8} /> Back to sheets
+            </button>
+
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{selectedSheet.sheet_no}</div>
+              <div className="scan-select-card-sub">Tier {selectedSheet.tier} · {selectedSheet.status}</div>
+            </div>
+
+            {selectedSheet.status !== 'completed' && (
+              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void completeSheet()}>
+                Complete sheet
+              </button>
+            )}
+
+            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
+              <CameraScanner
+                open
+                embedded
+                minimal
+                continuous
+                onClose={() => {}}
+                onScan={(code) => {
+                  const packed = parsePackedItemQR(String(code || '').trim())
+                  setAddItemCode(packed ? packed.itemCode : String(code || '').trim())
+                }}
+              />
+            </div>
+
+            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+              <div className="scan-input-chip">
+                <ScanLine size={16} strokeWidth={1.8} />
+                <input
+                  value={addItemCode}
+                  onChange={e => {
+                    const packed = parsePackedItemQR(e.target.value)
+                    setAddItemCode(packed ? packed.itemCode : e.target.value)
+                  }}
+                  placeholder="Item code…"
+                  autoComplete="off"
+                />
+                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan item">
+                  <ScanLine size={16} />
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="scan-count-input"
+                  style={{ width: 88 }}
+                  type="number"
+                  value={addSystemQty}
+                  onChange={e => setAddSystemQty(e.target.value)}
+                  placeholder="Sys qty"
+                />
+                <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={() => void addLine()}>
+                  Add line
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(selectedSheet.lines || []).map((line: any) => {
+                const done = line.counted_qty != null
+                const variance = done ? line.counted_qty - line.system_qty : null
+                return (
+                  <div key={line.id} className="scan-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <div className={`scan-row-check${done ? ' done' : ''}`}>{done ? '✓' : ''}</div>
+                    <div className="scan-row-info" style={{ flex: 1 }}>
+                      <div className="scan-row-code">{line.item_code}</div>
+                      <div className="scan-row-desc">
+                        {line.location_code || '—'} · sys {line.system_qty}
+                        {variance != null ? ` · var ${variance > 0 ? '+' : ''}${variance}` : ''}
+                      </div>
+                    </div>
+                    <div className="scan-row-meta">
+                      <div className="scan-row-qty">{done ? line.counted_qty : '—'}</div>
+                      <div className="scan-row-label">{line.discrepancy_status || (done ? 'counted' : 'pending')}</div>
+                    </div>
+                    {!done && selectedSheet.status !== 'completed' && (
+                      <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+                        <input
+                          className="scan-count-input"
+                          style={{ flex: 1 }}
+                          type="number"
+                          placeholder="Count qty"
+                          value={countDrafts[line.id] ?? ''}
+                          onChange={e => setCountDrafts(d => ({ ...d, [line.id]: e.target.value }))}
+                          onKeyDown={e => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault()
+                              const qty = +(countDrafts[line.id] || (e.target as HTMLInputElement).value)
+                              if (!Number.isNaN(qty)) {
+                                void submitCount(line.id, qty)
+                                setCountDrafts(d => { const n = { ...d }; delete n[line.id]; return n })
+                              }
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          className="scan-btn scan-btn-primary scan-btn-sm"
+                          style={{ width: 'auto' }}
+                          onClick={() => {
+                            const qty = +(countDrafts[line.id] || 0)
+                            if (!Number.isNaN(qty)) {
+                              void submitCount(line.id, qty)
+                              setCountDrafts(d => { const n = { ...d }; delete n[line.id]; return n })
+                            }
+                          }}
+                        >
+                          Save
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+      </RfShell>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
       <div className="flex items-center justify-between">
@@ -185,26 +423,28 @@ export default function CycleCount() {
               <h3 className="font-semibold">Count Sheets</h3>
               <ListPager pager={pager} placeholder="Search sheets…" />
             </div>
-            <table className="erpnext-table">
-              <thead>
-                <tr><th>Sheet No</th><th>Tier</th><th>Scheduled</th><th>Status</th><th>Created</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map(s => (
-                  <tr key={s.id}>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openSheet(s.id)}>{s.sheet_no}</td>
-                    <td>{s.tier || '—'}</td>
-                    <td>{s.scheduled_date ? new Date(s.scheduled_date).toLocaleDateString() : '—'}</td>
-                    <td>{statusBadge(s.status || 'pending')}</td>
-                    <td>{new Date(s.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <button onClick={() => openSheet(s.id)} className="erpnext-btn-secondary text-xs">Open</button>
-                    </td>
-                  </tr>
-                ))}
-                {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sheets</td></tr>}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="erpnext-table">
+                <thead>
+                  <tr><th>Sheet No</th><th>Tier</th><th>Scheduled</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map(s => (
+                    <tr key={s.id}>
+                      <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openSheet(s.id)}>{s.sheet_no}</td>
+                      <td>{s.tier || '—'}</td>
+                      <td>{s.scheduled_date ? new Date(s.scheduled_date).toLocaleDateString() : '—'}</td>
+                      <td>{statusBadge(s.status || 'pending')}</td>
+                      <td>{new Date(s.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <button onClick={() => openSheet(s.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                      </td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No sheets</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       ) : (
@@ -243,54 +483,56 @@ export default function CycleCount() {
             {selectedSheet.lines && selectedSheet.lines.length > 0 && (
               <div className="mt-4">
                 <h4 className="font-medium text-sm mb-2">Count Lines ({selectedSheet.lines.length})</h4>
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>Location</th><th>Item</th><th>System Qty</th><th>Counted Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr>
-                  </thead>
-                  <tbody>
-                    {selectedSheet.lines.map((line: any) => {
-                      const variance = line.counted_qty !== null && line.counted_qty !== undefined ? line.counted_qty - line.system_qty : null
-                      return (
-                        <tr key={line.id}>
-                          <td className="text-xs">{line.location_code || '—'}</td>
-                          <td className="font-medium">{line.item_code}</td>
-                          <td>{line.system_qty}</td>
-                          <td>{line.counted_qty ?? '—'}</td>
-                          <td>
-                            {variance !== null ? (
-                              <span style={{ color: variance === 0 ? 'var(--green)' : 'var(--red)' }}>
-                                {variance > 0 ? '+' : ''}{variance}
-                              </span>
-                            ) : '—'}
-                          </td>
-                          <td>
-                            {line.discrepancy_status && (
-                              <span className={`erpnext-badge ${line.discrepancy_status === 'match' ? 'erpnext-badge-green' : 'erpnext-badge-red'}`}>
-                                {line.discrepancy_status}
-                              </span>
-                            )}
-                          </td>
-                          <td>
-                            {line.counted_qty === null && selectedSheet.status !== 'completed' && (
-                              <input
-                                className="erpnext-input text-sm"
-                                type="number"
-                                placeholder="Count"
-                                style={{ width: 80 }}
-                                onKeyDown={e => {
-                                  if (e.key === 'Enter') {
-                                    submitCount(line.id, +(e.target as HTMLInputElement).value)
-                                    ;(e.target as HTMLInputElement).value = ''
-                                  }
-                                }}
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="erpnext-table text-sm">
+                    <thead>
+                      <tr><th>Location</th><th>Item</th><th>System Qty</th><th>Counted Qty</th><th>Variance</th><th>Status</th><th>Action</th></tr>
+                    </thead>
+                    <tbody>
+                      {selectedSheet.lines.map((line: any) => {
+                        const variance = line.counted_qty !== null && line.counted_qty !== undefined ? line.counted_qty - line.system_qty : null
+                        return (
+                          <tr key={line.id}>
+                            <td className="text-xs">{line.location_code || '—'}</td>
+                            <td className="font-medium">{line.item_code}</td>
+                            <td>{line.system_qty}</td>
+                            <td>{line.counted_qty ?? '—'}</td>
+                            <td>
+                              {variance !== null ? (
+                                <span style={{ color: variance === 0 ? 'var(--green)' : 'var(--red)' }}>
+                                  {variance > 0 ? '+' : ''}{variance}
+                                </span>
+                              ) : '—'}
+                            </td>
+                            <td>
+                              {line.discrepancy_status && (
+                                <span className={`erpnext-badge ${line.discrepancy_status === 'match' ? 'erpnext-badge-green' : 'erpnext-badge-red'}`}>
+                                  {line.discrepancy_status}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {line.counted_qty === null && selectedSheet.status !== 'completed' && (
+                                <input
+                                  className="erpnext-input text-sm"
+                                  type="number"
+                                  placeholder="Count"
+                                  style={{ width: 80 }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter') {
+                                      submitCount(line.id, +(e.target as HTMLInputElement).value)
+                                      ;(e.target as HTMLInputElement).value = ''
+                                    }
+                                  }}
+                                />
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

@@ -33,7 +33,18 @@ describe('listFloorTiles', () => {
   it('supervisor on floor sees operational handheld tiles', () => {
     const paths = listFloorTiles('supervisor', []).map(t => t.to)
     expect(paths).toContain('/receiving')
+    expect(paths).toContain('/putaway-runner')
+    expect(paths).not.toContain('/putaway')
     expect(paths).not.toContain('/roles')
+  })
+
+  it('floor has a single Putaway tile (runner), not both wizard and runner', () => {
+    const putawayTiles = listFloorTiles('supervisor', []).filter(
+      (t) => t.to === '/putaway' || t.to === '/putaway-runner' || /putaway/i.test(t.label),
+    )
+    expect(putawayTiles).toHaveLength(1)
+    expect(putawayTiles[0].to).toBe('/putaway-runner')
+    expect(putawayTiles[0].label).toBe('Putaway')
   })
 })
 
@@ -43,6 +54,12 @@ describe('listDeskNavItems', () => {
     expect(paths).not.toContain('/roles')
     expect(paths).not.toContain('/employees')
     expect(paths).toContain('/exceptions')
+  })
+
+  it('desk Putaway is wizard path; Putaway Runner is not in sidebar', () => {
+    const paths = listDeskNavItems('admin', []).map((t) => t.to)
+    expect(paths).toContain('/putaway')
+    expect(paths).not.toContain('/putaway-runner')
   })
 
   it('admin sees roles and employees', () => {
@@ -77,7 +94,18 @@ describe('listDeskNavItems', () => {
     expect(paths).not.toContain('/dock-receiving')
     expect(paths).not.toContain('/notifications')
     const sections = [...new Set(items.map((t) => t.section))]
-    expect(sections).toEqual(['home', 'inward', 'stock', 'buying', 'selling', 'masters'])
+    expect(sections).toEqual(['home', 'inbound', 'outbound', 'inventory', 'system'])
+  })
+
+  it('groups ops into inbound / outbound / inventory with system at end', () => {
+    const items = listDeskNavItems('admin', [])
+    const bySection = (id: string) => items.filter((t) => t.section === id).map((t) => t.to)
+    expect(bySection('inbound')).toEqual(expect.arrayContaining(['/receiving', '/putaway', '/qi', '/po']))
+    expect(bySection('outbound')).toEqual(expect.arrayContaining(['/pick', '/pack', '/dispatch']))
+    expect(bySection('inventory')).toEqual(expect.arrayContaining(['/cycle-count', '/items', '/locations']))
+    expect(bySection('system')).toEqual(expect.arrayContaining(['/employees', '/roles', '/reports']))
+    expect(bySection('inbound')).not.toContain('/pick')
+    expect(bySection('outbound')).not.toContain('/receiving')
   })
 })
 
@@ -85,5 +113,11 @@ describe('qi floor tiles', () => {
   it('includes box verification', () => {
     const paths = listFloorTiles('qi', []).map(t => t.to)
     expect(paths).toContain('/box-verification')
+  })
+
+  it('places QI inbound tiles under inbound section', () => {
+    const tiles = listFloorTiles('qi', [])
+    const inbound = tiles.filter((t) => t.section === 'inbound').map((t) => t.to)
+    expect(inbound).toEqual(expect.arrayContaining(['/receiving', '/box-verification', '/qi', '/exceptions']))
   })
 })

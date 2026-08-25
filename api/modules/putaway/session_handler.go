@@ -503,18 +503,39 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
+		var targetCode, sourceCode string
+		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.TargetLocationID).Scan(&targetCode)
+		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, sourceLocationID).Scan(&sourceCode)
+		if targetCode != "" {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_lines gl SET route_location=$2
+				WHERE UPPER(gl.item_code)=UPPER($1)
+				  AND COALESCE(gl.scanned_qty,0) > 0
+				  AND (
+				    NULLIF(BTRIM(gl.route_location),'') IS NULL
+				    OR UPPER(gl.route_location) LIKE 'INCOMING%'
+				    OR UPPER(gl.route_location) LIKE 'HOLD%'
+				    OR UPPER(gl.route_location) LIKE 'STAGING%'
+				  )
+				  AND EXISTS (
+				    SELECT 1 FROM grn_sessions gs
+				    WHERE gs.id = gl.grn_session_id
+				      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
+				  )`, itemCode, targetCode)
+		}
+
 		var logID int
 		err = tx.QueryRow(c.Context(),
-			`INSERT INTO putaway_logs (log_no, item_code, source_warehouse, target_location, quantity, placed_at, placed_by)
-			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,NOW(),$5)
+			`INSERT INTO putaway_logs (log_no, item_code, source_warehouse, target_location, quantity, placed_at, placed_by, source_location_id)
+			 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,NOW(),$5,$6)
 			 RETURNING id`,
-			itemCode, fmt.Sprintf("%d", warehouseID), "", qty, userID(c)).Scan(&logID)
+			itemCode, sourceCode, targetCode, qty, userID(c), sourceLocationID).Scan(&logID)
 		if err != nil {
 			if scanErr := tx.QueryRow(c.Context(),
-				`INSERT INTO putaway_logs (log_no, item_code, quantity, placed_at, placed_by)
-				 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,NOW(),$3)
+				`INSERT INTO putaway_logs (log_no, item_code, source_warehouse, target_location, quantity, placed_at, placed_by, source_location_id)
+				 VALUES ('PA-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('putaway_logs_id_seq')::TEXT,5,'0'),$1,$2,$3,$4,NOW(),$5,$6)
 				 RETURNING id`,
-				itemCode, qty, userID(c)).Scan(&logID); scanErr != nil {
+				itemCode, sourceCode, targetCode, qty, userID(c), sourceLocationID).Scan(&logID); scanErr != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, scanErr.Error())
 			}
 		}
@@ -541,7 +562,10 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			`UPDATE putaway_session_items SET used_location_ids = array_append(used_location_ids, $1) WHERE id = $2`,
 			body.TargetLocationID, itemID)
 		_, _ = tx.Exec(c.Context(),
-			`UPDATE putaway_logs SET source_location_id = $1 WHERE id = $2`, sourceLocationID, logID)
+			`UPDATE putaway_logs SET source_location_id = COALESCE(source_location_id, $1),
+			    source_warehouse = COALESCE(NULLIF(BTRIM(source_warehouse), ''), $3),
+			    target_location = COALESCE(NULLIF(BTRIM(target_location), ''), $4)
+			 WHERE id = $2`, sourceLocationID, logID, sourceCode, targetCode)
 		if uid := userID(c); uid > 0 {
 			_, _ = tx.Exec(c.Context(),
 				`UPDATE warehouse_locations SET last_picked_by_user_id = $1, last_picked_at = now(), updated_at = now() WHERE id = $2`,

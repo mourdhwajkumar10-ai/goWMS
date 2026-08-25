@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react'
+import { Box, MapPin, Search, ArrowRight } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
 import { useScanFeedback } from '../hooks/useScanFeedback'
+import { useLoadMore } from '../hooks/useLoadMore'
 import '../styles/scanner.css'
 
 type Mode = 'auto' | 'item' | 'location'
@@ -29,8 +31,11 @@ export default function StockPeek() {
     }
   }, [code, mode, fb, toast])
 
+  const resultRows: any[] = result?.rows ?? []
+  const rowsMore = useLoadMore(resultRows, 10, `${result?.kind ?? ''}|${result?.summary?.item_code ?? result?.summary?.location_code ?? ''}|${resultRows.length}`)
+
   return (
-    <ScannerLayout title="Stock Peek" noBack>
+    <ScannerLayout title="Stock Peek">
       <ScannerToastBar toasts={toasts} />
 
       <div className="scan-tabs">
@@ -43,7 +48,7 @@ export default function StockPeek() {
 
       <div className="scan-bottom-bar">
         <div className="scan-input-chip">
-          <span style={{ fontSize: 16, flexShrink: 0 }}>{mode === 'item' ? '📦' : mode === 'location' ? '📍' : '🔍'}</span>
+          {mode === 'item' ? <Box size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} /> : mode === 'location' ? <MapPin size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} /> : <Search size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />}
           <input type="text" value={code}
             onChange={e => setCode(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); lookup() } }}
@@ -53,14 +58,14 @@ export default function StockPeek() {
             autoFocus autoComplete="off" />
         </div>
         <button className="scan-icon-btn primary" onClick={() => lookup()} disabled={!code.trim() || loading} aria-label="Search">
-          {loading ? '…' : '→'}
+          {loading ? '…' : <ArrowRight size={16} strokeWidth={1.8} />}
         </button>
       </div>
 
       {result?.kind === 'item' && result?.summary && (
         <div>
           <div className="scan-card">
-            <div className="scan-card-icon blue">📦</div>
+            <div className="scan-card-icon blue"><Box size={20} strokeWidth={1.8} /></div>
             <div className="scan-card-body">
               <div className="scan-card-code">{result.summary.item_code}</div>
               <div className="scan-card-detail">{result.summary.item_name}</div>
@@ -86,10 +91,10 @@ export default function StockPeek() {
               </div>
             </div>
           </div>
-          {result.rows?.length > 0 && (
+          {resultRows.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <div className="scan-section-title">Locations ({result.rows.length})</div>
-              {result.rows.map((r: any, i: number) => (
+              <div className="scan-section-title">Locations ({resultRows.length})</div>
+              {rowsMore.visible.map((r: any, i: number) => (
                 <div key={i} className="scan-row" style={{ padding: '8px 10px', marginBottom: 4 }}>
                   <span className={`scan-chip ${r.location_type ?? 'storage'}`}>{r.location_code}</span>
                   <div className="scan-row-info">
@@ -98,6 +103,11 @@ export default function StockPeek() {
                   <div className="scan-row-qty" style={{ fontSize: 14 }}>{r.actual_qty ?? r.qty}</div>
                 </div>
               ))}
+              {rowsMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 4 }} onClick={rowsMore.loadMore}>
+                  Load more ({rowsMore.remaining} left)
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -106,7 +116,7 @@ export default function StockPeek() {
       {result?.kind === 'location' && result?.summary && (
         <div>
           <div className="scan-card">
-            <div className="scan-card-icon blue">📍</div>
+            <div className="scan-card-icon blue"><MapPin size={20} strokeWidth={1.8} /></div>
             <div className="scan-card-body">
               <div className="scan-card-code">{result.summary.location_code}</div>
               <div className="scan-card-detail">
@@ -114,10 +124,10 @@ export default function StockPeek() {
               </div>
             </div>
           </div>
-          {result.rows?.length > 0 && (
+          {resultRows.length > 0 && (
             <div style={{ marginTop: 8 }}>
-              <div className="scan-section-title">Items ({result.rows.length})</div>
-              {result.rows.map((r: any, i: number) => (
+              <div className="scan-section-title">Items ({resultRows.length})</div>
+              {rowsMore.visible.map((r: any, i: number) => (
                 <div key={i} className="scan-row" style={{ padding: '8px 10px', marginBottom: 4 }}>
                   <div className="scan-row-info">
                     <div className="scan-row-code">{r.item_code}</div>
@@ -126,6 +136,11 @@ export default function StockPeek() {
                   <div className="scan-row-qty" style={{ fontSize: 14 }}>{r.actual_qty ?? r.qty}</div>
                 </div>
               ))}
+              {rowsMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 4 }} onClick={rowsMore.loadMore}>
+                  Load more ({rowsMore.remaining} left)
+                </button>
+              )}
             </div>
           )}
         </div>

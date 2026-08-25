@@ -1,7 +1,9 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { Hash, ArrowRight } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
 import { useScanFeedback } from '../hooks/useScanFeedback'
+import { useLoadMore } from '../hooks/useLoadMore'
 import '../styles/scanner.css'
 
 interface CountLine { id: number; item_code: string; system_qty: number; counted_qty: number | null; discrepancy_status: string | null }
@@ -65,15 +67,17 @@ export default function QuickCount() {
   }, [sheetId, fb, toast])
 
   const pct = total > 0 ? Math.round((done / total) * 100) : 0
+  const pendingLines = useMemo(() => lines.filter(l => l.counted_qty == null), [lines])
+  const pendingMore = useLoadMore(pendingLines, 10, `${sheetId}|${pendingLines.length}`)
 
   return (
-    <ScannerLayout title="Quick Count" stat={sheetId ? String(done) : undefined} statOf={sheetId ? `/ ${total}` : undefined} noBack>
+    <ScannerLayout title="Quick Count" stat={sheetId ? String(done) : undefined} statOf={sheetId ? `/ ${total}` : undefined}>
       <ScannerToastBar toasts={toasts} />
 
       {!sheetId && (
         <>
           <div className="scan-empty" style={{ padding: '20px 0' }}>
-            <div className="scan-empty-icon">🔢</div>
+            <div className="scan-empty-icon"><Hash size={40} strokeWidth={1.8} /></div>
             <div className="scan-empty-title">Quick Count</div>
             <div className="scan-empty-msg">Generate a sheet and scan items on the floor</div>
           </div>
@@ -102,24 +106,16 @@ export default function QuickCount() {
 
       {sheetId && (
         <>
-          <div className="scan-progress-wrap">
-            <div className="scan-progress-dots">
-              {Array.from({ length: Math.max(total, 1) }).map((_, i) => (
-                <div key={i} className={`scan-progress-dot ${i < done ? 'done' : i === done ? 'current' : ''}`} />
-              ))}
-            </div>
-          </div>
-
           {!activeLine && (
             <div className="scan-bottom-bar">
               <div className="scan-input-chip">
-                <span style={{ fontSize: 16, flexShrink: 0 }}>🔢</span>
+                <Hash size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
                 <input type="text" value={scanCode} onChange={e => setScanCode(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleScan(scanCode) } }}
                   placeholder="Scan item to count…" autoFocus autoComplete="off" />
               </div>
               <button className="scan-icon-btn primary" onClick={() => handleScan(scanCode)} disabled={!scanCode.trim()} aria-label="Find">
-                ↵
+                <ArrowRight size={18} strokeWidth={1.8} />
               </button>
             </div>
           )}
@@ -127,7 +123,7 @@ export default function QuickCount() {
           {activeLine && (
             <div>
               <div className="scan-card">
-                <div className="scan-card-icon amber">🔢</div>
+                <div className="scan-card-icon amber"><Hash size={20} strokeWidth={1.8} /></div>
                 <div className="scan-card-body">
                   <div className="scan-card-code">{activeLine.item_code}</div>
                   <div className="scan-card-detail">System: {activeLine.system_qty}</div>
@@ -166,9 +162,9 @@ export default function QuickCount() {
           {lines.length > 0 && !activeLine && (
             <div style={{ marginTop: 8 }}>
               <div className="scan-section-title">
-                To count ({lines.filter(l => l.counted_qty == null).length} left)
+                To count ({pendingLines.length} left)
               </div>
-              {lines.filter(l => l.counted_qty == null).slice(0, 10).map(l => (
+              {pendingMore.visible.map(l => (
                 <div key={l.id} className="scan-row" onClick={() => { setActiveLine(l); setCountQty('') }} style={{ padding: '8px 10px', marginBottom: 4 }}>
                   <span className="scan-badge info" style={{ padding: '2px 8px', fontSize: 11 }}>○</span>
                   <div className="scan-row-info">
@@ -177,6 +173,11 @@ export default function QuickCount() {
                   </div>
                 </div>
               ))}
+              {pendingMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 4 }} onClick={pendingMore.loadMore}>
+                  Load more ({pendingMore.remaining} left)
+                </button>
+              )}
             </div>
           )}
 

@@ -205,29 +205,78 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
-  min-width: 800px;
+  min-width: 980px;
+  table-layout: fixed;
 }
 .po-items-table thead {
   background: var(--grn-bg-2);
   border-bottom: 2px solid var(--grn-border);
 }
 .po-items-table th {
-  padding: 8px 10px;
+  padding: 6px;
   text-align: left;
   font-size: 11px;
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.04em;
   color: var(--grn-text-dim);
   white-space: nowrap;
+  vertical-align: middle;
 }
 .po-items-table td {
-  padding: 8px 10px;
+  padding: 6px;
   border-bottom: 1px solid var(--grn-border);
   vertical-align: middle;
 }
 .po-items-table tr:last-child td {
   border-bottom: none;
+}
+.po-items-table .col-idx { width: 2.25rem; text-align: center; }
+.po-items-table .col-item-code { width: 14rem; }
+.po-items-table .col-item-name { width: auto; }
+.po-items-table .col-qty,
+.po-items-table .col-rate,
+.po-items-table .col-disc { width: 5.25rem; }
+.po-items-table .col-batch { width: 6rem; }
+.po-items-table .col-uom { width: 5rem; }
+.po-items-table .col-amount { width: 5.5rem; white-space: nowrap; }
+.po-items-table .col-actions { width: 2.5rem; text-align: center; }
+.po-items-table td.col-qty,
+.po-items-table td.col-rate,
+.po-items-table td.col-disc,
+.po-items-table td.col-amount,
+.po-items-table th.col-amount { text-align: right; }
+.po-items-table .erpnext-input,
+.po-items-table input.erpnext-input,
+.po-items-table select.erpnext-input {
+  height: 36px;
+  min-height: 36px;
+  max-height: 36px;
+  padding: 0 10px;
+  border-radius: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 34px;
+  color: var(--text-color, var(--grn-text));
+  background: var(--fg-color, var(--grn-bg));
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: none;
+}
+.po-items-table input[type="number"] {
+  text-align: right;
+  overflow: visible;
+  text-overflow: clip;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.po-items-table input[type="number"]::-webkit-outer-spin-button,
+.po-items-table input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* ─── PO Items Table (Mobile: Card Layout) ─── */

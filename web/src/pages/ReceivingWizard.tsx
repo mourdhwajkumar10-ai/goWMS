@@ -2,12 +2,20 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
-import ScannerInput from "../components/ScannerInput";
 import CameraScanner from "../components/CameraScanner";
+import ScannerLayout from "../components/ScannerLayout";
+import VerificationHeader, { type Tab as ScanTab } from "../components/scan/VerificationHeader";
+import ScanCard from "../components/scan/ScanCard";
+import BoxQueue, { type Box as QueueBox } from "../components/scan/BoxQueue";
+import ItemsPanel from "../components/scan/ItemsPanel";
+import SignoffBar from "../components/scan/SignoffBar";
+import type { ScanState } from "../components/scan/ScanViewport";
 import "../styles/receiving-wizard.css";
-import { cameraErrorMessage, mergeReceivingChoices } from "../utils/receivingData";
+import "../styles/scanner.css";
+import { mergeReceivingChoices, receivingChoiceMatches, type ReceivingChoice } from "../utils/receivingData";
+import { useLoadMore } from "../hooks/useLoadMore";
 
-interface POInfo { id: number; name: string; supplier_name: string; status: string; grand_total: number; schedule_date: string; item_count: number; total_qty: number; received_qty: number; open_sessions: number; resume_session_id?: number | null; }
+type POInfo = ReceivingChoice;
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string; }
 interface ScanResult { box_number: string; auto_completed: boolean; message: string; timestamp: Date; status: "success" | "warning" | "error"; }
 type Phase = "box_verify" | "item_verify";
@@ -50,6 +58,13 @@ export default function ReceivingWizard() {
   const [lastOkBox, setLastOkBox] = useState<PendingBox | null>(null);
   const [showSignOff, setShowSignOff] = useState(false);
   const [boxQuery, setBoxQuery] = useState("");
+  const [poQuery, setPoQuery] = useState("");
+  const [uiTab, setUiTab] = useState<ScanTab>("boxes");
+  const [scanState, setScanState] = useState<ScanState>("idle");
+  const [scanReason, setScanReason] = useState<string | undefined>();
+  const [lastScanCode, setLastScanCode] = useState("");
+  const [cameraKey, setCameraKey] = useState(0);
+  const [finalizing, setFinalizing] = useState(false);
   const autoClosedRef = useRef<string | null>(null);
   const DR = "INCOMING-01";
 
@@ -79,7 +94,7 @@ export default function ReceivingWizard() {
           poResult.ok ? (poResult.data || []) : [],
           sessionResult.ok ? (sessionResult.data || []) : [],
         );
-        setPendingPOs(merged.slice(0, 5) as POInfo[]);
+        setPendingPOs(merged as POInfo[]);
       })
       .catch((e: any) => {
         if (!cancelled) setPendingError(e?.message || "Could not load receiving choices");
@@ -87,6 +102,12 @@ export default function ReceivingWizard() {
       .finally(() => { if (!cancelled) setPendingLoading(false); });
     return () => { cancelled = true; };
   }, []);
+
+  const filteredPOs = useMemo(
+    () => pendingPOs.filter((po) => receivingChoiceMatches(po, poQuery)),
+    [pendingPOs, poQuery],
+  );
+  const poMore = useLoadMore(filteredPOs, 10, filteredPOs.length);
 
   useEffect(() => {
     if (resumeSid) {
@@ -109,6 +130,45 @@ export default function ReceivingWizard() {
   const fetchBoxes = useCallback(async () => { if (!sid) return; const r = await api.receivingBoxes(sid); if (r.ok && r.data?.boxes) setBoxes(r.data.boxes); }, [sid]);
   useEffect(() => { if (sid && (step === "scan_box" || step === "scan_items")) { fetchBoxes(); const t = setInterval(fetchBoxes, 10000); return () => clearInterval(t); } }, [sid, step, fetchBoxes]);
 
+  const transporterSignedOff =
+    stats?.phase === "item_verify" ||
+    ["item_verification", "item_verification_complete", "exception_pending"].includes(
+      String(stats?.session_status || ""),
+    );
+
+  useEffect(() => {
+    if (transporterSignedOff && phase !== "item_verify") {
+      setPhase("item_verify");
+    }
+  }, [transporterSignedOff, phase]);
+
+  // After sign-off land on Items (which now includes RF scan). Before sign-off stay on Boxes.
+  useEffect(() => {
+    if (transporterSignedOff) setUiTab("items");
+  }, [transporterSignedOff]);
+
+  const handleUiTabChange = useCallback((tab: ScanTab) => {
+    setUiTab(tab);
+    // Once transporter signed off, never drop back to dock box_verify (would re-enable sign-off).
+    if (transporterSignedOff) {
+      setPhase("item_verify");
+      return;
+    }
+    // Before sign-off, Items is summary-only — keep dock phase so scan-box still counts at dock.
+    if (tab === "boxes") setPhase("box_verify");
+  }, [transporterSignedOff]);
+
+  const resetScanUi = useCallback(() => {
+    setScanState("idle");
+    setScanReason(undefined);
+    setLastScanCode("");
+  }, []);
+
+  const restartScanner = useCallback(() => {
+    resetScanUi();
+    setCameraKey((k) => k + 1);
+  }, [resetScanUi]);
+
   const pendingBoxes = useMemo(() => {
     const q = boxQuery.trim().toLowerCase();
     const list = phase === "item_verify"
@@ -117,7 +177,6 @@ export default function ReceivingWizard() {
     if (!q) return list;
     return list.filter(b => String(b.box_number).toLowerCase().includes(q));
   }, [boxes, phase, boxQuery]);
-  const qk = useMemo(() => pendingBoxes.slice(0, 8), [pendingBoxes]);
   const cnt = useMemo(() => {
     let verified = 0, received = 0, damaged = 0;
     for (const b of boxes) {
@@ -133,22 +192,46 @@ export default function ReceivingWizard() {
   const handleSelectPO = async (po: POInfo) => {
     setSelPO(po); setLoading(true); setError("");
     try {
-      if (po.resume_session_id) {
-        const sr = await api.receivingStats(po.resume_session_id);
-        if (sr.ok && (sr.data.total_boxes || 0) > 0) {
-          setSid(po.resume_session_id);
-          setStats(sr.data);
-          if (sr.data.session_no) setSNo(sr.data.session_no);
-          if (sr.data.phase === "item_verify") setPhase("item_verify");
-          else setPhase("box_verify");
+      let resumeId = po.resume_session_id ? Number(po.resume_session_id) : 0;
+      // If pending-POs missed the link, resolve open session from packing-list list by PO name.
+      if (!resumeId && po.name) {
+        const pl = await api.packingListList();
+        if (pl.ok && Array.isArray(pl.data)) {
+          const match = (pl.data as any[]).find((s) => {
+            const status = String(s.status || "").toLowerCase();
+            if (["closed", "completed", "cancelled"].includes(status)) return false;
+            const poNo = String(s.po_no || s.purchase_receipt_no || "").trim().toLowerCase();
+            const grn = String(s.name || s.session_no || "").trim().toLowerCase();
+            const target = po.name.trim().toLowerCase();
+            return poNo === target || grn === target || String(s.packing_list_no || "").trim().toLowerCase() === target;
+          });
+          if (match?.id) resumeId = Number(match.id);
+        }
+      }
+      if (resumeId) {
+        const sr = await api.receivingStats(resumeId);
+        if (sr.ok) {
+          const boxes = Number(sr.data.total_boxes) || 0;
+          if (boxes > 0) {
+            setSid(resumeId);
+            setStats(sr.data);
+            if (sr.data.session_no) setSNo(sr.data.session_no);
+            if (sr.data.phase === "item_verify") setPhase("item_verify");
+            else setPhase("box_verify");
+            setLoading(false);
+            setStep("scan_box");
+            toast(`${sr.data.session_no || "Session"} · ${boxes} boxes`, "success");
+            return;
+          }
           setLoading(false);
-          setStep("scan_box");
-          toast(`${sr.data.session_no || "Session"} · ${sr.data.total_boxes} boxes`, "success");
+          setError(
+            `${sr.data.session_no || "This GRN"} is linked but has no box numbers yet. Open Receiving desk and re-import or approve the packing list.`,
+          );
           return;
         }
       }
       setLoading(false);
-      setError("This PO has no packing list yet, so there are no box numbers to receive. Upload the packing list first.");
+      setError("This PO has no packing list / GRN yet, so there are no box numbers to receive. Upload the packing list first.");
     } catch (e: any) { setLoading(false); setError(e.message || "Failed"); }
   };
 
@@ -168,19 +251,34 @@ export default function ReceivingWizard() {
         toast(r.error || "Failed to save box condition", "error");
         return false;
       }
+      const nextAction = r.data.next_action as string;
       const nextItems: BoxItem[] = r.data.items || items;
       const bn = r.data.box_number || snapshot.box_number;
-      if (condition === "damaged" || r.data.next_action === "scan_items" || r.data.damaged) {
+      if (nextAction === "already_verified") {
+        toast(r.data.message || "Already item-verified — closed for re-scan", "warning");
+        refreshProg();
+        return true;
+      }
+      if (nextAction === "already_scanned") {
+        toast(r.data.message || "Already counted at the dock", "warning");
+        refreshProg();
+        return true;
+      }
+      if (condition === "damaged" || nextAction === "scan_items" || r.data.damaged) {
         setLastOkBox(null);
-        setCurBox({ box_number: bn, items: nextItems, damaged: true });
+        setCurBox({
+          box_number: bn,
+          items: nextItems,
+          damaged: condition === "damaged" || !!r.data.damaged,
+        });
         setStep("scan_items");
-        toast(r.data.message || "Damaged — scan items", "warning");
+        toast(r.data.message || (condition === "damaged" ? "Damaged — scan items" : "Scan items"), "warning");
       } else {
         setLastOkBox({ ...snapshot, box_number: bn, items: nextItems });
         toast(r.data.message || `${bn} accepted`, "success");
         setHist(p => [{ box_number: bn, auto_completed: true, message: "Box OK", timestamp: new Date(), status: "success" }, ...p.slice(0, 4)]);
         const dp = r.data.delivery_progress;
-        if (dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
+        if (!transporterSignedOff && dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
           setShowSignOff(true);
         }
       }
@@ -191,7 +289,7 @@ export default function ReceivingWizard() {
       toast(e.message || "Failed", "error");
       return false;
     }
-  }, [sid, toast, refreshProg]);
+  }, [sid, toast, refreshProg, transporterSignedOff]);
 
   const handleBoxScan = useCallback(async (rawOverride?: string): Promise<boolean> => {
     const raw = (rawOverride !== undefined ? rawOverride : scanIn).trim();
@@ -206,12 +304,14 @@ export default function ReceivingWizard() {
       const items: BoxItem[] = r.data.items || [];
       if (next === "already_verified") {
         doFlash("success");
-        toast(r.data.message || "Already verified", "success");
+        toast(r.data.message || "Already item-verified — closed for re-scan", "warning");
+        refreshProg();
         return true;
       }
       if (next === "already_scanned") {
         doFlash("success");
-        toast(r.data.message || "Already counted", "warning");
+        toast(r.data.message || "Already counted at the dock", "warning");
+        refreshProg();
         return true;
       }
       if (next === "scan_items") {
@@ -238,6 +338,20 @@ export default function ReceivingWizard() {
       return false;
     }
   }, [sid, scanIn, phase, confirmBoxSnapshot, toast, doFlash, refreshProg]);
+
+  const onBoxScan = useCallback(async (code: string): Promise<boolean> => {
+    setLastScanCode(code);
+    const ok = await handleBoxScan(code);
+    if (ok) {
+      setScanReason(undefined);
+      setScanState("accepted");
+      setTimeout(() => setScanState("idle"), 900);
+    } else {
+      setScanState("rejected");
+      setTimeout(() => setScanState("idle"), 1200);
+    }
+    return ok;
+  }, [handleBoxScan]);
 
   const markLastDamaged = useCallback(async () => {
     if (!lastOkBox) {
@@ -277,6 +391,13 @@ export default function ReceivingWizard() {
 
   const signOffBoxes = useCallback(async () => {
     if (!sid) return;
+    if (transporterSignedOff) {
+      toast("Transporter already signed off — continue item verification", "warning");
+      setShowSignOff(false);
+      setPhase("item_verify");
+      setUiTab("items");
+      return;
+    }
     setLoading(true);
     try {
       const r = await api.receivingSignOffBoxes({ session_id: sid });
@@ -284,10 +405,24 @@ export default function ReceivingWizard() {
       if (!r.ok) { toast(r.error || "Failed", "error"); return; }
       setShowSignOff(false);
       setPhase("item_verify");
-      toast(r.data.message || "Transporter signed off", "success");
+      setUiTab("items");
+      setStats((prev) =>
+        prev
+          ? {
+              ...prev,
+              phase: "item_verify",
+              session_status: (r.data.status as string) || "item_verification",
+              boxes_received: r.data.boxes_received ?? prev.boxes_received,
+              boxes_verified: r.data.boxes_verified ?? prev.boxes_verified,
+              total_boxes: r.data.boxes_total ?? prev.total_boxes,
+            }
+          : prev,
+      );
+      const already = !!r.data.already_signed;
+      toast(r.data.message || "Transporter signed off", already ? "warning" : "success");
       refreshProg();
     } catch (e: any) { setLoading(false); toast(e.message || "Failed", "error"); }
-  }, [sid, toast, refreshProg]);
+  }, [sid, toast, refreshProg, transporterSignedOff]);
 
   const completeBox = useCallback(async (boxNo?: string) => {
     const bn = boxNo || curBox?.box_number;
@@ -307,7 +442,7 @@ export default function ReceivingWizard() {
       } else {
         setStep("scan_box");
         const dp = r.data.delivery_progress;
-        if (phase === "box_verify" && dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
+        if (phase === "box_verify" && !transporterSignedOff && dp && dp.boxes_total > 0 && dp.boxes_received >= dp.boxes_total) {
           setShowSignOff(true);
         }
       }
@@ -318,7 +453,7 @@ export default function ReceivingWizard() {
       toast(e.message || "Failed", "error");
       return false;
     }
-  }, [sid, curBox, phase, toast, refreshProg]);
+  }, [sid, curBox, phase, toast, refreshProg, transporterSignedOff]);
 
   const handleItemScan = async (rawOverride?: string): Promise<boolean> => {
     const raw = (rawOverride ?? scanIn).trim();
@@ -347,6 +482,20 @@ export default function ReceivingWizard() {
     } catch (e: any) { setLoading(false); toast(e.message || "Failed", "error"); return false; }
   };
 
+  const onItemScanUi = async (code: string): Promise<boolean> => {
+    setLastScanCode(code);
+    const ok = await handleItemScan(code);
+    if (ok) {
+      setScanReason(undefined);
+      setScanState("accepted");
+      setTimeout(() => setScanState("idle"), 900);
+    } else {
+      setScanState("rejected");
+      setTimeout(() => setScanState("idle"), 1200);
+    }
+    return ok;
+  };
+
   useEffect(() => {
     if (step !== "scan_items" || !curBox || loading || curBox.damaged) return;
     if (!boxItemsMatched(curBox.items)) return;
@@ -355,253 +504,343 @@ export default function ReceivingWizard() {
     void completeBox(curBox.box_number);
   }, [step, curBox, loading, completeBox]);
 
-  const pct = phase === "item_verify"
-    ? (stats?.item_progress_pct ?? (cnt.total ? Math.round((cnt.verified / cnt.total) * 100) : 0))
-    : (stats?.box_progress_pct ?? (cnt.total ? Math.round((cnt.received / cnt.total) * 100) : 0));
   const emptyBoxList = boxes.length === 0;
-  const counted = phase === "item_verify" ? cnt.verified : cnt.received;
-  const remaining = phase === "item_verify" ? cnt.pendItems : cnt.pendDock;
+  const totalBoxes = cnt.total || stats?.total_boxes || 0;
+  const counted =
+    phase === "item_verify"
+      ? (cnt.total > 0 ? cnt.verified : (stats?.boxes_verified ?? 0))
+      : (cnt.total > 0 ? cnt.received : (stats?.boxes_received ?? 0));
+  const itemsComplete = phase === "item_verify" && totalBoxes > 0 && counted >= totalBoxes;
 
-  const docFlow = (
-    <div className="rw-doc-map rw-doc-map-inline">
-      <span className="rw-doc-chip" data-kind="po"><span className="rw-doc-chip-label">PO</span><span className="rw-doc-chip-value">{stats?.po_name || selPO?.name || "—"}</span></span>
-      <span className="rw-doc-arrow">→</span>
-      <span className="rw-doc-chip" data-kind="pl"><span className="rw-doc-chip-label">PL</span><span className="rw-doc-chip-value">{stats?.packing_list_no || "—"}</span></span>
-      <span className="rw-doc-arrow">→</span>
-      <span className="rw-doc-chip" data-kind="grn"><span className="rw-doc-chip-label">GRN</span><span className="rw-doc-chip-value">{sNo || "—"}</span></span>
-    </div>
+  const finalizeForPutaway = useCallback(async () => {
+    if (!sid || finalizing) return;
+    setFinalizing(true);
+    setError("");
+    try {
+      const scanned = Number(stats?.total_qty_scanned) || 0;
+      if (scanned <= 0) {
+        // Refresh stats once — box list may have scanned qty the summary missed.
+        const sr = await api.receivingStats(sid);
+        if (sr.ok) setStats(sr.data);
+        const again = Number(sr.ok ? sr.data?.total_qty_scanned : 0) || 0;
+        if (again <= 0) {
+          toast("No scanned units on this GRN — scan item QR codes before posting stock", "error");
+          setFinalizing(false);
+          return;
+        }
+      }
+      const ver = await api.grnCompleteVerification(sid);
+      if (!ver.ok && !/already|putaway|complete/i.test(String(ver.error || ""))) {
+        // Still try finalize when status is already putaway_pending / item_verification
+        if (!/verification|status/i.test(String(ver.error || ""))) {
+          toast(ver.error || "Could not complete verification", "error");
+          setFinalizing(false);
+          return;
+        }
+      }
+      const fin = await api.grnFinalize(sid);
+      if (!fin.ok) {
+        toast(fin.error || "Finalize failed — resolve exceptions or retry", "error");
+        setFinalizing(false);
+        return;
+      }
+      const posted = Number((fin.data as any)?.posted?.posted_incoming ?? (fin.data as any)?.posted?.incoming ?? 0);
+      toast(posted > 0 ? `Stock posted · ${posted} units → Putaway` : "GRN finalized — opening Putaway", "success");
+      navigate("/putaway-runner");
+    } catch (e: any) {
+      toast(e?.message || "Finalize failed", "error");
+    }
+    setFinalizing(false);
+  }, [sid, finalizing, stats, toast, navigate]);
+
+  const statsBoxes: QueueBox[] = useMemo(
+    () =>
+      boxes.map((b: any) => ({
+        id: String(b.box_number),
+        items: b.item_count || 0,
+        units: b.total_qty || 0,
+        scannedUnits: Number(b.scanned_qty) || 0,
+        status:
+          b.status === "verified"
+            ? ("counted" as const)
+            : b.condition && b.condition !== "ok"
+              ? ("damaged" as const)
+              : b.status === "received" || b.status === "exception"
+                ? ("counted" as const)
+                : ("pending" as const),
+      })),
+    [boxes],
+  );
+
+  const queueBoxes: QueueBox[] = useMemo(
+    () =>
+      pendingBoxes.map((b: any) => ({
+        id: String(b.box_number),
+        items: b.item_count || 0,
+        units: b.total_qty || 0,
+        status: "pending" as const,
+      })),
+    [pendingBoxes],
   );
 
   return (
-    <div className={`rw-page${step === "scan_box" || step === "scan_items" ? " rw-dash-page" : ""}`}>
+    <div className={`rw-page${step === "scan_box" || step === "scan_items" ? " rw-scan-shell" : ""}`}>
       {flash && <div className={`rw-scan-flash ${flash}`} />}
 
       {step === "select_po" && <>
-        <div className="rw-header"><div className="rw-header-info"><div className="rw-header-session">Receiving</div><div className="rw-header-po">Select a purchase order</div></div></div>
+        <div className="rw-header"><div className="rw-header-info"><div className="rw-header-session">Receiving</div><div className="rw-header-po">Select PO / GRN to receive</div></div></div>
         <div className="rw-po-list">
+          <input
+            className="rw-po-search"
+            type="search"
+            value={poQuery}
+            onChange={(e) => setPoQuery(e.target.value)}
+            placeholder="Search PO, GRN, packing list, supplier…"
+            autoComplete="off"
+          />
           {pendingError && <div className="rw-empty-msg" style={{ padding: 12 }} role="alert">{pendingError}</div>}
           {error && <div className="rw-empty-msg" style={{ padding: 12 }}>{error}</div>}
           {pendingLoading
             ? <div className="rw-empty" role="status"><div className="rw-empty-icon">⏳</div><div className="rw-empty-title">Loading receiving choices…</div></div>
-            : pendingPOs.length === 0
-              ? <div className="rw-empty"><div className="rw-empty-icon">📦</div><div className="rw-empty-title">No pending POs</div><div className="rw-empty-msg">Create POs in your ERP to start</div></div>
-            : pendingPOs.map(po => (
-              <div key={`${po.name}-${po.resume_session_id ?? po.id}`} className="rw-po-item" onClick={() => handleSelectPO(po)}>
-                <div className="rw-po-info"><div className="rw-po-name">{po.name}</div><div className="rw-po-supplier">{po.supplier_name}</div><div className="rw-po-meta">{po.item_count} items · {po.total_qty} units</div></div>
-                <span className={`rw-po-badge ${po.open_sessions > 0 ? "resume" : "start"}`}>{po.open_sessions > 0 ? "Resume" : "Start"}</span>
-              </div>
-            ))}
+            : filteredPOs.length === 0
+              ? <div className="rw-empty"><div className="rw-empty-icon">📦</div><div className="rw-empty-title">{poQuery.trim() ? "No matches" : "No pending receipts"}</div><div className="rw-empty-msg">{poQuery.trim() ? "Try another PO / GRN / supplier" : "Import a packing list on the Receiving desk first"}</div></div>
+            : <>
+              {poMore.visible.map(po => {
+                const canResume = !!(po.resume_session_id || (po.open_sessions && po.open_sessions > 0) || (po.total_boxes && po.total_boxes > 0));
+                const metaParts = [
+                  po.total_boxes ? `${po.total_boxes} boxes` : null,
+                  po.item_count ? `${po.item_count} items` : null,
+                  po.total_qty ? `${po.total_qty} units` : null,
+                ].filter(Boolean);
+                return (
+                  <div key={`${po.name}-${po.resume_session_id ?? po.id}-${po.session_no || ""}`} className="rw-po-item" onClick={() => handleSelectPO(po)}>
+                    <div className="rw-po-info">
+                      <div className="rw-po-name">{po.name}</div>
+                      {(po.session_no || po.packing_list_no) && (
+                        <div className="rw-po-docs">
+                          {po.session_no && <span>{po.session_no}</span>}
+                          {po.session_no && po.packing_list_no && <span aria-hidden> · </span>}
+                          {po.packing_list_no && <span>{po.packing_list_no}</span>}
+                        </div>
+                      )}
+                      <div className="rw-po-supplier">{po.supplier_name || "—"}</div>
+                      <div className="rw-po-meta">{metaParts.length ? metaParts.join(" · ") : "No packing list linked yet"}</div>
+                    </div>
+                    <span className={`rw-po-badge ${canResume ? "resume" : "start"}`}>{canResume ? "Resume" : "Start"}</span>
+                  </div>
+                );
+              })}
+              {poMore.hasMore && (
+                <button
+                  type="button"
+                  className="scan-btn scan-btn-outline"
+                  style={{ marginTop: 8, width: "100%" }}
+                  onClick={poMore.loadMore}
+                >
+                  Load more ({poMore.remaining} left)
+                </button>
+              )}
+            </>}
         </div>
       </>}
 
-      {step === "scan_box" && <>
-        <header className="rw-topbar">
-          <div className="rw-topbar-left">
-            <button className="rw-header-back" onClick={() => setStep("select_po")} aria-label="Back">←</button>
-            <div className="rw-topbar-titles">
-              <div className="rw-header-title">{phase === "item_verify" ? "Item verification" : "Box verification"}</div>
-              {docFlow}
-            </div>
-          </div>
-          <div className="rw-topbar-right">
-            <div className="rw-progress-inline">
-              <div className="rw-progress-track" aria-hidden><div className="rw-progress-fill" style={{ width: `${pct}%` }} /></div>
-              <span className="rw-progress-label">{counted}/{cnt.total} boxes · {pct}%</span>
-            </div>
-            <div className="rw-phase-tabs rw-phase-tabs-compact">
-              <button type="button" className="rw-phase-tab" data-active={phase === "box_verify"} onClick={() => setPhase("box_verify")}>1. Boxes</button>
-              <button type="button" className="rw-phase-tab" data-active={phase === "item_verify"} disabled={cnt.received < 1} onClick={() => setPhase("item_verify")}>2. Items</button>
-            </div>
-          </div>
-        </header>
+      {step === "scan_box" && (
+        <ScannerLayout
+          title={phase === "item_verify" ? "Item verification" : "Box verification"}
+          hideHeader
+          noBack
+          flash={scanState === "rejected" || flash === "error" ? "err" : scanState === "accepted" || flash === "success" ? "ok" : null}
+        >
+          <VerificationHeader
+            counted={counted}
+            total={totalBoxes}
+            po={stats?.po_name || selPO?.name || "—"}
+            pl={stats?.packing_list_no || "—"}
+            grn={sNo || stats?.session_no || "—"}
+            tab={uiTab}
+            onTabChange={handleUiTabChange}
+            onBack={() => setStep("select_po")}
+            title={phase === "item_verify" ? "Item verification" : "Box verification"}
+            itemsDisabled={cnt.received < 1 && (stats?.boxes_received ?? 0) < 1}
+          />
 
-        <div className="rw-dash">
-          <section className="rw-dash-left">
-            <CameraScanner
-              embedded
-              open={true}
-              onClose={() => {}}
-              onScan={(code) => handleBoxScan(code)}
-              footer={
-                phase === "box_verify" ? (
-                  <button type="button" className="cam-dmg-btn" disabled={!lastOkBox || loading} onClick={() => { void markLastDamaged(); }}>
-                    {lastOkBox ? `Mark damaged · ${cut(lastOkBox.box_number, 14)}` : "Mark previous damaged"}
+          {(uiTab === "boxes" || (uiTab === "items" && phase === "item_verify" && !itemsComplete)) && (
+            <>
+              {!itemsComplete && (
+                <ScanCard
+                  state={scanState}
+                  code={lastScanCode || queueBoxes[0]?.id || ""}
+                  reason={scanReason}
+                  onMarkDamaged={() => { void markLastDamaged(); }}
+                  canMarkDamaged={!!lastOkBox && scanState === "idle" && phase === "box_verify" && !transporterSignedOff}
+                  markDamagedLabel={lastOkBox ? `Mark damaged · ${cut(lastOkBox.box_number, 14)}` : "Mark damaged"}
+                  onRestart={restartScanner}
+                  onManualEntry={(code) => { void onBoxScan(code); }}
+                  placeholder={phase === "item_verify" ? "Type box number to verify items" : "Type box number"}
+                  viewport={
+                    <div className="scan-live-viewport">
+                      <CameraScanner
+                        key={`${uiTab}-${cameraKey}`}
+                        embedded
+                        minimal
+                        open
+                        onClose={() => {}}
+                        onScan={(code) => onBoxScan(code)}
+                      />
+                    </div>
+                  }
+                />
+              )}
+
+              {emptyBoxList ? (
+                <div className="scan-empty">
+                  <div className="scan-empty-icon">📦</div>
+                  <div className="scan-empty-title">No boxes to suggest</div>
+                  <div className="scan-empty-msg">Upload the packing list, or type a box number above.</div>
+                  <button className="scan-btn scan-btn-primary" style={{ marginTop: 12, width: "auto" }} type="button" onClick={() => navigate("/receiving-management")}>
+                    Upload Packing List
                   </button>
-                ) : null
-              }
-            />
-            <div className="rw-scan-prompt">
-              {phase === "item_verify"
-                ? (cnt.pendItems > 0 ? `Scan a received box to check items · ${cnt.pendItems} left` : "All received boxes have been item-checked")
-                : (stats ? `${cnt.received} of ${cnt.total} boxes counted` : "Scan each box")}
-            </div>
-            <div className="rw-manual-row">
-              <ScannerInput
-                onScan={(code) => { if (sid) void handleBoxScan(code); }}
-                placeholder="Paste or type box number, then Enter"
-                autoFocus={false} showTorch={false} showCamera={false}
-                suggestions={qk.map((b: any) => ({ code: b.box_number, name: `${b.item_count || 0} items`, qty: b.total_qty }))}
-                onSelectSuggestion={(code) => { if (sid) void handleBoxScan(code); }}
-              />
-            </div>
-            {phase === "box_verify" && cnt.received > 0 && (
-              <button className="rw-btn rw-btn-primary rw-dash-signoff" type="button" disabled={loading} onClick={() => setShowSignOff(true)}>
-                {cnt.pendDock === 0 ? "Sign off transporter" : `Sign off transporter · ${cnt.pendDock} not scanned`}
-              </button>
-            )}
-          </section>
+                </div>
+              ) : queueBoxes.length > 0 || boxQuery ? (
+                <BoxQueue
+                  boxes={queueBoxes}
+                  query={boxQuery}
+                  onQueryChange={setBoxQuery}
+                  onDamaged={(id) => { void markBoxDamaged(id); }}
+                  onViewAll={() => setShowAll(true)}
+                />
+              ) : (
+                <div className="scan-empty">
+                  <div className="scan-empty-icon">✓</div>
+                  <div className="scan-empty-title">
+                    {itemsComplete
+                      ? "All boxes item-verified"
+                      : phase === "item_verify"
+                        ? "No boxes waiting for item check"
+                        : "All boxes counted"}
+                  </div>
+                  <div className="scan-empty-msg">
+                    {itemsComplete
+                      ? "Item verification is complete — post stock to release putaway."
+                      : phase === "item_verify"
+                        ? "Scan a box number to open it for item QR checks."
+                        : transporterSignedOff
+                          ? "Transporter signed off — switch to Items to verify contents."
+                          : "Sign off the transporter to continue."}
+                  </div>
+                </div>
+              )}
 
-          <section className="rw-dash-right">
-            {pendingBoxes.length > 0 || boxQuery ? (
-              <div className="rw-boxes-section">
-                <div className="rw-boxes-header">
-                  <span className="rw-boxes-title">{phase === "item_verify" ? "Boxes to item-check" : "Next boxes"} ({remaining} remaining)</span>
-                  <input
-                    className="rw-queue-search"
-                    value={boxQuery}
-                    onChange={(e) => setBoxQuery(e.target.value)}
-                    placeholder="Filter box ID"
-                    aria-label="Filter boxes"
-                  />
+              {phase === "box_verify" && !transporterSignedOff && cnt.received > 0 && (
+                <SignoffBar remaining={cnt.pendDock} onSignoff={() => setShowSignOff(true)} />
+              )}
+
+              {exc.length > 0 && (
+                <div className="scan-badge warn" style={{ alignSelf: "center" }}>
+                  ⚠ {exc.length} open exception{exc.length !== 1 ? "s" : ""}
                 </div>
-                <div className="rw-boxes-list">
-                  {pendingBoxes.map((box: any) => {
-                    const isVerified = box.status === "verified";
-                    const isReceived = box.status === "received" || box.status === "exception";
-                    const damaged = !!(box.condition && box.condition !== "ok");
-                    const status = isVerified ? "verified" : damaged ? "damaged" : isReceived ? "scanning" : "expected";
-                    const badge = isVerified ? "Done" : damaged ? "Damaged" : isReceived ? (phase === "item_verify" ? "Check" : "Counted") : "Pending";
-                    return (
-                      <div key={box.id || box.box_number} className="rw-box-row" data-status={status}>
-                        <div className="rw-box-row-dot" />
-                        <div className="rw-box-row-info">
-                          <div className="rw-box-row-num">{box.box_number}</div>
-                          <div className="rw-box-row-meta">{box.item_count || 0} items · {box.scanned_qty || 0}/{box.total_qty || 0} units</div>
-                        </div>
-                        <span className="rw-box-row-badge">{badge}</span>
-                        <div className="rw-box-row-actions">
-                          {!isVerified && (
-                            <button type="button" className="rw-box-row-scan" onClick={() => { void handleBoxScan(box.box_number); }}>Scan</button>
-                          )}
-                          {!isVerified && (
-                            <button type="button" className="rw-box-row-dmg" onClick={() => { void markBoxDamaged(box.box_number); }}>Damaged</button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {cnt.total > pendingBoxes.length && (
-                  <button className="rw-view-all-btn" onClick={() => setShowAll(true)}>View all {cnt.total} boxes</button>
-                )}
-              </div>
-            ) : emptyBoxList ? (
-              <div className="rw-empty">
-                <div className="rw-empty-icon">📦</div>
-                <div className="rw-empty-title">No boxes to suggest</div>
-                <div className="rw-empty-msg">This GRN has no packing list yet. Upload the packing list, or paste a box number on the left.</div>
-                <button className="rw-btn rw-btn-primary" style={{ marginTop: 12 }} type="button" onClick={() => navigate("/receiving-management")}>+ Upload Packing List</button>
-              </div>
-            ) : (
-              <div className="rw-empty">
-                <div className="rw-empty-icon">✓</div>
-                <div className="rw-empty-title">{phase === "item_verify" ? "No boxes waiting for item check" : "All boxes counted"}</div>
-                <div className="rw-empty-msg">{phase === "item_verify" ? "Scan a box number to reopen it, or finish remaining items later." : "Sign off the transporter, then start item verification."}</div>
-              </div>
-            )}
-            {lastRoute && <div className="rw-route-flash">Routed to <strong>{lastRoute}</strong></div>}
-            {hist.length > 0 && <div className="rw-history"><div className="rw-history-label">Recent</div><div className="rw-history-items">
-              {hist.slice(0, 5).map((h, i) => <div key={i} className={`rw-history-chip ${h.status}`}><span>{h.status === "success" ? "✓" : h.status === "error" ? "✕" : "⚠"}</span><span>{cut(h.box_number, 16)}</span></div>)}
-            </div></div>}
-            {exc.length > 0 && <div className="rw-exception-banner">⚠ {exc.length} open exception{exc.length !== 1 ? "s" : ""}</div>}
-          </section>
-        </div>
-      </>}
+              )}
+            </>
+          )}
+
+          {uiTab === "items" && (
+            <ItemsPanel
+              boxes={statsBoxes}
+              itemMode={phase === "item_verify"}
+              complete={itemsComplete}
+              expectedOverride={stats?.total_qty_expected}
+              receivedOverride={stats?.total_qty_scanned}
+              onFinalizePutaway={itemsComplete ? () => { void finalizeForPutaway(); } : undefined}
+              finalizing={finalizing}
+            />
+          )}
+        </ScannerLayout>
+      )}
 
       {step === "scan_items" && curBox && (() => {
         const matched = curBox.items.filter(it => Number(it.scanned_qty) >= Number(it.expected_qty)).length;
         const total = curBox.items.length;
-        const boxPct = total > 0 ? Math.round((matched / total) * 100) : 0;
         const isComplete = boxItemsMatched(curBox.items);
-        return <>
-          <header className="rw-topbar">
-            <div className="rw-topbar-left">
-              <button className="rw-header-back" onClick={() => { setCurBox(null); setStep("scan_box"); }} aria-label="Back">←</button>
-              <div className="rw-topbar-titles">
-                <div className="rw-header-title">{curBox.damaged ? "Damaged box — items" : "Item verification"}</div>
-                {docFlow}
-              </div>
-            </div>
-            <div className="rw-topbar-right">
-              <div className="rw-progress-inline">
-                <div className="rw-progress-track" aria-hidden><div className="rw-progress-fill" style={{ width: `${boxPct}%` }} /></div>
-                <span className="rw-progress-label">{cut(curBox.box_number, 20)} · {matched}/{total} items · {boxPct}%</span>
-              </div>
-            </div>
-          </header>
+        return (
+          <ScannerLayout title={curBox.damaged ? "Damaged box — items" : "Item verification"} hideHeader noBack flash={scanState === "rejected" ? "err" : scanState === "accepted" ? "ok" : flash === "error" ? "err" : flash === "success" ? "ok" : null}>
+            <VerificationHeader
+              counted={matched}
+              total={total || 1}
+              po={stats?.po_name || selPO?.name || "—"}
+              pl={stats?.packing_list_no || "—"}
+              grn={sNo || "—"}
+              tab="boxes"
+              onTabChange={() => {}}
+              onBack={() => { setCurBox(null); setStep("scan_box"); resetScanUi(); }}
+              title={curBox.damaged ? "Damaged box — items" : "Item verification"}
+              itemsDisabled
+            />
 
-          <div className="rw-dash">
-            <section className="rw-dash-left">
-              {curBox.damaged && (
-                <div className="rw-exception-banner rw-exception-banner-flush">Damaged box — scan good items, or Reject an item to send it to REJECT-01</div>
-              )}
-              <CameraScanner
-                embedded
-                open={true}
-                onClose={() => {}}
-                onScan={(code) => handleItemScan(code)}
-              />
-              <div className="rw-scan-prompt">{isComplete ? "All items matched — close this box" : `${matched} of ${total} scanned`}</div>
-              {(!isComplete || curBox.damaged) && (
-                <div className="rw-manual-row">
-                  <ScannerInput
-                    key={`${curBox.box_number}-items`}
-                    onScan={(code) => { if (sid) void handleItemScan(code); }}
-                    placeholder="Paste or type item QR, then Enter"
-                    autoFocus={false} showTorch={false} showCamera={false}
-                    suggestions={curBox.items.map(it => ({ code: it.part_code, name: it.part_name || "", qty: it.expected_qty }))}
-                    onSelectSuggestion={(code) => { if (sid) void handleItemScan(code); }}
+            {curBox.damaged && (
+              <div className="scan-badge warn" style={{ marginBottom: 4 }}>
+                Scan good items, or reject damaged units
+              </div>
+            )}
+
+            <ScanCard
+              state={scanState}
+              code={lastScanCode || curBox.box_number}
+              reason={scanReason}
+              onMarkDamaged={() => {}}
+              canMarkDamaged={false}
+              showMarkDamaged={false}
+              onRestart={restartScanner}
+              onManualEntry={(code) => { void onItemScanUi(code); }}
+              placeholder="Type item QR"
+              viewport={
+                <div className="scan-live-viewport">
+                  <CameraScanner
+                    key={`item-${cameraKey}-${curBox.box_number}`}
+                    embedded
+                    minimal
+                    open
+                    onClose={() => {}}
+                    onScan={(code) => onItemScanUi(code)}
                   />
                 </div>
-              )}
-              <div className="rw-scan-actions rw-scan-actions-inline">
-                <button className="rw-btn rw-btn-secondary" style={{ flex: 1 }} onClick={() => { void completeBox(); }} disabled={loading}>Close Box</button>
-                <button className="rw-btn rw-btn-primary" style={{ flex: 1 }} disabled={(!curBox.damaged && !isComplete) || loading} onClick={() => { void completeBox(); }}>
-                  {curBox.damaged && !isComplete ? "Finish inspection" : "Complete"}
-                </button>
-              </div>
-            </section>
+              }
+            />
 
-            <section className="rw-dash-right">
-              <div className="rw-boxes-section">
-                <div className="rw-boxes-header">
-                  <span className="rw-boxes-title">Items in box ({total - matched} remaining)</span>
-                </div>
-                <div className="rw-boxes-list">
-                  {curBox.items.map(it => {
-                    const rejected = it.status === "damage";
-                    const itemDone = !rejected && it.scanned_qty >= it.expected_qty;
-                    const status = rejected ? "damaged" : it.status === "excess" ? "excess" : itemDone ? "verified" : it.scanned_qty > 0 ? "scanning" : "expected";
-                    const badge = rejected ? "Rejected" : it.status === "excess" ? "Excess" : itemDone ? "Done" : it.scanned_qty > 0 ? "In progress" : "Pending";
-                    return (
-                      <div key={it.part_code} className="rw-box-row" data-status={status} data-static>
-                        <div className="rw-box-row-dot" />
-                        <div className="rw-box-row-info">
-                          <div className="rw-box-row-num">{it.part_code}</div>
-                          <div className="rw-box-row-meta">{it.part_name || "—"} · {it.scanned_qty}/{it.expected_qty} units{rejected ? " · REJECT-01" : ""}</div>
-                        </div>
-                        <span className="rw-box-row-badge">{badge}</span>
-                        {!rejected && (
-                          <button type="button" className="rw-box-row-dmg" disabled={loading} onClick={() => { void rejectItem(it.part_code); }}>Reject</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="scan-btn scan-btn-outline" style={{ flex: 1 }} type="button" onClick={() => { void completeBox(); }} disabled={loading}>
+                Close box
+              </button>
+              <button className="scan-btn scan-btn-primary" style={{ flex: 1 }} type="button" disabled={(!curBox.damaged && !isComplete) || loading} onClick={() => { void completeBox(); }}>
+                {curBox.damaged && !isComplete ? "Finish inspection" : "Complete"}
+              </button>
+            </div>
+
+            <section style={{ display: "flex", flexDirection: "column", gap: 8, marginTop: 8 }}>
+              <div className="scan-section-title">Items in box ({total - matched} remaining)</div>
+              {curBox.items.map(it => {
+                const rejected = it.status === "damage";
+                const itemDone = !rejected && it.scanned_qty >= it.expected_qty;
+                return (
+                  <div key={it.part_code} className={`scan-row${itemDone ? " ring-accent" : ""}`} style={{ cursor: "default" }}>
+                    <div className="scan-row-info">
+                      <div className="scan-row-code">{it.part_code}</div>
+                      <div className="scan-row-desc">{it.part_name || "—"} · {it.scanned_qty}/{it.expected_qty} units</div>
+                    </div>
+                    <div className="scan-row-meta">
+                      <div className="scan-row-qty">{rejected ? "—" : it.scanned_qty}</div>
+                      <div className="scan-row-label">{rejected ? "Rejected" : itemDone ? "Done" : it.scanned_qty > 0 ? "Scanning" : "Pending"}</div>
+                    </div>
+                    {!rejected && !itemDone && (
+                      <button type="button" className="scan-btn scan-btn-outline scan-btn-sm" style={{ width: "auto", minHeight: 36 }} disabled={loading} onClick={() => { void rejectItem(it.part_code); }}>
+                        Reject
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
             </section>
-          </div>
-        </>;
+          </ScannerLayout>
+        );
       })()}
 
       {step === "complete" && <>
@@ -638,11 +877,18 @@ export default function ReceivingWizard() {
               const damaged = box.condition && box.condition !== "ok";
               const st = isVerified ? "verified" : damaged ? "excess" : isReceived ? "scanning" : "expected";
               const badge = isVerified ? "Done" : damaged ? "Damaged" : isReceived ? "Counted" : "Scan";
-              return <div key={box.id || box.box_number} className="rw-box-row" data-status={st} onClick={() => { setShowAll(false); void handleBoxScan(box.box_number); }}>
+              return <div key={box.id || box.box_number} className="rw-box-row" data-status={st} onClick={() => {
+                setShowAll(false);
+                if (isVerified) {
+                  toast("Already item-verified — closed for re-scan", "warning");
+                  return;
+                }
+                void handleBoxScan(box.box_number);
+              }}>
                 <div className="rw-box-row-dot" />
                 <div className="rw-box-row-info"><div className="rw-box-row-num">{cut(box.box_number, 24)}</div><div className="rw-box-row-meta">{box.item_count || 0} items · {box.scanned_qty || 0}/{box.total_qty || 0} units</div></div>
                 <span className="rw-box-row-badge">{badge}</span>
-                {!isVerified && (
+                {!isVerified && !transporterSignedOff && (
                   <button type="button" className="rw-box-row-dmg" onClick={(e) => { e.stopPropagation(); setShowAll(false); void markBoxDamaged(box.box_number); }}>Damaged</button>
                 )}
               </div>;
@@ -651,11 +897,11 @@ export default function ReceivingWizard() {
         </div>
       </>}
 
-      {showSignOff && createPortal(
+      {showSignOff && !transporterSignedOff && createPortal(
         <div className="rw-confirm-overlay" onClick={() => !loading && setShowSignOff(false)} role="presentation">
           <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
             <div className="rw-confirm-kicker">Transporter sign-off</div>
-            <div className="rw-confirm-boxno">{cnt.received} / {cnt.total}</div>
+            <div className="rw-confirm-boxno">{cnt.received} / {totalBoxes}</div>
             <div className="rw-confirm-meta">boxes counted at the dock</div>
             {cnt.pendDock > 0
               ? <p className="rw-confirm-q">{cnt.pendDock} expected box{cnt.pendDock === 1 ? "" : "es"} not scanned. Sign off anyway so the transporter can leave?</p>

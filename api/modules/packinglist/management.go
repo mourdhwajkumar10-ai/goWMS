@@ -18,7 +18,53 @@ func RegisterManagement(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/import-file", importPackingListFile(db))
 	r.Get("/list", listPackingLists(db))
 	r.Post("/:id/approve", rbac.RequirePermission("receiving.approve"), approvePackingList(db))
+	r.Delete("/:id", deletePackingList(db))
 	r.Get("/:id", getPackingList(db))
+}
+
+// deletePackingList removes a draft/open GRN packing-list session before receiving starts.
+// Only draft/open (and empty progress) — blocks once boxes have been counted or status advances.
+func deletePackingList(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		id, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
+		}
+
+		var status string
+		var boxesReceived int
+		err = db.QueryRow(c.Context(), `
+			SELECT COALESCE(status,''), COALESCE(boxes_received,0)
+			FROM grn_sessions WHERE id=$1`, id).Scan(&status, &boxesReceived)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "packing list not found")
+		}
+
+		st := strings.ToLower(strings.TrimSpace(status))
+		if st != "draft" && st != "open" {
+			return shared.Err(c, fiber.StatusBadRequest, "only draft or open packing lists can be deleted")
+		}
+		if boxesReceived > 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "cannot delete: receiving has already started")
+		}
+
+		// Extra guard: any scanned qty means progress past a discardable draft
+		var scanned float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(scanned_qty),0) FROM grn_lines WHERE grn_session_id=$1`, id).Scan(&scanned)
+		if scanned > 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "cannot delete: items have already been scanned")
+		}
+
+		tag, err := db.Exec(c.Context(), `DELETE FROM grn_sessions WHERE id=$1 AND status IN ('draft','open')`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "packing list not found or no longer deletable")
+		}
+		return shared.OK(c, fiber.Map{"deleted": true, "id": id})
+	}
 }
 
 // listPackingLists returns all GRN sessions with packing list data
@@ -218,7 +264,26 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(gc.box_no_to, '') as box_no_to,
 				COALESCE(gl.unit_weight_kg, 0) as unit_weight_kg,
 				COALESCE(gl.status, 'pending') as status,
-				COALESCE(gl.route_location, '') as route_location,
+				COALESCE(
+					(SELECT wl.code
+					 FROM stock_location_balances slb
+					 JOIN warehouse_locations wl ON wl.id = slb.location_id
+					 WHERE UPPER(slb.item_code) = UPPER(gl.item_code)
+					   AND slb.actual_qty > 0
+					 ORDER BY
+					   CASE WHEN COALESCE(wl.location_type,'') IN ('incoming','hold','staging','damaged') THEN 1 ELSE 0 END,
+					   slb.actual_qty DESC,
+					   wl.code
+					 LIMIT 1),
+					(SELECT pl.target_location
+					 FROM putaway_logs pl
+					 WHERE UPPER(pl.item_code) = UPPER(gl.item_code)
+					   AND NULLIF(BTRIM(pl.target_location),'') IS NOT NULL
+					 ORDER BY pl.placed_at DESC NULLS LAST, pl.id DESC
+					 LIMIT 1),
+					NULLIF(BTRIM(gl.route_location), ''),
+					''
+				) as route_location,
 				COALESCE(gc.status, 'pending') as box_status,
 				COALESCE(gc.condition, 'ok') as box_condition
 			FROM grn_lines gl

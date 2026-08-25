@@ -1,3 +1,4 @@
+import type { NavigateFunction } from 'react-router-dom'
 import {
   FLOOR_NAV,
   floorDeskPathsForRole,
@@ -50,6 +51,18 @@ export function homePathForSession(role?: string | null): string {
   if (isDeskRole(role)) return '/'
   const r = (role || '').toLowerCase()
   return FLOOR_HOME[r] || '/floor'
+}
+
+/**
+ * Route-level back: previous history entry when available, else session home.
+ * Avoids a dead-end when the page was opened in a new tab (history length ≤ 1).
+ */
+export function goBackOrHome(navigate: NavigateFunction, homePath: string) {
+  if (typeof window !== 'undefined' && window.history.length > 1) {
+    navigate(-1)
+    return
+  }
+  navigate(homePath)
 }
 
 export function canOpenPath(role: string | null | undefined, path: string) {

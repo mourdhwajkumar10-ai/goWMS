@@ -235,6 +235,30 @@ interface TruckSuggestion {
 
 const formatDate = (d: string) => d ? new Date(d).toLocaleDateString() : "-";
 
+type ManualRow = {
+  dealer_code: string; dealer_name: string; branch: string; invoice_no: string; invoice_date: string;
+  delivery_no: string; delivery_date: string; plant: string; box_no_from: string; box_no_to: string;
+  part_code: string; part_name: string; qty: string; unit_weight: string; box_number: string;
+};
+
+const EMPTY_MANUAL_ROW: ManualRow = {
+  dealer_code: "", dealer_name: "", branch: "", invoice_no: "", invoice_date: "",
+  delivery_no: "", delivery_date: "", plant: "", box_no_from: "", box_no_to: "",
+  part_code: "", part_name: "", qty: "", unit_weight: "", box_number: "",
+};
+
+const isDraftDeletable = (status?: string, boxesReceived?: number) => {
+  const s = (status || "").toLowerCase();
+  if (s !== "draft" && s !== "open") return false;
+  return !(Number(boxesReceived) > 0);
+};
+
+const manualRowsHaveContent = (rows: ManualRow[]) =>
+  rows.some((r) =>
+    r.part_code.trim() || r.part_name.trim() || r.box_number.trim() ||
+    r.box_no_from.trim() || r.box_no_to.trim() || (parseFloat(r.qty) || 0) > 0
+  );
+
 /* ─── Component ─── */
 
 export default function ReceivingManagement() {
@@ -286,8 +310,18 @@ export default function ReceivingManagement() {
 
   // Manual entry rows — all 15 fields
   const [entryMode, setEntryMode] = useState<"upload" | "manual">("upload");
-  const emptyRow = { dealer_code: "", dealer_name: "", branch: "", invoice_no: "", invoice_date: "", delivery_no: "", delivery_date: "", plant: "", box_no_from: "", box_no_to: "", part_code: "", part_name: "", qty: "", unit_weight: "", box_number: "" };
-  const [manualRows, setManualRows] = useState<typeof emptyRow[]>([{ ...emptyRow }]);
+  const emptyRow = EMPTY_MANUAL_ROW;
+  const [manualRows, setManualRows] = useState<ManualRow[]>([{ ...EMPTY_MANUAL_ROW }]);
+
+  // PO choice prompt (autopopulate vs upload)
+  const [poChoice, setPoChoice] = useState<{ id: number; name: string; supplier_name?: string } | null>(null);
+  const [poOverwriteAsk, setPoOverwriteAsk] = useState(false);
+  const [poAutofillLoading, setPoAutofillLoading] = useState(false);
+  const lastPoPromptedRef = useRef<number | null>(null);
+
+  // Delete draft packing list / GRN before receiving starts
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [grnSessions, setGrnSessions] = useState<any[]>([]);
 
@@ -502,6 +536,150 @@ export default function ReceivingManagement() {
     setManualRows((prev) => (prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev));
   }, []);
 
+  const resetUploadForm = useCallback(() => {
+    setPackingFile(null);
+    setImportSummary(null);
+    setShowPreview(false);
+    setParsedRows([]);
+    setSupplierName("");
+    setPoName("");
+    setPoFilter("");
+    setDriverName("");
+    setDriverPhone("");
+    setTransporter("");
+    setArrivalTime(new Date().toISOString().slice(0, 16));
+    setManualRows([{ ...EMPTY_MANUAL_ROW }]);
+    setEntryMode("upload");
+    setPoChoice(null);
+    setPoOverwriteAsk(false);
+    lastPoPromptedRef.current = null;
+    setError("");
+  }, []);
+
+  const uploadFormDirty = useMemo(() => {
+    return !!(
+      packingFile ||
+      supplierName.trim() ||
+      poName.trim() ||
+      driverName.trim() ||
+      transporter.trim() ||
+      manualRowsHaveContent(manualRows) ||
+      error
+    );
+  }, [packingFile, supplierName, poName, driverName, transporter, manualRows, error]);
+
+  const promptPoChoice = useCallback((po: { id: number; name: string; supplier_name?: string }, source: "select" | "blur") => {
+    const name = po.name || "";
+    setPoName(name);
+    if (po.supplier_name) setSupplierName(po.supplier_name);
+    setShowPoDropdown(false);
+    setPoFilter("");
+    if (source === "blur" && lastPoPromptedRef.current === po.id) return;
+    lastPoPromptedRef.current = po.id;
+    setPoOverwriteAsk(false);
+    setPoChoice({ id: po.id, name, supplier_name: po.supplier_name });
+  }, []);
+
+  const autofillFromPo = useCallback(async (po: { id: number; name: string; supplier_name?: string }, forceOverwrite: boolean) => {
+    if (!forceOverwrite && manualRowsHaveContent(manualRows)) {
+      setPoOverwriteAsk(true);
+      return;
+    }
+    setPoAutofillLoading(true);
+    setError("");
+    try {
+      const res = await api.poGet(po.id);
+      if (!res.ok || !res.data) {
+        setError(res.error || "Failed to load PO lines");
+        setPoAutofillLoading(false);
+        return;
+      }
+      const items = (res.data.items || []) as Array<{
+        item_code?: string; item_name?: string; qty?: number; received_qty?: number; batch_no?: string;
+      }>;
+      if (items.length === 0) {
+        setError("This PO has no line items to autofill");
+        setPoAutofillLoading(false);
+        return;
+      }
+      if (res.data.supplier_name) setSupplierName(String(res.data.supplier_name));
+      setPoName(res.data.name || po.name);
+
+      // Resolve carton/pack qty + weight from item master for each line.
+      const masterByCode = new Map<string, { pack_qty: number; weight: number; name: string }>();
+      await Promise.all(
+        items.map(async (it) => {
+          const code = String(it.item_code || "").trim();
+          if (!code || masterByCode.has(code.toUpperCase())) return;
+          const sr = await api.itemSuggest(code, 5);
+          if (!sr.ok || !sr.data?.length) return;
+          const found =
+            sr.data.find((i: any) => String(i.code).toUpperCase() === code.toUpperCase()) || sr.data[0];
+          const pack = Number(found.carton_qty ?? found.pack_qty ?? found.min_order_qty) || 0;
+          const weight = Number(found.weight_per_unit) || 0;
+          masterByCode.set(code.toUpperCase(), {
+            pack_qty: pack,
+            weight,
+            name: String(found.name || ""),
+          });
+        }),
+      );
+
+      const rows: ManualRow[] = items.map((it, lineIdx) => {
+        const ordered = Number(it.qty) || 0;
+        const received = Number(it.received_qty) || 0;
+        const remaining = Math.max(0, ordered - received);
+        const shipQty = remaining > 0 ? remaining : ordered;
+        const code = String(it.item_code || "");
+        const master = masterByCode.get(code.toUpperCase());
+        // Pack qty on the line: shippable PO qty, falling back to item-master carton/pack size.
+        const packQty = shipQty > 0 ? shipQty : (master && master.pack_qty > 0 ? master.pack_qty : 0);
+        return {
+          ...EMPTY_MANUAL_ROW,
+          part_code: code,
+          part_name: String(it.item_name || master?.name || ""),
+          qty: packQty > 0 ? String(packQty) : "",
+          unit_weight: master && master.weight > 0 ? String(master.weight) : "",
+          box_number: `C${String(lineIdx + 1).padStart(4, "0")}`,
+        };
+      });
+      setManualRows(rows.length ? rows : [{ ...EMPTY_MANUAL_ROW }]);
+      setEntryMode("manual");
+      setPoChoice(null);
+      setPoOverwriteAsk(false);
+      showFlash(`Autofilled ${rows.length} line(s) from ${res.data.name || po.name}`, "success");
+    } catch (e: any) {
+      setError(e.message || "Failed to load PO lines");
+    }
+    setPoAutofillLoading(false);
+  }, [manualRows]);
+
+  const chooseUploadForPo = useCallback(() => {
+    setEntryMode("upload");
+    setPoChoice(null);
+    setPoOverwriteAsk(false);
+  }, []);
+
+  const handleDeleteDraft = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const res = await api.packingListDelete(deleteTarget.id);
+      if (!res.ok) {
+        showFlash(res.error || "Failed to delete", "error");
+        setDeleting(false);
+        return;
+      }
+      showFlash(`Deleted ${deleteTarget.name}`, "success");
+      if (selectedList?.id === deleteTarget.id) setSelectedList(null);
+      setDeleteTarget(null);
+      loadGRNSessions();
+    } catch (e: any) {
+      showFlash(e.message || "Failed to delete", "error");
+    }
+    setDeleting(false);
+  }, [deleteTarget, selectedList?.id]);
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!packingFile) {
@@ -562,14 +740,8 @@ export default function ReceivingManagement() {
         "success"
       );
       loadGRNSessions();
+      resetUploadForm();
       setShowUpload(false);
-      setPackingFile(null);
-      setSupplierName("");
-      setPoName("");
-      setDriverName("");
-      setDriverPhone("");
-      setTransporter("");
-      setArrivalTime(new Date().toISOString().slice(0, 16));
     } catch (e: any) {
       setLoading(false);
       setError(e.message || "Failed to import");
@@ -722,22 +894,22 @@ export default function ReceivingManagement() {
   }, [filteredGRNs, grnPage]);
 
   // Manual entry column definitions
-  const manualCols: { key: keyof typeof emptyRow; label: string; placeholder: string; width?: number; type?: string }[] = [
-    { key: "dealer_code", label: "Dealer Code", placeholder: "D001" },
-    { key: "dealer_name", label: "Dealer", placeholder: "Dealer name" },
-    { key: "branch", label: "Branch", placeholder: "Main" },
-    { key: "invoice_no", label: "Invoice No", placeholder: "INV-0001" },
-    { key: "invoice_date", label: "Invoice Date", placeholder: "YYYY-MM-DD" },
-    { key: "delivery_no", label: "Delivery No", placeholder: "DEL-001" },
-    { key: "delivery_date", label: "Delivery Date", placeholder: "YYYY-MM-DD" },
-    { key: "plant", label: "Plant", placeholder: "P01" },
-    { key: "box_no_from", label: "Box From", placeholder: "1" },
-    { key: "box_no_to", label: "Box To", placeholder: "5" },
-    { key: "part_code", label: "Part Code", placeholder: "SP-0001" },
-    { key: "part_name", label: "Part Name", placeholder: "Part name" },
-    { key: "qty", label: "Qty", placeholder: "10", type: "number" },
-    { key: "unit_weight", label: "Weight (KG)", placeholder: "2.5", type: "number" },
-    { key: "box_number", label: "Box Number", placeholder: "C0001" },
+  const manualCols: { key: keyof ManualRow; label: string; placeholder: string; width?: number; type?: string }[] = [
+    { key: "dealer_code", label: "Dealer Code", placeholder: "D001", width: 100 },
+    { key: "dealer_name", label: "Dealer", placeholder: "Dealer name", width: 140 },
+    { key: "branch", label: "Branch", placeholder: "Main", width: 90 },
+    { key: "invoice_no", label: "Invoice No", placeholder: "INV-0001", width: 110 },
+    { key: "invoice_date", label: "Invoice Date", placeholder: "YYYY-MM-DD", width: 110 },
+    { key: "delivery_no", label: "Delivery No", placeholder: "DEL-001", width: 100 },
+    { key: "delivery_date", label: "Delivery Date", placeholder: "YYYY-MM-DD", width: 110 },
+    { key: "plant", label: "Plant", placeholder: "P01", width: 70 },
+    { key: "box_no_from", label: "Box From", placeholder: "1", width: 72 },
+    { key: "box_no_to", label: "Box To", placeholder: "5", width: 72 },
+    { key: "part_code", label: "Part Code", placeholder: "SP-0001", width: 110 },
+    { key: "part_name", label: "Part Name", placeholder: "Part name", width: 160 },
+    { key: "qty", label: "Pack Qty", placeholder: "10", type: "number", width: 88 },
+    { key: "unit_weight", label: "Weight (KG)", placeholder: "2.5", type: "number", width: 100 },
+    { key: "box_number", label: "Box Number", placeholder: "C0001", width: 100 },
   ];
 
   // Detail modal column definitions
@@ -748,10 +920,16 @@ export default function ReceivingManagement() {
     { key: "expected_qty", label: "Expected" },
     { key: "scanned_qty", label: "Scanned" },
     { key: "status", label: "Status" },
-    { key: "route_location", label: "Location" },
+    { key: "route_location", label: "Stock location" },
   ];
 
-  const closeUpload = useCallback(() => setShowUpload(false), []);
+  const closeUpload = useCallback(() => {
+    if (uploadFormDirty && !window.confirm("Discard this packing list draft? Unsaved delivery details and rows will be lost.")) {
+      return;
+    }
+    resetUploadForm();
+    setShowUpload(false);
+  }, [uploadFormDirty, resetUploadForm]);
   const closePreview = useCallback(() => {
     setShowPreview(false);
     setParsedRows([]);
@@ -760,12 +938,12 @@ export default function ReceivingManagement() {
   const closeDetail = useCallback(() => setSelectedList(null), []);
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div className="desk-page rw-dash-page">
       {/* Page Head */}
-      <div className="rw-page-head">
-        <div style={{ flex: 1 }}>
-          <div className="rw-page-title">📋 Receiving</div>
-          <div className="rw-page-sub">Upload, manage, and approve packing lists for receiving</div>
+      <div className="rw-page-head desk-page-head">
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="rw-page-title">Receiving</div>
+          <div className="rw-page-sub">Upload, manage, and approve packing lists</div>
         </div>
         <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           <button
@@ -787,7 +965,13 @@ export default function ReceivingManagement() {
       {error && <div className="rw-flash error">✕ {error}</div>}
 
       {/* Upload Modal */}
-      <ReceivingModal open={showUpload} onClose={closeUpload}>
+      <ReceivingModal
+        open={showUpload}
+        onClose={() => {
+          if (poChoice || deleteTarget) return;
+          closeUpload();
+        }}
+      >
             <div className="rw-modal-header">
               <div>
                 <h2>📦 Add Packing List</h2>
@@ -836,9 +1020,28 @@ export default function ReceivingManagement() {
                       className="rw-input"
                       placeholder="Type to search PO..."
                       value={poName}
-                      onChange={(e) => { setPoName(e.target.value); setPoFilter(e.target.value); setShowPoDropdown(true); }}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        setPoName(v);
+                        setPoFilter(v);
+                        setShowPoDropdown(true);
+                        if (lastPoPromptedRef.current != null) {
+                          const prev = poSuggestions.find((p: any) => p.id === lastPoPromptedRef.current);
+                          if (!prev || (prev.name || "") !== v) lastPoPromptedRef.current = null;
+                        }
+                      }}
                       onFocus={() => setShowPoDropdown(true)}
-                      onBlur={() => setTimeout(() => setShowPoDropdown(false), 200)}
+                      onBlur={() => {
+                        setTimeout(() => {
+                          setShowPoDropdown(false);
+                          const q = poName.trim().toLowerCase();
+                          if (!q) return;
+                          const match = poSuggestions.find(
+                            (p: any) => (p.name || "").toLowerCase() === q
+                          );
+                          if (match) promptPoChoice(match, "blur");
+                        }, 200);
+                      }}
                       autoComplete="off"
                     />
                     {showPoDropdown && poSuggestions.length > 0 && (
@@ -854,9 +1057,10 @@ export default function ReceivingManagement() {
                               style={{ textAlign: "left", padding: "8px 12px" }}
                               onMouseDown={(e) => {
                                 e.preventDefault();
-                                setPoName(p.name || "");
-                                if (p.supplier_name) setSupplierName(p.supplier_name);
-                                setShowPoDropdown(false);
+                                promptPoChoice(
+                                  { id: p.id, name: p.name || "", supplier_name: p.supplier_name || undefined },
+                                  "select"
+                                );
                               }}
                             >
                               <div style={{ fontWeight: 500 }}>{p.name}</div>
@@ -1043,11 +1247,11 @@ export default function ReceivingManagement() {
                   <>
                     <div className="rw-section-title" style={{ marginBottom: 12, marginTop: 20 }}>📝 Packing List Details</div>
                     <div style={{ overflowX: "auto" }}>
-                      <table className="erpnext-table" style={{ width: "100%", minWidth: 1200 }}>
+                      <table className="erpnext-table pl-manual-table" style={{ width: "100%" }}>
                         <thead>
                           <tr style={{ background: "var(--panel-2)" }}>
                             {manualCols.map((col) => (
-                              <th key={col.key} style={{ width: col.width || 100 }}>{col.label}</th>
+                              <th key={col.key} style={{ width: col.width || 100, minWidth: col.width || 80 }}>{col.label}</th>
                             ))}
                             <th style={{ width: 40 }}></th>
                           </tr>
@@ -1056,12 +1260,13 @@ export default function ReceivingManagement() {
                           {manualRows.map((row, idx) => (
                             <tr key={idx}>
                               {manualCols.map((col) => (
-                                <td key={col.key}>
+                                <td key={col.key} style={{ minWidth: col.width || 80 }}>
                                   <input
                                     className="rw-input"
-                                    style={{ padding: "4px 6px", fontSize: 13 }}
+                                    style={{ padding: col.type === "number" ? "4px 6px" : "4px 8px", fontSize: 13 }}
                                     placeholder={col.placeholder}
                                     type={col.type || "text"}
+                                    inputMode={col.type === "number" ? "decimal" : undefined}
                                     min={col.type === "number" ? "0" : undefined}
                                     step={col.type === "number" ? "any" : undefined}
                                     value={(row as any)[col.key]}
@@ -1091,8 +1296,17 @@ export default function ReceivingManagement() {
                 )}
               </div>
               <div className="rw-modal-footer">
-                <button type="button" className="rw-btn rw-btn-secondary" onClick={closeUpload}>
-                  Cancel
+                <button
+                  type="button"
+                  className="rw-btn rw-btn-secondary"
+                  onClick={() => {
+                    if (!uploadFormDirty || window.confirm("Discard this incomplete packing list? Unsaved details will be cleared.")) {
+                      resetUploadForm();
+                      setShowUpload(false);
+                    }
+                  }}
+                >
+                  {uploadFormDirty || error ? "Discard draft" : "Cancel"}
                 </button>
                 <button
                   type="submit"
@@ -1104,6 +1318,113 @@ export default function ReceivingManagement() {
                 </button>
               </div>
             </form>
+      </ReceivingModal>
+
+      {/* PO resolved → choose autopopulate vs upload */}
+      <ReceivingModal
+        open={!!poChoice}
+        onClose={() => { setPoChoice(null); setPoOverwriteAsk(false); }}
+        width={440}
+      >
+        <div className="rw-modal-header">
+          <div>
+            <h2>How to add packing list?</h2>
+            <div style={{ fontSize: 13, color: "var(--rw-text-dim)", marginTop: 4 }}>
+              PO <strong>{poChoice?.name}</strong>
+              {poChoice?.supplier_name ? ` · ${poChoice.supplier_name}` : ""}
+            </div>
+          </div>
+          <button
+            className="rw-modal-close"
+            type="button"
+            onClick={() => { setPoChoice(null); setPoOverwriteAsk(false); }}
+          >
+            ✕
+          </button>
+        </div>
+        <div className="rw-modal-body" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {poOverwriteAsk ? (
+            <div style={{ padding: 12, background: "var(--panel-2)", borderRadius: 8, fontSize: 14 }}>
+              Manual entry already has rows. Overwrite them with lines from this PO?
+            </div>
+          ) : (
+            <div style={{ fontSize: 14, color: "var(--rw-text-dim)" }}>
+              Autofill packing-list lines from the PO, or switch to Excel upload. Supplier is kept linked either way.
+            </div>
+          )}
+          {poAutofillLoading && (
+            <div style={{ fontSize: 13, color: "var(--rw-text-dim)" }}>Loading PO lines…</div>
+          )}
+        </div>
+        <div className="rw-modal-footer" style={{ flexWrap: "wrap", gap: 8 }}>
+          <button
+            type="button"
+            className="rw-btn rw-btn-secondary"
+            disabled={poAutofillLoading}
+            onClick={() => { setPoChoice(null); setPoOverwriteAsk(false); }}
+          >
+            Cancel
+          </button>
+          {!poOverwriteAsk && (
+            <button
+              type="button"
+              className="rw-btn rw-btn-secondary"
+              disabled={poAutofillLoading || !poChoice}
+              onClick={chooseUploadForPo}
+            >
+              Upload packing list
+            </button>
+          )}
+          {poOverwriteAsk && (
+            <button
+              type="button"
+              className="rw-btn rw-btn-secondary"
+              disabled={poAutofillLoading}
+              onClick={() => setPoOverwriteAsk(false)}
+            >
+              Back
+            </button>
+          )}
+          <button
+            type="button"
+            className="rw-btn rw-btn-primary"
+            disabled={poAutofillLoading || !poChoice}
+            onClick={() => poChoice && autofillFromPo(poChoice, poOverwriteAsk)}
+          >
+            {poOverwriteAsk ? "Overwrite & autofill" : "Autopopulate from PO"}
+          </button>
+        </div>
+      </ReceivingModal>
+
+      {/* Confirm delete draft packing list / GRN */}
+      <ReceivingModal
+        open={!!deleteTarget}
+        onClose={() => !deleting && setDeleteTarget(null)}
+        width={420}
+      >
+        <div className="rw-modal-header">
+          <div>
+            <h2>Delete draft?</h2>
+            <div style={{ fontSize: 13, color: "var(--rw-text-dim)", marginTop: 4 }}>
+              {deleteTarget?.name} — this cannot be undone. Only draft/open sessions with no receiving progress can be deleted.
+            </div>
+          </div>
+          <button className="rw-modal-close" type="button" disabled={deleting} onClick={() => setDeleteTarget(null)}>✕</button>
+        </div>
+        <div className="rw-modal-footer">
+          <button type="button" className="rw-btn rw-btn-secondary" disabled={deleting} onClick={() => setDeleteTarget(null)}>
+            Keep
+          </button>
+          <button
+            type="button"
+            className="rw-btn"
+            style={{ background: "#dc3545", color: "#fff", border: "none" }}
+            disabled={deleting}
+            onClick={handleDeleteDraft}
+          >
+            {deleting ? "Deleting…" : "Delete draft"}
+          </button>
+        </div>
       </ReceivingModal>
 
       {/* ═══ Preview Modal — 15 columns ═══ */}
@@ -1274,13 +1595,14 @@ export default function ReceivingManagement() {
             </div>
       </ReceivingModal>
 
-      {/* Status filter + Search bar on top */}
-      <div className="rw-card" style={{ marginBottom: 16 }}>
-        <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+      {/* ═══ GRN Sessions — filter + table in one viewport card ═══ */}
+      <div className="rw-card desk-list-card">
+        <div className="desk-filter-bar">
           <select
-            className="rw-select"
+            className="rw-select desk-filter-status"
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setGrnPage(1); }}
+            aria-label="Filter by status"
           >
             <option value="all">All Status</option>
             <option value="open">Open</option>
@@ -1288,33 +1610,30 @@ export default function ReceivingManagement() {
             <option value="pending_approval">Pending Approval</option>
             <option value="ready_to_receive">Ready to Receive</option>
             <option value="receiving">Receiving</option>
+            <option value="putaway_pending">Putaway Pending</option>
             <option value="completed">Completed</option>
             <option value="closed">Closed</option>
           </select>
           <input
-            className="rw-input"
-            placeholder="Search GRN, packing list, PO, supplier..."
+            className="rw-input desk-filter-search"
+            placeholder="Search GRN, packing list, PO, supplier…"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setGrnPage(1); }}
-            style={{ flex: 1, minWidth: 220 }}
+            aria-label="Search sessions"
           />
-          <span className="text-sm" style={{ color: "var(--text-dim)" }}>
+          <span className="desk-filter-meta">
             {filteredGRNs.length} sessions
           </span>
         </div>
-      </div>
-      {/* ═══ GRN Sessions Table ═══ */}
-      <div className="rw-card">
-        <div className="rw-section-title">GRN Sessions</div>
+        <div className="desk-section-label">GRN Sessions</div>
           {filteredGRNs.length === 0 ? (
             <div className="rw-empty-state">
-              <div className="rw-empty-icon">🗂</div>
               <div className="rw-empty-title">No GRN sessions found</div>
               <div className="rw-empty-msg">{search ? "Try a different search" : "Sessions appear here once receiving starts"}</div>
             </div>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="erpnext-table" style={{ width: "100%" }}>
+            <div className="desk-table-scroll">
+              <table className="erpnext-table desk-table" style={{ width: "100%" }}>
                 <thead>
                   <tr style={{ background: "var(--panel-2)" }}>
                     <th>PO</th>
@@ -1369,6 +1688,19 @@ export default function ReceivingManagement() {
                               className="erpnext-btn-primary text-xs"
                             >
                               Open RF
+                            </button>
+                          )}
+                          {isDraftDeletable(s.status, s.boxes_received) && (
+                            <button
+                              type="button"
+                              className="erpnext-btn-secondary text-xs"
+                              style={{ color: "#dc3545" }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteTarget({ id: s.id, name: s.session_no || s.packing_list_no || `Session #${s.id}` });
+                              }}
+                            >
+                              Delete
                             </button>
                           )}
                         </div>
@@ -1571,7 +1903,7 @@ export default function ReceivingManagement() {
                         </select>
                       </th>
                       <th style={{ width: 130 }}>
-                        <span className="pl-th-label">Location</span>
+                        <span className="pl-th-label">Stock location</span>
                         <input
                           className="rw-col-filter"
                           placeholder="Filter..."
@@ -1648,6 +1980,19 @@ export default function ReceivingManagement() {
                   onClick={() => navigate(`/receiving?packing_list_id=${selectedList.id}`)}
                 >
                   Open RF
+                </button>
+              )}
+              {isDraftDeletable(selectedList.status) && (
+                <button
+                  type="button"
+                  className="rw-btn rw-btn-secondary"
+                  style={{ color: "#dc3545" }}
+                  onClick={() => setDeleteTarget({
+                    id: selectedList.id,
+                    name: selectedList.name || selectedList.packing_list_no || `Session #${selectedList.id}`,
+                  })}
+                >
+                  Delete draft
                 </button>
               )}
               <button className="rw-btn rw-btn-secondary" onClick={closeDetail}>

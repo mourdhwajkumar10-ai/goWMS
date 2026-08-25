@@ -54,7 +54,7 @@ export default function Suppliers() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Suppliers</h1>

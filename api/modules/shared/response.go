@@ -10,12 +10,18 @@ func OK(c *fiber.Ctx, data any) error {
 	})
 }
 
-// Err responds with an error payload: {"error": ..., "ok": false}
+// Err writes {"error": msg, "ok": false} and returns a non-nil *fiber.Error.
+// Callers must return this (or check it) so nested flows like finalize→doCloseSession
+// stop instead of treating a successful JSON write as success (nil).
+// The app ErrorHandler skips rewriting when the body was already sent.
 func Err(c *fiber.Ctx, status int, msg string) error {
-	return c.Status(status).JSON(fiber.Map{
+	if err := c.Status(status).JSON(fiber.Map{
 		"error": msg,
 		"ok":    false,
-	})
+	}); err != nil {
+		return err
+	}
+	return fiber.NewError(status, msg)
 }
 
 // Bind parses the JSON body into v, returning a friendly 400 on failure.

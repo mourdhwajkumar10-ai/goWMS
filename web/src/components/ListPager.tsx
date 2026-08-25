@@ -1,22 +1,26 @@
+import type { ReactNode } from 'react'
 import type { ClientPager } from '../hooks/useClientPager'
 
 type Props = {
   pager: ClientPager
   placeholder?: string
   className?: string
+  /** Optional controls before search (status chips, selects) — stays on same row */
+  leading?: ReactNode
 }
 
-export default function ListPager({ pager, placeholder = 'Search…', className }: Props) {
+export default function ListPager({ pager, placeholder = 'Search…', className, leading }: Props) {
   return (
-    <div className={`list-pager ${className || ''}`}>
+    <div className={`list-pager desk-filter-bar ${className || ''}`}>
+      {leading}
       <input
-        className="erpnext-input text-sm list-pager-search"
+        className="erpnext-input text-sm list-pager-search desk-filter-search"
         value={pager.q}
         onChange={(e) => pager.setQ(e.target.value)}
         placeholder={placeholder}
         aria-label={placeholder}
       />
-      <div className="list-pager-meta">
+      <div className="list-pager-meta desk-filter-meta">
         <span>
           {pager.total === 0 ? '0' : `${pager.from}–${pager.to}`} of {pager.total}
           {' · '}{pager.pageSize} / page

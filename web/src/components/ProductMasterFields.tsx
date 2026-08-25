@@ -231,6 +231,17 @@ export default function ProductMasterFields({
           </select>
         </div>
         <div>
+          <label className="erpnext-label">Pack qty (carton)</label>
+          <input
+            className="erpnext-input"
+            type="number"
+            min={0}
+            value={form.carton_qty ?? ''}
+            onChange={e => set('carton_qty', e.target.value)}
+            placeholder="Units per pack / carton"
+          />
+        </div>
+        <div>
           <label className="erpnext-label">Control mode *</label>
           <select className="erpnext-input" value={form.control_mode || 'item_controlled'} onChange={e => set('control_mode', e.target.value)}>
             <option value="item_controlled">Item controlled</option>
@@ -246,12 +257,6 @@ export default function ProductMasterFields({
                 <option key={l.id} value={l.id}>{l.warehouse_code} / {l.code}</option>
               ))}
             </select>
-          </div>
-        )}
-        {form.pack_type === 'packed' && (
-          <div>
-            <label className="erpnext-label">Carton qty</label>
-            <input className="erpnext-input" type="number" value={form.carton_qty ?? ''} onChange={e => set('carton_qty', e.target.value)} />
           </div>
         )}
         <div>

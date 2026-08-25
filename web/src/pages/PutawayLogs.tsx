@@ -80,84 +80,82 @@ export default function PutawayLogs() {
 
   return (
     <div className="desk-page">
-      <div className="desk-head">
-        <h1>Putaway Logs</h1>
+      <div className="page-head desk-page-head">
+        <div>
+          <h1 className="page-title">Putaway Logs</h1>
+          <p className="page-sub">Filter and review putaway history</p>
+        </div>
       </div>
 
-      {/* Filters */}
-      <div style={{
-        display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16,
-        padding: 16, background: 'var(--pw-bg, #fff)', borderRadius: 12, border: '1px solid var(--pw-border, #e5e7eb)'
-      }}>
-        <div style={{ flex: '1 1 140px' }}>
-          <label className="erpnext-label" style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Item Code</label>
-          <input
-            className="erpnext-input"
-            value={itemCode}
-            onChange={e => setItemCode(e.target.value)}
-            placeholder="Search item..."
-            onKeyDown={e => e.key === 'Enter' && handleSearch()}
-          />
-        </div>
-        <div style={{ flex: '1 1 120px' }}>
-          <label className="erpnext-label" style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>User ID</label>
-          <input
-            className="erpnext-input"
-            type="number"
-            value={userId || ''}
-            onChange={e => setUserId(Number(e.target.value) || 0)}
-            placeholder="User ID"
-          />
-        </div>
-        <div style={{ flex: '1 1 120px' }}>
-          <label className="erpnext-label" style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Date From</label>
-          <input
-            className="erpnext-input"
-            type="date"
-            value={dateFrom}
-            onChange={e => setDateFrom(e.target.value)}
-          />
-        </div>
-        <div style={{ flex: '1 1 120px' }}>
-          <label className="erpnext-label" style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Date To</label>
-          <input
-            className="erpnext-input"
-            type="date"
-            value={dateTo}
-            onChange={e => setDateTo(e.target.value)}
-          />
-        </div>
-        <div style={{ flex: '1 1 140px' }}>
-          <label className="erpnext-label" style={{ fontSize: 12, fontWeight: 600, display: 'block', marginBottom: 4 }}>Exception</label>
-          <select
-            className="erpnext-input"
-            value={exceptionType}
-            onChange={e => setExceptionType(e.target.value)}
-          >
-            <option value="">All</option>
-            <option value="bin_full">Bin Full</option>
-            <option value="mixed_items">Mixed Items</option>
-            <option value="capacity_exceeded">Capacity Exceeded</option>
-          </select>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+      <div className="erpnext-card desk-list-card">
+        <div className="desk-filter-bar" style={{ padding: '8px 12px' }}>
+          <div className="desk-field-inline">
+            <label className="erpnext-label">Item</label>
+            <input
+              className="erpnext-input"
+              value={itemCode}
+              onChange={e => setItemCode(e.target.value)}
+              placeholder="Item code"
+              onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            />
+          </div>
+          <div className="desk-field-inline">
+            <label className="erpnext-label">User</label>
+            <input
+              className="erpnext-input"
+              type="number"
+              value={userId || ''}
+              onChange={e => setUserId(Number(e.target.value) || 0)}
+              placeholder="ID"
+            />
+          </div>
+          <div className="desk-field-inline">
+            <label className="erpnext-label">From</label>
+            <input
+              className="erpnext-input"
+              type="date"
+              value={dateFrom}
+              onChange={e => setDateFrom(e.target.value)}
+            />
+          </div>
+          <div className="desk-field-inline">
+            <label className="erpnext-label">To</label>
+            <input
+              className="erpnext-input"
+              type="date"
+              value={dateTo}
+              onChange={e => setDateTo(e.target.value)}
+            />
+          </div>
+          <div className="desk-field-inline">
+            <label className="erpnext-label">Exception</label>
+            <select
+              className="erpnext-input"
+              value={exceptionType}
+              onChange={e => setExceptionType(e.target.value)}
+            >
+              <option value="">All</option>
+              <option value="bin_full">Bin Full</option>
+              <option value="mixed_items">Mixed Items</option>
+              <option value="capacity_exceeded">Capacity Exceeded</option>
+            </select>
+          </div>
           <ButtonPress className="erpnext-btn-primary" onClick={handleSearch}>
             Search
           </ButtonPress>
         </div>
-      </div>
 
       {/* Table */}
-      <div style={{
-        background: 'var(--pw-bg, #fff)', borderRadius: 12, border: '1px solid var(--pw-border, #e5e7eb)',
-        overflow: 'hidden', marginBottom: 16
+      <div className="desk-table-scroll" style={{
+        borderTop: '1px solid var(--pw-border, #e5e7eb)',
+        overflow: 'auto',
       }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <table className="desk-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '2px solid var(--pw-border, #e5e7eb)' }}>
               {['Log #', 'Item', 'Qty', 'From', 'To', 'By', 'When', 'Exception'].map(h => (
                 <th key={h} style={{
-                  textAlign: 'left', padding: '10px 12px', fontWeight: 600,
+                  textAlign: 'left', padding: '8px 12px', fontWeight: 600,
                   color: 'var(--pw-text-dim, #6b7280)', fontSize: 11, textTransform: 'uppercase',
                   letterSpacing: '0.5px', background: 'var(--pw-bg-2, #f9fafb)'
                 }}>{h}</th>
@@ -229,7 +227,7 @@ export default function PutawayLogs() {
       {/* Pagination */}
       {pagination.total_pages > 1 && (
         <div style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, marginBottom: 16
+          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '8px 12px'
         }}>
           <ButtonPress
             className="erpnext-btn-secondary"
@@ -250,6 +248,7 @@ export default function PutawayLogs() {
           </ButtonPress>
         </div>
       )}
+      </div>
 
       {/* Detail Modal */}
       {selectedLog && (

@@ -158,6 +158,7 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onComm
         ref={anchorRef as React.RefObject<HTMLInputElement>}
         className={className || 'erpnext-input text-sm w-full'}
         value={query}
+        title={query.length > 18 ? query : undefined}
         onChange={e => handleChange(e.target.value)}
         onFocus={() => search(query, true)}
         onClick={() => search(query, true)}

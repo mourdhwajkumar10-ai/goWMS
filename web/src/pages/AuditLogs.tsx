@@ -29,7 +29,7 @@ export default function AuditLogs() {
   const pager = useClientPager(rows)
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div>
         <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Transaction Logs</h1>
         <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>

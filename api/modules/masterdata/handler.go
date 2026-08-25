@@ -90,7 +90,8 @@ func suggestItems(db *pgxpool.Pool) fiber.Handler {
 		rows, err := db.Query(c.Context(), `
 			SELECT id, code, name, COALESCE(brand,''), COALESCE(barcode,''),
 			       COALESCE(mrp,0), COALESCE(standard_rate,0), COALESCE(valuation_rate,0),
-			       COALESCE(description,''), COALESCE(uom,'Nos'), COALESCE(min_order_qty,0)
+			       COALESCE(description,''), COALESCE(uom,'Nos'), COALESCE(min_order_qty,0),
+			       COALESCE(carton_qty,0), COALESCE(weight_per_unit,0)
 			FROM items
 			WHERE disabled=false
 			  AND (
@@ -114,16 +115,17 @@ func suggestItems(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 		out := make([]fiber.Map, 0, limit)
 		for rows.Next() {
-			var id int
+			var id, cartonQty int
 			var code, name, brand, barcode, description, uom string
-			var mrp, rate, valuation, moq float64
-			if err := rows.Scan(&id, &code, &name, &brand, &barcode, &mrp, &rate, &valuation, &description, &uom, &moq); err != nil {
+			var mrp, rate, valuation, moq, weightPerUnit float64
+			if err := rows.Scan(&id, &code, &name, &brand, &barcode, &mrp, &rate, &valuation, &description, &uom, &moq, &cartonQty, &weightPerUnit); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": id, "code": code, "name": name, "brand": brand, "barcode": barcode,
 				"mrp": mrp, "standard_rate": rate, "valuation_rate": valuation,
 				"description": description, "uom": uom, "min_order_qty": moq,
+				"carton_qty": cartonQty, "pack_qty": cartonQty, "weight_per_unit": weightPerUnit,
 			})
 		}
 		return shared.OK(c, out)

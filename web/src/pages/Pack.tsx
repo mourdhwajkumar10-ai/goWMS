@@ -1,11 +1,16 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
+import { ArrowLeft, Package, Plus, ScanLine } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
+import CameraScanner from '../components/CameraScanner'
 import Comments from '../components/Comments'
+import RfShell from '../components/RfShell'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
 
 interface Box {
   id: number
@@ -25,10 +30,12 @@ interface BoxItem {
 }
 
 export default function Pack() {
+  const rf = useRfUi()
   const [searchParams] = useSearchParams()
   const [boxes, setBoxes] = useState<Box[]>([])
   const [selectedBox, setSelectedBox] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
+  const [showCreate, setShowCreate] = useState(false)
   const [msg, setMsg] = useState('')
 
   const [label, setLabel] = useState('')
@@ -42,6 +49,7 @@ export default function Pack() {
   const loadBoxes = () => api.packSessions().then(r => { if (r.ok) setBoxes(r.data ?? []) })
   useEffect(() => { loadBoxes() }, [])
   const pager = useClientPager(boxes)
+  const rfBoxMore = useLoadMore(boxes, 10, boxes.length)
   useEffect(() => {
     const fromUrl = searchParams.get('pick_list_id')
     if (fromUrl) setPickListId(fromUrl)
@@ -56,6 +64,7 @@ export default function Pack() {
     if (r.ok) {
       setMsg(`Box ${r.data.label} created`)
       setLabel(''); setPickListId(''); setDeliveryNote('')
+      setShowCreate(false)
       loadBoxes()
       notify({ type: 'success', title: 'Box Created', message: r.data.label })
     }
@@ -119,8 +128,220 @@ export default function Pack() {
     }
   }
 
+  if (rf) {
+    const itemCount = selectedBox?.items?.length ?? 0
+    return (
+      <RfShell
+        title="Packing"
+        meta={selectedBox ? selectedBox.label : undefined}
+        stat={selectedBox ? String(itemCount) : undefined}
+        statOf={selectedBox ? ' items' : undefined}
+      >
+        {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+
+        {!selectedBox ? (
+          <>
+            <div className="scan-bottom-bar">
+              <button
+                type="button"
+                className="scan-btn scan-btn-primary"
+                style={{ flex: 1 }}
+                onClick={() => setShowCreate(!showCreate)}
+              >
+                <Plus size={16} /> {showCreate ? 'Cancel' : 'Create box'}
+              </button>
+            </div>
+
+            {showCreate && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">Create box</div>
+                <input
+                  className="scan-count-input"
+                  style={{ fontSize: 16, minHeight: 48, textAlign: 'left' }}
+                  value={label}
+                  onChange={e => setLabel(e.target.value)}
+                  placeholder="Box label *"
+                />
+                <input
+                  className="scan-count-input"
+                  style={{ fontSize: 16, minHeight: 48, textAlign: 'left' }}
+                  type="number"
+                  value={pickListId}
+                  onChange={e => setPickListId(e.target.value)}
+                  placeholder="Pick list ID"
+                />
+                <input
+                  className="scan-count-input"
+                  style={{ fontSize: 16, minHeight: 48, textAlign: 'left' }}
+                  value={deliveryNote}
+                  onChange={e => setDeliveryNote(e.target.value)}
+                  placeholder="Delivery note"
+                />
+                <button type="button" className="scan-btn scan-btn-primary" onClick={() => void createBox()} disabled={!label.trim()}>
+                  Create box
+                </button>
+              </div>
+            )}
+
+            {msg && (
+              <div className="scan-section-card" style={{ color: 'var(--green)', fontSize: 13 }}>
+                {msg}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {rfBoxMore.visible.map(b => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className="scan-select-card"
+                  onClick={() => openBox(b.id)}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                >
+                  <div className="scan-select-card-title">{b.label}</div>
+                  <div className="scan-select-card-sub">
+                    {b.pick_list_id ? `PL #${b.pick_list_id}` : 'No pick list'}
+                    {b.delivery_note ? ` · ${b.delivery_note}` : ''}
+                  </div>
+                  <div className="scan-select-card-meta">
+                    <span>{b.loaded ? 'loaded' : 'open'}</span>
+                    <span>{(b as any).total_items ?? 0} items</span>
+                    <span style={{ color: 'var(--primary)' }}>Open to scan →</span>
+                  </div>
+                </button>
+              ))}
+              {rfBoxMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfBoxMore.loadMore}>
+                  Load more ({rfBoxMore.remaining} left)
+                </button>
+              )}
+              {boxes.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No boxes yet</p>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: 13, marginBottom: 12, lineHeight: 1.4 }}>
+                    Create a box, then open it to scan and pack items.
+                  </p>
+                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => setShowCreate(true)}>
+                    <Plus size={16} /> Create box
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="scan-btn scan-btn-outline"
+              onClick={() => setSelectedBox(null)}
+              style={{ alignSelf: 'flex-start', width: 'auto' }}
+            >
+              <ArrowLeft size={16} strokeWidth={1.8} /> Back to boxes
+            </button>
+
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{selectedBox.label}</div>
+              <div className="scan-select-card-sub">
+                Pick list: {selectedBox.pick_list_id || '—'} · DN: {selectedBox.delivery_note || '—'}
+              </div>
+            </div>
+
+            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
+              <CameraScanner
+                open
+                embedded
+                minimal
+                continuous
+                onClose={() => {}}
+                onScan={(code) => {
+                  const clean = String(code || '').trim()
+                  if (!clean) return
+                  setPackItem(clean)
+                }}
+              />
+            </div>
+
+            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+              <div className="scan-input-chip">
+                <Package size={16} strokeWidth={1.8} />
+                <input
+                  value={packItem}
+                  onChange={e => setPackItem(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void packIntoBox() } }}
+                  placeholder="Item code…"
+                  autoComplete="off"
+                />
+                <button
+                  type="button"
+                  className="scan-icon-btn"
+                  style={{ width: 36, height: 36 }}
+                  onClick={() => setShowScanner(true)}
+                  aria-label="Scan item"
+                >
+                  <ScanLine size={16} />
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="scan-count-input"
+                  style={{ width: 88, minHeight: 48, fontSize: 18 }}
+                  type="number"
+                  value={packQty}
+                  onChange={e => setPackQty(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void packIntoBox() } }}
+                  placeholder="Qty"
+                />
+                <input
+                  className="scan-count-input"
+                  style={{ flex: 1, minHeight: 48, fontSize: 16, textAlign: 'left' }}
+                  value={packBatch}
+                  onChange={e => setPackBatch(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void packIntoBox() } }}
+                  placeholder="Batch"
+                />
+              </div>
+              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void packIntoBox()} disabled={!packItem.trim()}>
+                Log pack
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(selectedBox.items || []).map((bi: BoxItem) => (
+                <div key={bi.id} className="scan-row">
+                  <div className="scan-row-check done">✓</div>
+                  <div className="scan-row-info">
+                    <div className="scan-row-code">{bi.item_code}</div>
+                    <div className="scan-row-desc">{bi.batch_no || 'no batch'}</div>
+                  </div>
+                  <div className="scan-row-meta">
+                    <div className="scan-row-qty">{bi.quantity}</div>
+                    <div className="scan-row-label">qty</div>
+                  </div>
+                </div>
+              ))}
+              {(!selectedBox.items || selectedBox.items.length === 0) && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>Nothing packed yet</p>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: 13, lineHeight: 1.4 }}>
+                    Scan an item above, set qty, then tap Log pack.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {!selectedBox.loaded && (
+              <button type="button" className="scan-btn scan-btn-outline" onClick={() => void markLoaded(selectedBox.id)}>
+                Mark loaded
+              </button>
+            )}
+          </>
+        )}
+      </RfShell>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
       <div className="flex items-center justify-between">
@@ -166,37 +387,39 @@ export default function Pack() {
               <h3 className="font-semibold">Boxes</h3>
               <ListPager pager={pager} placeholder="Search boxes…" />
             </div>
-            <table className="erpnext-table">
-              <thead>
-                <tr><th>ID</th><th>Label</th><th>Pick List</th><th>Delivery Note</th><th>Items</th><th>Loaded</th><th>Created</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map(b => (
-                  <tr key={b.id}>
-                    <td>{b.id}</td>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openBox(b.id)}>{b.label}</td>
-                    <td>{b.pick_list_id || '—'}</td>
-                    <td>{b.delivery_note || '—'}</td>
-                    <td>{(b as any).total_items ?? 0}</td>
-                    <td>
-                      <span className={`erpnext-badge ${b.loaded ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
-                        {b.loaded ? 'loaded' : 'not loaded'}
-                      </span>
-                    </td>
-                    <td>{new Date(b.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <div className="flex gap-1">
-                        <button onClick={() => openBox(b.id)} className="erpnext-btn-secondary text-xs">Open</button>
-                        {!b.loaded && (
-                          <button onClick={() => markLoaded(b.id)} className="erpnext-btn-primary text-xs">Mark Loaded</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {pager.total === 0 && <tr><td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No boxes</td></tr>}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="erpnext-table">
+                <thead>
+                  <tr><th>ID</th><th>Label</th><th>Pick List</th><th>Delivery Note</th><th>Items</th><th>Loaded</th><th>Created</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map(b => (
+                    <tr key={b.id}>
+                      <td>{b.id}</td>
+                      <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openBox(b.id)}>{b.label}</td>
+                      <td>{b.pick_list_id || '—'}</td>
+                      <td>{b.delivery_note || '—'}</td>
+                      <td>{(b as any).total_items ?? 0}</td>
+                      <td>
+                        <span className={`erpnext-badge ${b.loaded ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
+                          {b.loaded ? 'loaded' : 'not loaded'}
+                        </span>
+                      </td>
+                      <td>{new Date(b.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <div className="flex gap-1">
+                          <button onClick={() => openBox(b.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                          {!b.loaded && (
+                            <button onClick={() => markLoaded(b.id)} className="erpnext-btn-primary text-xs">Mark Loaded</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && <tr><td colSpan={8} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No boxes</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       ) : (
@@ -266,20 +489,22 @@ export default function Pack() {
             {selectedBox.items && selectedBox.items.length > 0 && (
               <div className="mt-4">
                 <h4 className="font-medium text-sm mb-2">Packed Items ({selectedBox.items.length})</h4>
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>Item</th><th>Quantity</th><th>Batch</th></tr>
-                  </thead>
-                  <tbody>
-                    {selectedBox.items.map((bi: BoxItem) => (
-                      <tr key={bi.id}>
-                        <td className="font-medium">{bi.item_code}</td>
-                        <td>{bi.quantity}</td>
-                        <td>{bi.batch_no || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="erpnext-table text-sm">
+                    <thead>
+                      <tr><th>Item</th><th>Quantity</th><th>Batch</th></tr>
+                    </thead>
+                    <tbody>
+                      {selectedBox.items.map((bi: BoxItem) => (
+                        <tr key={bi.id}>
+                          <td className="font-medium">{bi.item_code}</td>
+                          <td>{bi.quantity}</td>
+                          <td>{bi.batch_no || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

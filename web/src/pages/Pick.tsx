@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ArrowLeft, CheckSquare, MapPin, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
@@ -7,7 +8,15 @@ import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
 import { parsePackedItemQR } from '../utils/parsePackedQR'
+import { PageHead } from '../components/desktop/PageHead'
+import { Badge, statusToVariant } from '../components/ui/Badge'
+import { Button } from '../components/ui/Button'
+import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
+import CameraScanner from '../components/CameraScanner'
+import '../styles/scanner.css'
 
 interface PickList {
   id: number
@@ -39,6 +48,8 @@ interface PickItem {
 }
 
 export default function Pick() {
+  const rf = useRfUi()
+  const { toasts } = useScannerToasts()
   const [lists, setLists] = useState<PickList[]>([])
   const [warehouses, setWarehouses] = useState<any[]>([])
   const [selectedList, setSelectedList] = useState<any>(null)
@@ -46,6 +57,7 @@ export default function Pick() {
   const [msg, setMsg] = useState('')
   const [showScanner, setShowScanner] = useState(false)
   const [scanTarget, setScanTarget] = useState<'item' | 'bin'>('item')
+  const [rfQuery, setRfQuery] = useState('')
 
   const [salesOrder, setSalesOrder] = useState('')
   const [customer, setCustomer] = useState('')
@@ -216,36 +228,280 @@ export default function Pick() {
     }
   }
 
-  const statusBadge = (status: string) => {
-    const cls = status === 'completed' || status === 'picked' || status === 'delivered' ? 'erpnext-badge-green' :
-                status === 'in_progress' || status === 'open' ? 'erpnext-badge-blue' :
-                status === 'shortage' ? 'erpnext-badge-red' :
-                'erpnext-badge-yellow'
-    return <span className={`erpnext-badge ${cls}`}>{status}</span>
-  }
+  const statusBadge = (status: string) => <Badge variant={statusToVariant(status)}>{status}</Badge>
 
   const fefoBadge = (badge?: string | null) => {
     if (!badge || badge === 'ok') return null
-    const cls = badge === 'expired' ? 'erpnext-badge-red' : 'erpnext-badge-yellow'
-    return <span className={`erpnext-badge ${cls} ml-1`}>{badge}</span>
+    return <Badge variant={badge === 'expired' ? 'red' : 'yellow'} className="ml-1">{badge}</Badge>
+  }
+
+  const pickedStat = selectedList
+    ? `${selectedList.picked_qty ?? 0}`
+    : String(lists.filter(l => (l.status || '').toLowerCase() === 'completed').length)
+  const pickedOf = selectedList ? `/ ${selectedList.total_qty ?? 0}` : undefined
+
+  const rfLists = pager.filtered.filter(l => {
+    const q = rfQuery.trim().toLowerCase()
+    if (!q) return true
+    return `${l.name} ${l.sales_order_no || ''} ${l.customer || ''} ${l.status || ''}`.toLowerCase().includes(q)
+  })
+  const rfListMore = useLoadMore(rfLists, 10, `${rfQuery}|${rfLists.length}`)
+
+  if (rf) {
+    return (
+      <ScannerLayout
+        title="Picking"
+        stat={pickedStat}
+        statOf={pickedOf}
+        meta={selectedList ? selectedList.name : undefined}
+        hideHeader={false}
+      >
+        <ScannerToastBar toasts={toasts} />
+        {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+
+        {!selectedList ? (
+          <>
+            <div className="scan-bottom-bar">
+              <div className="scan-input-chip">
+                <Search size={16} strokeWidth={1.8} />
+                <input
+                  type="search"
+                  value={rfQuery}
+                  onChange={e => setRfQuery(e.target.value)}
+                  placeholder="Search pick lists…"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                className="scan-icon-btn primary"
+                onClick={() => { setShowNew(!showNew); setShowWave(false) }}
+                aria-label="New pick list"
+              >
+                <Plus size={18} strokeWidth={1.8} />
+              </button>
+            </div>
+
+            {showNew && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">New pick list</div>
+                <input className="scan-count-input" value={salesOrder} onChange={e => setSalesOrder(e.target.value)} placeholder="Sales order" />
+                <input className="scan-count-input" value={customer} onChange={e => setCustomer(e.target.value)} placeholder="Customer" />
+                <select className="scan-count-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+                  <option value="">Default warehouse</option>
+                  {warehouses.map((w: any) => (
+                    <option key={w.id} value={w.id}>{w.code || w.name}</option>
+                  ))}
+                </select>
+                {items.map((item, idx) => (
+                  <div key={idx} style={{ display: 'flex', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <ItemAutocomplete
+                        value={item.item_code}
+                        onSelect={(found) => {
+                          const u = [...items]
+                          u[idx] = { ...u[idx], item_code: found.code }
+                          setPickLines(u)
+                        }}
+                        onChangeText={(t) => {
+                          const packed = parsePackedItemQR(t)
+                          if (packed) applyPickPackedQR(idx, packed)
+                          else updateItem(idx, 'item_code', t)
+                        }}
+                      />
+                    </div>
+                    <input
+                      className="scan-count-input"
+                      style={{ width: 72 }}
+                      type="number"
+                      value={item.qty}
+                      onChange={e => updateItem(idx, 'qty', +e.target.value)}
+                    />
+                  </div>
+                ))}
+                <button type="button" className="scan-btn scan-btn-primary" onClick={createList}>Allocate &amp; create</button>
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => { setShowNew(false); resetForm() }}>Cancel</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {rfListMore.visible.map(l => (
+                <button
+                  key={l.id}
+                  type="button"
+                  className="scan-select-card"
+                  onClick={() => openList(l.id)}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                >
+                  <div className="scan-select-card-title">{l.name}</div>
+                  <div className="scan-select-card-sub">{l.sales_order_no || 'No SO'} · {l.customer || '—'}</div>
+                  <div className="scan-select-card-meta">
+                    <span>{l.status || 'pending'}</span>
+                    <span>{l.picked_qty}/{l.total_qty}</span>
+                    <span style={{ color: 'var(--primary)' }}>Open to scan →</span>
+                  </div>
+                </button>
+              ))}
+              {rfListMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfListMore.loadMore}>
+                  Load more ({rfListMore.remaining} left)
+                </button>
+              )}
+              {rfLists.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No pick lists yet</p>
+                  <p style={{ color: 'var(--muted-foreground)', fontSize: 13, marginBottom: 12, lineHeight: 1.4 }}>
+                    Create a list with +, then open it — camera and item/bin scan show on that screen.
+                  </p>
+                  <button
+                    type="button"
+                    className="scan-btn scan-btn-primary"
+                    onClick={() => { setShowNew(true); setShowWave(false) }}
+                  >
+                    <Plus size={16} /> New pick list
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelectedList(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+              <ArrowLeft size={16} strokeWidth={1.8} /> Back to lists
+            </button>
+
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{selectedList.name}</div>
+              <div className="scan-select-card-sub">
+                {selectedList.sales_order_no || '—'} · {selectedList.customer || 'No customer'}
+              </div>
+            </div>
+
+            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
+              <CameraScanner
+                open
+                embedded
+                minimal
+                continuous
+                onClose={() => {}}
+                onScan={(code) => {
+                  const clean = String(code || '').trim()
+                  if (!clean) return
+                  setScanTarget('item')
+                  setScanItem(clean)
+                  // If bin already filled (from line select), log immediately
+                  const line = selectedList.items?.find((x: PickItem) => x.id === scanLineId)
+                    || selectedList.items?.find((x: PickItem) => x.item_code.toUpperCase() === clean.toUpperCase() && x.status !== 'picked')
+                  if (line) {
+                    setScanLineId(line.id)
+                    setScanBin(line.location_code || line.bin_location || scanBin)
+                    setScanQty(String(Math.max(1, (line.allocated_qty || line.qty) - line.picked_qty)))
+                  }
+                }}
+              />
+            </div>
+
+            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+              <div className="scan-input-chip">
+                <CheckSquare size={16} strokeWidth={1.8} />
+                <input
+                  value={scanItem}
+                  onChange={e => setScanItem(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void logScan() } }}
+                  placeholder="Item code…"
+                  autoComplete="off"
+                />
+                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => { setScanTarget('item'); setShowScanner(true) }} aria-label="Scan item">
+                  <ScanLine size={16} />
+                </button>
+              </div>
+              <div className="scan-input-chip">
+                <MapPin size={16} strokeWidth={1.8} />
+                <input
+                  value={scanBin}
+                  onChange={e => setScanBin(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void logScan() } }}
+                  placeholder="Bin / location…"
+                  autoComplete="off"
+                />
+                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => { setScanTarget('bin'); setShowScanner(true) }} aria-label="Scan bin">
+                  <ScanLine size={16} />
+                </button>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  className="scan-count-input"
+                  style={{ width: 88 }}
+                  type="number"
+                  value={scanQty}
+                  onChange={e => setScanQty(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void logScan() } }}
+                />
+                <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={() => void logScan()}>
+                  Log pick
+                </button>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(selectedList.items || []).map((pi: PickItem) => {
+                const done = pi.status === 'picked' || pi.status === 'delivered'
+                return (
+                  <button
+                    key={pi.id}
+                    type="button"
+                    className={`scan-row${scanLineId === pi.id ? ' selected' : ''}${done ? '' : ''}`}
+                    onClick={() => { if (!done && pi.status !== 'shortage') selectLine(pi) }}
+                    disabled={done || pi.status === 'shortage'}
+                    style={{ width: '100%', textAlign: 'left' }}
+                  >
+                    <div className={`scan-row-check${done ? ' done' : ''}`}>{done ? '✓' : ''}</div>
+                    <div className="scan-row-info">
+                      <div className="scan-row-code">{pi.item_code}</div>
+                      <div className="scan-row-desc">
+                        {pi.location_code || pi.bin_location || '—'} · {pi.batch_no || 'no batch'}
+                      </div>
+                    </div>
+                    <div className="scan-row-meta">
+                      <div className="scan-row-qty">{pi.picked_qty}/{pi.allocated_qty ?? pi.qty}</div>
+                      <div className="scan-row-label">{pi.status}</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
+
+            <Link to={`/pack?pick_list_id=${selectedList.id}`} className="scan-btn scan-btn-primary" style={{ textAlign: 'center', textDecoration: 'none' }}>
+              Go to pack
+            </Link>
+          </>
+        )}
+      </ScannerLayout>
+    )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Picking</h2>
-        <div className="flex gap-2">
-          <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} className="erpnext-btn-secondary">📷 Scan</button>
-          <button onClick={() => { setShowWave(!showWave); setShowNew(false); setSelectedList(null) }} className="erpnext-btn-secondary">
-            {showWave ? 'Cancel Wave' : 'Wave Pick'}
-          </button>
-          <button onClick={() => { setShowNew(!showNew); setShowWave(false); setSelectedList(null) }} className="erpnext-btn-primary">
-            {showNew ? 'Cancel' : '+ New Pick List'}
-          </button>
-        </div>
-      </div>
+      <PageHead
+        eyebrow="Stock"
+        title="Picking"
+        subtitle="Wave and FEFO-allocated picks"
+        actions={
+          <>
+            <Button variant="outline" onClick={() => { setScanTarget('item'); setShowScanner(true) }}>
+              <ScanLine size={14} /> Scan
+            </Button>
+            <Button variant="outline" onClick={() => { setShowWave(!showWave); setShowNew(false); setSelectedList(null) }}>
+              {showWave ? 'Cancel Wave' : 'Wave Pick'}
+            </Button>
+            <Button onClick={() => { setShowNew(!showNew); setShowWave(false); setSelectedList(null) }}>
+              <Plus size={14} /> {showNew ? 'Cancel' : 'New Pick List'}
+            </Button>
+          </>
+        }
+      />
 
       {showWave && (
         <div className="erpnext-card p-4 space-y-3">
@@ -305,35 +561,37 @@ export default function Pick() {
                 <button onClick={addItem} className="erpnext-btn-secondary text-sm">+ Add Item</button>
               </div>
               <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>Type to search — new row auto-adds when last row has an item.</p>
-              <table className="erpnext-table text-sm">
-                <thead>
-                  <tr><th>#</th><th>Item Code</th><th>Qty</th><th></th></tr>
-                </thead>
-                <tbody>
-                  {items.map((item, idx) => (
-                    <tr key={idx}>
-                      <td style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
-                      <td>
-                        <ItemAutocomplete
-                          value={item.item_code}
-                          onSelect={(found) => {
-                            const u = [...items]
-                            u[idx] = { ...u[idx], item_code: found.code }
-                            setPickLines(u)
-                          }}
-                          onChangeText={(t) => {
-                            const packed = parsePackedItemQR(t)
-                            if (packed) applyPickPackedQR(idx, packed)
-                            else updateItem(idx, 'item_code', t)
-                          }}
-                        />
-                      </td>
-                      <td><input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} /></td>
-                      <td><button onClick={() => removeItem(idx)} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-wrap">
+                <table className="erpnext-table text-sm">
+                  <thead>
+                    <tr><th>#</th><th>Item Code</th><th>Qty</th><th></th></tr>
+                  </thead>
+                  <tbody>
+                    {items.map((item, idx) => (
+                      <tr key={idx}>
+                        <td style={{ color: 'var(--text-dim)' }}>{idx + 1}</td>
+                        <td>
+                          <ItemAutocomplete
+                            value={item.item_code}
+                            onSelect={(found) => {
+                              const u = [...items]
+                              u[idx] = { ...u[idx], item_code: found.code }
+                              setPickLines(u)
+                            }}
+                            onChangeText={(t) => {
+                              const packed = parsePackedItemQR(t)
+                              if (packed) applyPickPackedQR(idx, packed)
+                              else updateItem(idx, 'item_code', t)
+                            }}
+                          />
+                        </td>
+                        <td><input className="erpnext-input text-sm w-full" type="number" value={item.qty} onChange={e => updateItem(idx, 'qty', +e.target.value)} /></td>
+                        <td><button onClick={() => removeItem(idx)} style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer' }}>✕</button></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
 
             <div className="flex justify-end gap-2">
@@ -356,7 +614,7 @@ export default function Pick() {
             <h3 className="font-semibold">Pick Lists</h3>
             <ListPager pager={pager} placeholder="Search pick lists…" />
           </div>
-          <div className="p-4">
+          <div className="p-4 table-wrap">
             <table className="erpnext-table">
               <thead>
                 <tr><th>Name</th><th>Sales Order</th><th>Customer</th><th>Status</th><th>Mode</th><th>Picked</th><th>Action</th></tr>
@@ -382,7 +640,7 @@ export default function Pick() {
         </div>
       ) : (
         <div className="erpnext-card">
-          <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
+          <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ borderBottom: '1px solid var(--border)' }}>
             <div>
               <h3 className="font-semibold">{selectedList.name}</h3>
               <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
@@ -390,7 +648,7 @@ export default function Pick() {
                 {selectedList.stock_consumed ? ' · stock consumed' : ' · reserved until pack/dispatch'}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <Link to={`/pack?pick_list_id=${selectedList.id}`} className="erpnext-btn-primary">Go to Pack</Link>
               <button
                 className="erpnext-btn-secondary"
@@ -441,7 +699,7 @@ export default function Pick() {
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
                     placeholder="ITEM-001"
                   />
-                  <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
+                  <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}><ScanLine size={18} strokeWidth={1.8} /></button>
                 </div>
               </div>
               <div>
@@ -454,7 +712,7 @@ export default function Pick() {
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
                     placeholder="A-01-01"
                   />
-                  <button onClick={() => { setScanTarget('bin'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
+                  <button onClick={() => { setScanTarget('bin'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}><ScanLine size={18} strokeWidth={1.8} /></button>
                 </div>
               </div>
               <div>
@@ -475,32 +733,34 @@ export default function Pick() {
             {selectedList.items && selectedList.items.length > 0 && (
               <div className="mt-4">
                 <h4 className="font-medium text-sm mb-2">Pick Items (FEFO)</h4>
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>Item</th><th>Name</th><th>Alloc</th><th>Picked</th><th>Location</th><th>Batch</th><th>Status</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {selectedList.items.map((pi: PickItem) => (
-                      <tr key={pi.id} className={scanLineId === pi.id ? 'bg-black/5' : undefined}>
-                        <td className="font-medium">{pi.item_code}{fefoBadge(pi.fefo_badge)}</td>
-                        <td>{pi.item_name}</td>
-                        <td>{pi.allocated_qty ?? pi.qty}</td>
-                        <td>{pi.picked_qty}</td>
-                        <td>{pi.location_code || pi.bin_location || '—'}</td>
-                        <td>
-                          {pi.batch_no || '—'}
-                          {pi.expiry_date ? <span className="block text-xs" style={{ color: 'var(--text-dim)' }}>{String(pi.expiry_date).slice(0, 10)}</span> : null}
-                        </td>
-                        <td>{statusBadge(pi.status)}</td>
-                        <td>
-                          {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
-                            <button onClick={() => selectLine(pi)} className="erpnext-btn-secondary text-xs">Pick</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="erpnext-table text-sm">
+                    <thead>
+                      <tr><th>Item</th><th>Name</th><th>Alloc</th><th>Picked</th><th>Location</th><th>Batch</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {selectedList.items.map((pi: PickItem) => (
+                        <tr key={pi.id} className={scanLineId === pi.id ? 'bg-black/5' : undefined}>
+                          <td className="font-medium">{pi.item_code}{fefoBadge(pi.fefo_badge)}</td>
+                          <td>{pi.item_name}</td>
+                          <td>{pi.allocated_qty ?? pi.qty}</td>
+                          <td>{pi.picked_qty}</td>
+                          <td>{pi.location_code || pi.bin_location || '—'}</td>
+                          <td>
+                            {pi.batch_no || '—'}
+                            {pi.expiry_date ? <span className="block text-xs" style={{ color: 'var(--text-dim)' }}>{String(pi.expiry_date).slice(0, 10)}</span> : null}
+                          </td>
+                          <td>{statusBadge(pi.status)}</td>
+                          <td>
+                            {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
+                              <button onClick={() => selectLine(pi)} className="erpnext-btn-secondary text-xs">Pick</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

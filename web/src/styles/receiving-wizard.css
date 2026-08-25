@@ -31,16 +31,19 @@
 
 /* ─── Page ─── */
 .rw-page {
-  min-height: 100dvh;
+  min-height: 100%;
   background: var(--rw-bg-2);
   display: flex;
   flex-direction: column;
-  max-width: 480px;
+  max-width: 100%;
   margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
 }
 .rw-page.rw-dash-page {
   max-width: 1280px;
-  height: 100dvh;
+  height: 100%;
+  min-height: 100%;
   overflow: hidden;
 }
 
@@ -48,7 +51,7 @@
 .rw-header {
   position: sticky;
   top: 0;
-  z-index: 100;
+  z-index: 10;
   background: var(--rw-bg);
   border-bottom: 1px solid var(--rw-border);
   padding: 10px 16px;
@@ -715,7 +718,7 @@
   flex-direction: column;
   gap: 8px;
   pointer-events: none;
-  max-width: 448px;
+  max-width: min(28rem, calc(100% - 32px));
   margin: 0 auto;
 }
 
@@ -843,6 +846,23 @@
   padding: 16px;
 }
 
+.rw-po-search {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid var(--rw-border);
+  border-radius: var(--rw-radius);
+  background: var(--rw-bg);
+  color: var(--rw-text);
+  font-size: 14px;
+  box-sizing: border-box;
+}
+.rw-po-search:focus {
+  outline: none;
+  border-color: var(--rw-accent);
+  box-shadow: 0 0 0 3px var(--rw-accent-light);
+}
+
 .rw-po-item {
   display: flex;
   align-items: center;
@@ -861,6 +881,14 @@
 .rw-po-info { min-width: 0; flex: 1; }
 
 .rw-po-name { font-weight: 600; font-size: 14px; color: var(--rw-text); }
+
+.rw-po-docs {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rw-accent);
+  margin-top: 2px;
+  word-break: break-all;
+}
 
 .rw-po-supplier { font-size: 12px; color: var(--rw-text-dim); }
 
@@ -1247,10 +1275,23 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
+  padding: 20px 24px;
+  text-align: center;
   background: #111;
   color: #9ca3af;
   font-size: 13px;
   font-weight: 600;
+  line-height: 1.35;
+}
+.cam-fallback-mask span:first-of-type {
+  max-width: 260px;
+  color: #e5e7eb;
+}
+.cam-fallback-hint {
+  font-size: 12px;
+  font-weight: 500;
+  color: #6b7280;
+  max-width: 220px;
 }
 
 .cam-icon-btn {
@@ -1430,22 +1471,22 @@
   .rw-camera-btn { width: 110px; height: 110px; }
 }
 
-/* Tablets */
+/* Tablets — still full width of content; camera can grow slightly */
 @media (min-width: 481px) and (max-width: 768px) {
-  .rw-page:not(.rw-dash-page) { max-width: 560px; }
+  .rw-page:not(.rw-dash-page) { max-width: 100%; }
   .rw-camera-btn { width: 130px; height: 130px; }
   .rw-camera-btn svg { width: 40px; height: 40px; }
   .rw-boxes-list { gap: 8px; }
   .rw-box-row { padding: 12px 14px; }
 }
 
-/* Desktop */
+/* Desktop — RF pages: phone-ish column (shared --rf-content-max); dash stays wide */
 @media (min-width: 769px) {
   .rw-page:not(.rw-dash-page) {
-    max-width: 720px;
+    max-width: min(var(--rf-content-max, 32.5rem), 100%);
     border-left: 1px solid var(--rw-border);
     border-right: 1px solid var(--rw-border);
-    min-height: 100vh;
+    min-height: 100%;
     box-shadow: 0 0 40px rgba(0,0,0,0.04);
   }
   .rw-dash-page {
@@ -1453,28 +1494,13 @@
     border-right: 1px solid var(--rw-border);
     box-shadow: 0 0 40px rgba(0,0,0,0.04);
   }
-  .rw-scan-hero { padding: 32px 24px 28px; }
-  .rw-camera-btn { width: 140px; height: 140px; }
-  .rw-camera-btn svg { width: 42px; height: 42px; }
-  .rw-page:not(.rw-dash-page) .rw-boxes-list { gap: 8px; padding: 0 24px 16px; }
-  .rw-page:not(.rw-dash-page) .rw-boxes-header { padding: 16px 24px 10px; }
-  .rw-box-row { padding: 12px 14px; }
-  .rw-box-row-num { font-size: 13px; }
-  .rw-box-row-meta { font-size: 12px; }
-  .rw-po-list { padding: 20px 24px; gap: 10px; }
-  .rw-po-item { padding: 16px 20px; }
-  .rw-toast-container { max-width: 400px; }
-  .rw-view-all-btn { margin: 0 16px 12px; }
-  .rw-route-flash { margin: 0 16px 12px; }
-  .rw-history { padding: 0 16px 12px; }
-  .rw-exception-banner { margin: 0 16px 12px; }
+  .rw-toast-container { max-width: min(28rem, calc(100% - 32px)); }
 
   .cam-viewport { width: min(72vw, 260px); }
 }
 
-/* Large desktop */
+/* Large desktop — desk dash only; RF stays --rf-content-max */
 @media (min-width: 1024px) {
-  .rw-page:not(.rw-dash-page) { max-width: 800px; }
   .rw-dash-page { max-width: 1280px; }
 }
 
@@ -1498,6 +1524,187 @@
   color: var(--rw-text-dim);
   margin-top: 4px;
 }
+
+/* ─── Desk density (UI UX Pro Max: data-dense dashboard) ─── */
+:root {
+  --desk-gap: 8px;
+  --desk-card-pad: 12px;
+  --desk-row-h: 36px;
+  --desk-font: 13px;
+  --desk-font-sm: 12px;
+  --desk-title: 20px;
+  --desk-header-offset: 112px; /* topbar + page head approx */
+}
+
+.desk-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--desk-gap);
+  min-height: 0;
+}
+
+.desk-page-head,
+.content .page-head,
+.content .rw-page-head {
+  margin-bottom: 0;
+  padding-bottom: 8px;
+  gap: 8px;
+  align-items: center;
+}
+
+.content .page-title,
+.content .rw-page-title,
+.desk-page .rw-page-title {
+  font-size: var(--desk-title);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+.content .page-sub,
+.content .rw-page-sub,
+.desk-page .rw-page-sub {
+  font-size: var(--desk-font-sm);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+
+.content .page-eyebrow {
+  margin-bottom: 6px;
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
+.content .erpnext-card,
+.content .card,
+.content .rw-card {
+  padding: var(--desk-card-pad);
+}
+
+.content .card {
+  padding: var(--desk-card-pad);
+}
+
+/* Single-row filter + search toolbar */
+.desk-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--desk-gap);
+  flex-wrap: nowrap;
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.desk-filter-bar .desk-filter-status,
+.desk-filter-bar select.rw-select,
+.desk-filter-bar select.erpnext-input {
+  width: auto !important;
+  min-width: 140px;
+  max-width: 180px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: var(--desk-font);
+}
+
+.desk-filter-bar .desk-filter-search,
+.desk-filter-bar input.rw-input,
+.desk-filter-bar input.erpnext-input {
+  width: auto !important;
+  flex: 1 1 auto;
+  min-width: 160px;
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: var(--desk-font);
+}
+
+.desk-filter-meta {
+  flex: 0 0 auto;
+  font-size: var(--desk-font-sm);
+  color: var(--text-muted, var(--text-dim));
+  white-space: nowrap;
+}
+
+.desk-section-label {
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, var(--muted-foreground));
+  margin-bottom: 6px;
+}
+
+.desk-list-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.desk-table-scroll {
+  overflow: auto;
+  max-height: calc(100dvh - var(--desk-header-offset) - 120px);
+  overscroll-behavior: contain;
+}
+
+.desk-table th,
+.desk-table td,
+.content .erpnext-table th,
+.content .erpnext-table td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: var(--desk-font);
+  line-height: 1.3;
+}
+
+.desk-table th,
+.content .erpnext-table th {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.desk-table tbody tr {
+  height: var(--desk-row-h);
+}
+
+@media (max-width: 720px) {
+  .desk-filter-bar {
+    flex-wrap: wrap;
+  }
+  .desk-filter-bar .desk-filter-status {
+    max-width: none;
+    flex: 1 1 140px;
+  }
+  .desk-filter-bar .desk-filter-search {
+    flex: 1 1 100%;
+  }
+  .desk-table-scroll {
+    max-height: none;
+  }
+}
+
+/* Receiving dash: fill content column, denser chrome */
+.rw-dash-page.desk-page,
+.rw-page.rw-dash-page {
+  max-width: none !important;
+  width: 100%;
+  padding: 0;
+}
+.rw-dash-page .rw-page-head {
+  margin-bottom: 4px;
+}
+.rw-dash-page .rw-card {
+  margin-bottom: 0;
+}
+.rw-dash-page .rw-input,
+.rw-dash-page .rw-select {
+  min-height: 34px;
+}
+
 
 .rw-flash {
   padding: 10px 14px;
@@ -1557,6 +1764,39 @@
   outline: none;
   border-color: var(--rw-accent);
   box-shadow: 0 0 0 3px var(--rw-accent-light);
+}
+
+/* Manual packing-list table: keep Qty/Weight digits readable in narrow cells
+   (same clipping issue as PO line qty — padding + spinners). */
+.pl-manual-table {
+  min-width: 1280px;
+  table-layout: auto;
+}
+.pl-manual-table th,
+.pl-manual-table td {
+  padding-left: 6px;
+  padding-right: 6px;
+}
+.pl-manual-table input.rw-input {
+  padding: 4px 8px;
+  min-height: 32px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rw-text);
+  overflow: visible;
+}
+.pl-manual-table input[type="number"] {
+  text-align: right;
+  min-width: 4.5rem;
+  padding-left: 6px;
+  padding-right: 6px;
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.pl-manual-table input[type="number"]::-webkit-outer-spin-button,
+.pl-manual-table input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 .rw-dropdown {

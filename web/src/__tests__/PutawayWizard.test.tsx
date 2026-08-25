@@ -43,6 +43,10 @@ vi.mock('../hooks/useHaptic', () => ({
   useHaptic: () => vi.fn(),
 }))
 
+vi.mock('../hooks/useRfUi', () => ({
+  useRfUi: () => false,
+}))
+
 vi.mock('../styles/putaway-wizard.css', () => ({}))
 
 const mockApi = vi.mocked(api)

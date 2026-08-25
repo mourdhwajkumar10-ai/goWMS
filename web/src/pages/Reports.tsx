@@ -36,7 +36,7 @@ export default function Reports() {
   const perfPager = useClientPager(perf)
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold">Reports</h2>
       </div>

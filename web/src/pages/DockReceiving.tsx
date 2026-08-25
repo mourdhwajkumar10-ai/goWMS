@@ -1,7 +1,12 @@
 import { useState, useCallback, useEffect } from 'react'
+import { Box, ClipboardList, ArrowRight, RefreshCw } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
+import CameraScanner from '../components/CameraScanner'
 import { useScanFeedback } from '../hooks/useScanFeedback'
+import { useLoadMore } from '../hooks/useLoadMore'
+import ScanVerdict from '../components/scan/ScanVerdict'
+import type { ScanState } from '../components/scan/ScanViewport'
 import '../styles/scanner.css'
 
 interface POInfo { id: number; name: string; supplier_name: string; status: string; grand_total: number; total_qty: number; item_count: number }
@@ -20,12 +25,17 @@ export default function DockReceiving() {
   const [boxesDone, setBoxesDone] = useState(0)
   const [boxesTotal, setBoxesTotal] = useState(0)
   const [loading, setLoading] = useState(false)
+  const [scanState, setScanState] = useState<ScanState>('idle')
+  const [lastCode, setLastCode] = useState('')
+  const [cameraKey, setCameraKey] = useState(0)
 
   useEffect(() => {
     api.receivingPendingPOs().then(r => {
-      if (r.ok) setPendingPOs((r.data ?? []).slice(0, 8))
+      if (r.ok) setPendingPOs(r.data ?? [])
     })
   }, [])
+
+  const poMore = useLoadMore(pendingPOs, 10, pendingPOs.length)
 
   const startReceiving = useCallback(async (po: POInfo) => {
     setLoading(true); setSelPO(po)
@@ -39,22 +49,26 @@ export default function DockReceiving() {
   }, [fb, toast])
 
   const handleScan = useCallback(async (box: string) => {
-    if (!sid) return
-    const r = await api.post<any>('/receiving/scan-box', { session_id: sid, box_number: box } as any)
-    const entry: ScanLog = { box_number: box, message: r.ok ? r.data?.message ?? box : r.error ?? 'err', status: 'ok', timestamp: Date.now() }
+    if (!sid || !box.trim()) return
+    const clean = box.trim()
+    setLastCode(clean)
+    const r = await api.post<any>('/receiving/scan-box', { session_id: sid, box_number: clean } as any)
+    const entry: ScanLog = { box_number: clean, message: r.ok ? r.data?.message ?? clean : r.error ?? 'err', status: 'ok', timestamp: Date.now() }
     if (r.ok) {
       const msg = r.data?.message?.toUpperCase() ?? ''
-      if (msg.includes('ALREADY') || r.data?.duplicate) { entry.status = 'warn'; fb.warn(); toast(`Duplicate: ${box}`, 'warn') }
-      else if (msg.includes('EXCESS')) { entry.status = 'warn'; fb.warn(); toast(`Excess box: ${box}`, 'warn') }
-      else { fb.ok(); setBoxesDone(d => d + 1); toast(`Box ${box}`, 'ok') }
+      if (msg.includes('ALREADY') || r.data?.duplicate) { entry.status = 'warn'; fb.warn(); toast(`Duplicate: ${clean}`, 'warn'); setScanState('rejected') }
+      else if (msg.includes('EXCESS')) { entry.status = 'warn'; fb.warn(); toast(`Excess box: ${clean}`, 'warn'); setScanState('rejected') }
+      else { fb.ok(); setBoxesDone(d => d + 1); toast(`Box ${clean}`, 'ok'); setScanState('accepted') }
       const fresh = await api.receivingStats(sid)
       if (fresh.ok) setBoxesTotal(fresh.data?.total_boxes ?? boxesTotal)
     } else {
       entry.status = 'err'; fb.err(); toast(r.error ?? 'Scan failed', 'err')
       setFlash('err'); setTimeout(() => setFlash(null), 300)
+      setScanState('rejected')
     }
     setLogs(p => [entry, ...p].slice(0, 50))
     setScanIn('')
+    setTimeout(() => setScanState('idle'), 1200)
   }, [sid, fb, toast, boxesTotal])
 
   return (
@@ -64,27 +78,26 @@ export default function DockReceiving() {
       stat={step === 'scanning' ? String(boxesDone) : undefined}
       statOf={step === 'scanning' ? `/ ${boxesTotal}` : undefined}
       meta={selPO?.name}
-      noBack
     >
       <ScannerToastBar toasts={toasts} />
 
       {step === 'select' && (
         <>
           <div className="scan-empty" style={{ padding: '20px 0' }}>
-            <div className="scan-empty-icon">📦</div>
+            <div className="scan-empty-icon"><Box size={40} strokeWidth={1.8} /></div>
             <div className="scan-empty-title">Dock Receiving</div>
             <div className="scan-empty-msg">Select a PO to start scanning boxes</div>
           </div>
 
           {pendingPOs.length === 0 && !loading && (
             <div className="scan-empty">
-              <div className="scan-empty-icon" style={{ fontSize: 28 }}>📋</div>
+              <div className="scan-empty-icon"><ClipboardList size={28} strokeWidth={1.8} /></div>
               <div className="scan-empty-msg">No pending POs</div>
             </div>
           )}
 
           <div className="scan-select-list">
-            {pendingPOs.map(po => (
+            {poMore.visible.map(po => (
               <div key={po.id} className="scan-select-card" onClick={() => startReceiving(po)}>
                 <div className="scan-select-card-title">{po.name}</div>
                 <div className="scan-select-card-sub">{po.supplier_name}</div>
@@ -95,6 +108,11 @@ export default function DockReceiving() {
               </div>
             ))}
           </div>
+          {poMore.hasMore && (
+            <button type="button" className="scan-btn scan-btn-outline" style={{ marginTop: 8 }} onClick={poMore.loadMore}>
+              Load more ({poMore.remaining} left)
+            </button>
+          )}
 
           <button className="scan-btn scan-btn-outline" style={{ marginTop: 4 }} onClick={async () => {
             const r = await api.post<any>('/grn/', { receiving_mode: 'packing_list', warehouse_id: 1, supplier_name: 'Blind Receive' } as any)
@@ -108,48 +126,30 @@ export default function DockReceiving() {
 
       {step === 'scanning' && (
         <>
-          {/* Progress dots */}
-          <div className="scan-progress-wrap">
-            <div className="scan-progress-dots">
-              {Array.from({ length: Math.max(boxesTotal, 1) }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`scan-progress-dot ${i < boxesDone ? 'done' : i === boxesDone ? 'current' : ''}`}
-                />
-              ))}
-            </div>
+          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
+            <CameraScanner
+              key={cameraKey}
+              embedded
+              minimal
+              open
+              continuous
+              onClose={() => {}}
+              onScan={(code) => {
+                const clean = String(code || '').trim()
+                if (clean) void handleScan(clean)
+              }}
+            />
           </div>
+          <ScanVerdict state={scanState} code={lastCode} reason={logs[0]?.message} />
 
-          {/* Camera / scanning area */}
-          <div className="scan-camera-area">
-            <div className="scan-camera-corners">
-              <div className="scan-camera-frame">
-                <span className="corner tl" />
-                <span className="corner tr" />
-                <span className="corner br" />
-                <span className="corner bl" />
-                <div className="scan-camera-sweep" />
-              </div>
-            </div>
-          </div>
-
-          {/* Status prompt */}
-          <div className="scan-prompt">
-            <span className="scan-prompt-text">
-              <span className="scan-prompt-dot" />
-              Scan a box label
-            </span>
-          </div>
-
-          {/* Bottom bar */}
           <div className="scan-bottom-bar">
             <div className="scan-input-chip">
-              <span style={{ fontSize: 18, flexShrink: 0 }}>📦</span>
+              <Box size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
               <input
                 type="text"
                 value={scanIn}
                 onChange={e => setScanIn(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleScan(scanIn) } }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleScan(scanIn) } }}
                 placeholder="Box label…"
                 autoFocus
                 autoComplete="off"
@@ -157,18 +157,23 @@ export default function DockReceiving() {
             </div>
             <button
               className="scan-icon-btn"
-              onClick={() => handleScan(scanIn)}
+              onClick={() => void handleScan(scanIn)}
               disabled={!scanIn.trim()}
               aria-label="Confirm"
             >
-              ↵
+              <ArrowRight size={18} strokeWidth={1.8} />
             </button>
-            <button className="scan-icon-btn primary" aria-label="Manual">
-              ⌨
+            <button
+              type="button"
+              className="scan-icon-btn primary"
+              aria-label="Restart camera"
+              title="Restart camera"
+              onClick={() => setCameraKey((k) => k + 1)}
+            >
+              <RefreshCw size={18} strokeWidth={1.8} />
             </button>
           </div>
 
-          {/* Recent scans */}
           {logs.length > 0 && (
             <div style={{ marginTop: 8 }}>
               <div className="scan-section-title">Recent scans</div>

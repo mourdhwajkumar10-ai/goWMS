@@ -230,8 +230,8 @@ export default function Items() {
     <div className="items-page">
       <div className="items-toolbar">
         <div>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Items</h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>
+          <h1 className="page-title" style={{ color: 'var(--text)' }}>Items</h1>
+          <p className="page-sub" style={{ color: 'var(--text-dim)' }}>
             Item master with dealer product fields and stock by location
           </p>
         </div>
@@ -326,6 +326,7 @@ export default function Items() {
                 <th>Code</th>
                 <th>Name</th>
                 <th>Pack</th>
+                <th className="text-right">Pack qty</th>
                 <th>Control</th>
                 <th className="text-right">MRP</th>
                 <th className="text-right">CP</th>
@@ -341,6 +342,7 @@ export default function Items() {
                   <td className="font-medium" style={{ color: 'var(--accent)' }}>{i.code}</td>
                   <td>{i.name}</td>
                   <td>{i.pack_type || 'loose'}</td>
+                  <td className="text-right">{Number(i.carton_qty || 0) || '—'}</td>
                   <td>{i.control_mode === 'bin_controlled' ? 'bin' : 'item'}</td>
                   <td className="text-right">{Number(i.mrp || 0).toFixed(2)}</td>
                   <td className="text-right">{Number(i.valuation_rate || 0).toFixed(2)}</td>
@@ -367,7 +369,7 @@ export default function Items() {
               ))}
               {list.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
+                  <td colSpan={10} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No items</td>
                 </tr>
               )}
             </tbody>
@@ -420,6 +422,7 @@ export default function Items() {
                 <div>Threshold: {selected.threshold_value ?? 0}</div>
                 <div>Parts movement: {selected.parts_movement || '—'}</div>
                 <div>Pack: {selected.pack_type || 'loose'}</div>
+                <div>Pack qty (carton): {selected.carton_qty != null && Number(selected.carton_qty) > 0 ? selected.carton_qty : '—'}</div>
                 <div>Control: {selected.control_mode || 'item_controlled'}</div>
                 <div>Max qty per bin: {selected.max_qty_per_bin != null && selected.max_qty_per_bin > 0 ? selected.max_qty_per_bin : 'not set'}</div>
                 <div>Serial: {selected.has_serial ? 'yes' : 'no'} · Batch: {selected.has_batch ? 'yes' : 'no'}</div>

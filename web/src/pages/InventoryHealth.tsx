@@ -54,7 +54,7 @@ export default function InventoryHealth() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Inventory Health</h1>

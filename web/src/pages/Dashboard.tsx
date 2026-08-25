@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { PackageOpen, ClipboardList, CheckSquare, PackageCheck, Truck, Box } from "lucide-react";
 import api from "../services/api";
 
 interface DashboardData {
@@ -12,13 +13,13 @@ interface DashboardData {
 }
 
 const shortcuts = [
-  { to: "/grn", label: "Receive (GRN)", desc: "Goods receipt against PO" },
-  { to: "/po", label: "Purchase Order", desc: "Create / submit buying docs" },
-  { to: "/pick", label: "Pick List", desc: "Pick against sales orders" },
-  { to: "/pack", label: "Packing", desc: "Pack picked items" },
-  { to: "/dispatch", label: "Dispatch", desc: "Load and ship trips" },
-  { to: "/items", label: "Item", desc: "Item master" },
-];
+  { to: "/grn", label: "Receive (GRN)", desc: "Goods receipt against PO", Icon: PackageOpen },
+  { to: "/po", label: "Purchase Order", desc: "Create / submit buying docs", Icon: ClipboardList },
+  { to: "/pick", label: "Pick List", desc: "Pick against sales orders", Icon: CheckSquare },
+  { to: "/pack", label: "Packing", desc: "Pack picked items", Icon: PackageCheck },
+  { to: "/dispatch", label: "Dispatch", desc: "Load and ship trips", Icon: Truck },
+  { to: "/items", label: "Item", desc: "Item master", Icon: Box },
+] as const;
 
 export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -45,9 +46,10 @@ export default function Dashboard() {
     : [];
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       <div className="page-head">
         <div>
+          <span className="page-eyebrow">Overview</span>
           <h1 className="page-title">Home</h1>
           <p className="page-sub">Warehouse operations overview</p>
         </div>
@@ -55,8 +57,8 @@ export default function Dashboard() {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div>
-        <div className="nav-section" style={{ marginTop: 0, paddingLeft: 0 }}>Number Cards</div>
+      <div style={{ marginBottom: 48 }}>
+        <h2>Number cards</h2>
         <div className="grid cols-3">
           {kpis.map((k) => (
             <div className={`card kpi ${k.cls}`} key={k.label}>
@@ -78,21 +80,42 @@ export default function Dashboard() {
       </div>
 
       <div>
-        <div className="nav-section" style={{ marginTop: 0, paddingLeft: 0 }}>Shortcuts</div>
+        <h2>Shortcuts</h2>
         <div className="grid cols-3">
           {shortcuts.map((s) => (
             <Link
               key={s.to}
               to={s.to}
               className="card"
-              style={{ textDecoration: "none", color: "inherit", display: "block" }}
+              style={{
+                textDecoration: "none",
+                color: "inherit",
+                display: "flex",
+                alignItems: "flex-start",
+                gap: 16,
+                minHeight: 128,
+                padding: 24,
+              }}
             >
-              <div style={{ fontWeight: 500, color: "var(--heading-color)", marginBottom: 2 }}>
-                {s.label}
-              </div>
-              <div className="text-sm" style={{ color: "var(--text-muted)" }}>
-                {s.desc}
-              </div>
+              <span
+                style={{
+                  width: 40,
+                  height: 40,
+                  display: "grid",
+                  placeItems: "center",
+                  borderRadius: 12,
+                  background: "var(--secondary)",
+                  color: "var(--muted-foreground)",
+                  flexShrink: 0,
+                }}
+                className="group-icon"
+              >
+                <s.Icon size={20} strokeWidth={1.8} />
+              </span>
+              <span>
+                <span style={{ display: "block", fontSize: 18, fontWeight: 500, color: "var(--heading-color)", letterSpacing: "-0.01em" }}>{s.label}</span>
+                <span style={{ display: "block", marginTop: 8, color: "var(--text-muted)", fontSize: 14, lineHeight: "1.5" }}>{s.desc}</span>
+              </span>
             </Link>
           ))}
         </div>

@@ -143,6 +143,7 @@ export const api = {
   packingListList: () => get<any[]>("/packing-list/list"),
   packingListGet: (id: number) => get<any>(`/packing-list/${id}`),
   packingListApprove: (id: number) => post<any>(`/packing-list/${id}/approve`, {}),
+  packingListDelete: (id: number) => del<any>(`/packing-list/${id}`),
   packingListImportFile: async (file: File, driverName?: string, driverPhone?: string, transporter?: string, supplierName?: string, poName?: string) => {
     const fd = new FormData();
     fd.append("file", file);

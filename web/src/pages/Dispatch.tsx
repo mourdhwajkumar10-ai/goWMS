@@ -1,12 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ArrowLeft, Package, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
+import CameraScanner from '../components/CameraScanner'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import TruckAutocomplete from '../components/TruckAutocomplete'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { useLoadMore } from '../hooks/useLoadMore'
+import { useRfUi } from '../hooks/useRfUi'
+import RfShell from '../components/RfShell'
+import '../styles/scanner.css'
 
 interface Trip {
   id: number
@@ -28,10 +34,13 @@ interface Stop {
 }
 
 export default function Dispatch() {
+  const rf = useRfUi()
   const [trips, setTrips] = useState<Trip[]>([])
   const [selectedTrip, setSelectedTrip] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
   const [msg, setMsg] = useState('')
+  const [rfQuery, setRfQuery] = useState('')
+  const [showNew, setShowNew] = useState(false)
 
   const [vehicle, setVehicle] = useState('')
   const [driverName, setDriverName] = useState('')
@@ -161,8 +170,229 @@ export default function Dispatch() {
     return <span className={`erpnext-badge ${cls}`}>{status}</span>
   }
 
+  const rfTrips = pager.filtered.filter(t => {
+    const q = rfQuery.trim().toLowerCase()
+    if (!q) return true
+    return `${t.trip_no} ${t.vehicle_no || ''} ${t.driver_name || ''} ${t.status}`.toLowerCase().includes(q)
+  })
+  const rfTripMore = useLoadMore(rfTrips, 10, `${rfQuery}|${rfTrips.length}`)
+
+  const tripStat = selectedTrip
+    ? String((selectedTrip.stops || []).filter((s: Stop) => s.visited).length)
+    : String(trips.filter(t => t.status === 'completed').length)
+  const tripStatOf = selectedTrip ? `/ ${(selectedTrip.stops || []).length}` : undefined
+
+  if (rf) {
+    return (
+      <RfShell
+        title="Dispatch"
+        stat={tripStat}
+        statOf={tripStatOf}
+        meta={selectedTrip ? selectedTrip.trip_no : undefined}
+      >
+        {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
+
+        {!selectedTrip ? (
+          <>
+            <div className="scan-bottom-bar">
+              <div className="scan-input-chip">
+                <Search size={16} strokeWidth={1.8} />
+                <input
+                  type="search"
+                  value={rfQuery}
+                  onChange={e => setRfQuery(e.target.value)}
+                  placeholder="Search trips…"
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="button"
+                className="scan-icon-btn primary"
+                onClick={() => setShowNew(!showNew)}
+                aria-label="New trip"
+              >
+                <Plus size={18} strokeWidth={1.8} />
+              </button>
+            </div>
+
+            {showNew && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div className="scan-section-title">Create trip</div>
+                <TruckAutocomplete
+                  value={vehicle}
+                  onChangeText={setVehicle}
+                  onSelect={row => {
+                    setVehicle(row.truck_no)
+                    if (row.driver_name && !driverName) setDriverName(row.driver_name)
+                  }}
+                  placeholder="Vehicle no"
+                />
+                <input className="scan-count-input" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Driver name" />
+                <select className="scan-count-input" value={carrierId} onChange={e => setCarrierId(e.target.value)}>
+                  <option value="">No carrier</option>
+                  {carriers.map((c: any) => (
+                    <option key={c.id} value={c.id}>{c.name}{c.carrier_code ? ` (${c.carrier_code})` : ''}</option>
+                  ))}
+                </select>
+                <button type="button" className="scan-btn scan-btn-primary" onClick={() => { void createTrip(); setShowNew(false) }}>Create trip</button>
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => setShowNew(false)}>Cancel</button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {rfTripMore.visible.map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  className="scan-select-card"
+                  onClick={() => openTrip(t.id)}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+                >
+                  <div className="scan-select-card-title">{t.trip_no}</div>
+                  <div className="scan-select-card-sub">{t.vehicle_no || 'No vehicle'} · {t.driver_name || '—'}</div>
+                  <div className="scan-select-card-meta">
+                    <span>{t.status}</span>
+                    <span style={{ color: 'var(--primary)' }}>Open →</span>
+                  </div>
+                </button>
+              ))}
+              {rfTripMore.hasMore && (
+                <button type="button" className="scan-btn scan-btn-outline" onClick={rfTripMore.loadMore}>
+                  Load more ({rfTripMore.remaining} left)
+                </button>
+              )}
+              {rfTrips.length === 0 && (
+                <div className="scan-section-card" style={{ textAlign: 'center' }}>
+                  <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No trips yet</p>
+                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => setShowNew(true)}>
+                    <Plus size={16} /> New trip
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelectedTrip(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+              <ArrowLeft size={16} strokeWidth={1.8} /> Back to trips
+            </button>
+
+            <div className="scan-section-card">
+              <div className="scan-select-card-title">{selectedTrip.trip_no}</div>
+              <div className="scan-select-card-sub">
+                {selectedTrip.vehicle_no || '—'} · {selectedTrip.driver_name || 'No driver'} · {selectedTrip.status}
+              </div>
+            </div>
+
+            {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled') && (
+              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void startTrip(selectedTrip.id)}>
+                Start trip
+              </button>
+            )}
+            {selectedTrip.status === 'in_transit' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <button type="button" className="scan-btn scan-btn-primary" onClick={() => void completeTrip(selectedTrip.id)}>Complete</button>
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => void completeGated(selectedTrip.id)}>Complete (gated)</button>
+              </div>
+            )}
+
+            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
+              <CameraScanner
+                open
+                embedded
+                minimal
+                continuous
+                onClose={() => {}}
+                onScan={(code) => {
+                  const clean = String(code || '').trim()
+                  if (!clean) return
+                  setLoadBoxId(clean)
+                }}
+              />
+            </div>
+
+            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+              <div className="scan-input-chip">
+                <Package size={16} strokeWidth={1.8} />
+                <input
+                  value={loadBoxId}
+                  onChange={e => setLoadBoxId(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void loadBox() } }}
+                  placeholder="Box ID…"
+                  autoComplete="off"
+                />
+                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan box">
+                  <ScanLine size={16} />
+                </button>
+              </div>
+              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void loadBox()}>Load box</button>
+            </div>
+
+            <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div className="scan-section-title">Generate DN + stop</div>
+              <input className="scan-count-input" value={dnCustomer} onChange={e => setDnCustomer(e.target.value)} placeholder="Customer" />
+              <button type="button" className="scan-btn scan-btn-outline" onClick={() => void generateDN()}>Generate DN</button>
+            </div>
+
+            {(selectedTrip.boxes || []).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="scan-section-title">Loaded boxes ({selectedTrip.boxes.length})</div>
+                {selectedTrip.boxes.map((b: any) => (
+                  <div key={b.id} className="scan-row">
+                    <div className={`scan-row-check${b.loaded ? ' done' : ''}`}>{b.loaded ? '✓' : ''}</div>
+                    <div className="scan-row-info">
+                      <div className="scan-row-code">{b.label}</div>
+                      <div className="scan-row-desc">{b.delivery_note || '—'}</div>
+                    </div>
+                    <div className="scan-row-meta">
+                      <div className="scan-row-label">{b.loaded ? 'loaded' : 'pending'}</div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {(selectedTrip.stops || []).length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="scan-section-title">Stops + POD</div>
+                <input
+                  className="scan-count-input"
+                  value={podSig}
+                  onChange={e => setPodSig(e.target.value)}
+                  placeholder="Signature / POD note"
+                />
+                {selectedTrip.stops.map((s: Stop) => (
+                  <div key={s.id} className="scan-row" style={{ flexWrap: 'wrap', gap: 8 }}>
+                    <div className={`scan-row-check${s.visited ? ' done' : ''}`}>{s.visited ? '✓' : s.stop_order}</div>
+                    <div className="scan-row-info" style={{ flex: 1 }}>
+                      <div className="scan-row-code">{s.delivery_note_no}</div>
+                      <div className="scan-row-desc">{s.customer} · {s.address || '—'}</div>
+                    </div>
+                    <div className="scan-row-meta">
+                      <div className="scan-row-label">{s.visited ? 'delivered' : 'pending'}</div>
+                    </div>
+                    {!s.visited && (
+                      <button
+                        type="button"
+                        className="scan-btn scan-btn-primary scan-btn-sm"
+                        style={{ width: '100%' }}
+                        onClick={() => void visitWithPOD(s.id)}
+                      >
+                        POD + Visit
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </RfShell>
+    )
+  }
+
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
       <div className="flex items-center justify-between">
@@ -224,34 +454,36 @@ export default function Dispatch() {
               <h3 className="font-semibold">Trips</h3>
               <ListPager pager={pager} placeholder="Search trips…" />
             </div>
-            <table className="erpnext-table">
-              <thead>
-                <tr><th>Trip No</th><th>Vehicle</th><th>Driver</th><th>Status</th><th>Created</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map(t => (
-                  <tr key={t.id}>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openTrip(t.id)}>{t.trip_no}</td>
-                    <td>{t.vehicle_no || '—'}</td>
-                    <td>{t.driver_name || '—'}</td>
-                    <td>{statusBadge(t.status)}</td>
-                    <td>{new Date(t.created_at).toLocaleDateString()}</td>
-                    <td>
-                      <div className="flex gap-1">
-                        <button onClick={() => openTrip(t.id)} className="erpnext-btn-secondary text-xs">Open</button>
-                        {t.status === 'draft' && (
-                          <button onClick={() => startTrip(t.id)} className="erpnext-btn-primary text-xs">Start</button>
-                        )}
-                        {t.status === 'in_transit' && (
-                          <button onClick={() => completeTrip(t.id)} className="erpnext-btn-primary text-xs">Complete</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No trips</td></tr>}
-              </tbody>
-            </table>
+            <div className="table-wrap">
+              <table className="erpnext-table">
+                <thead>
+                  <tr><th>Trip No</th><th>Vehicle</th><th>Driver</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                </thead>
+                <tbody>
+                  {pager.pageItems.map(t => (
+                    <tr key={t.id}>
+                      <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openTrip(t.id)}>{t.trip_no}</td>
+                      <td>{t.vehicle_no || '—'}</td>
+                      <td>{t.driver_name || '—'}</td>
+                      <td>{statusBadge(t.status)}</td>
+                      <td>{new Date(t.created_at).toLocaleDateString()}</td>
+                      <td>
+                        <div className="flex gap-1">
+                          <button onClick={() => openTrip(t.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                          {t.status === 'draft' && (
+                            <button onClick={() => startTrip(t.id)} className="erpnext-btn-primary text-xs">Start</button>
+                          )}
+                          {t.status === 'in_transit' && (
+                            <button onClick={() => completeTrip(t.id)} className="erpnext-btn-primary text-xs">Complete</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {pager.total === 0 && <tr><td colSpan={6} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No trips</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       ) : (
@@ -294,20 +526,22 @@ export default function Dispatch() {
             {selectedTrip.boxes && selectedTrip.boxes.length > 0 && (
               <div className="mt-4">
                 <h4 className="font-medium text-sm mb-2">Loaded Boxes ({selectedTrip.boxes.length})</h4>
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>Box</th><th>Delivery Note</th><th>Status</th></tr>
-                  </thead>
-                  <tbody>
-                    {selectedTrip.boxes.map((b: any) => (
-                      <tr key={b.id}>
-                        <td className="font-medium">{b.label}</td>
-                        <td>{b.delivery_note || '—'}</td>
-                        <td>{statusBadge(b.loaded ? 'loaded' : 'pending')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="erpnext-table text-sm">
+                    <thead>
+                      <tr><th>Box</th><th>Delivery Note</th><th>Status</th></tr>
+                    </thead>
+                    <tbody>
+                      {selectedTrip.boxes.map((b: any) => (
+                        <tr key={b.id}>
+                          <td className="font-medium">{b.label}</td>
+                          <td>{b.delivery_note || '—'}</td>
+                          <td>{statusBadge(b.loaded ? 'loaded' : 'pending')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
 
@@ -318,31 +552,33 @@ export default function Dispatch() {
                   <label className="erpnext-label">Signature / POD note</label>
                   <input className="erpnext-input" value={podSig} onChange={e => setPodSig(e.target.value)} placeholder="Recipient name or signature data" />
                 </div>
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr><th>#</th><th>Delivery Note</th><th>Customer</th><th>Address</th><th>Status</th><th></th></tr>
-                  </thead>
-                  <tbody>
-                    {selectedTrip.stops.map((s: Stop) => (
-                      <tr key={s.id}>
-                        <td>{s.stop_order}</td>
-                        <td className="font-medium">{s.delivery_note_no}</td>
-                        <td>{s.customer}</td>
-                        <td>{s.address || '—'}</td>
-                        <td>
-                          <span className={`erpnext-badge ${s.visited ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
-                            {s.visited ? 'delivered' : 'pending'}
-                          </span>
-                        </td>
-                        <td>
-                          {!s.visited && (
-                            <button className="erpnext-btn-primary text-xs" onClick={() => visitWithPOD(s.id)}>POD + Visit</button>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="table-wrap">
+                  <table className="erpnext-table text-sm">
+                    <thead>
+                      <tr><th>#</th><th>Delivery Note</th><th>Customer</th><th>Address</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                      {selectedTrip.stops.map((s: Stop) => (
+                        <tr key={s.id}>
+                          <td>{s.stop_order}</td>
+                          <td className="font-medium">{s.delivery_note_no}</td>
+                          <td>{s.customer}</td>
+                          <td>{s.address || '—'}</td>
+                          <td>
+                            <span className={`erpnext-badge ${s.visited ? 'erpnext-badge-green' : 'erpnext-badge-yellow'}`}>
+                              {s.visited ? 'delivered' : 'pending'}
+                            </span>
+                          </td>
+                          <td>
+                            {!s.visited && (
+                              <button className="erpnext-btn-primary text-xs" onClick={() => visitWithPOD(s.id)}>POD + Visit</button>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             )}
           </div>

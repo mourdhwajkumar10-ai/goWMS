@@ -72,7 +72,7 @@ export default function Serial() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="desk-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
       <div className="flex items-center justify-between">
