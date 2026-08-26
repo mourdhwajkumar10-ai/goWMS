@@ -461,7 +461,7 @@ export const api = {
   billingCreate: (data: any) => post<any>("/billing/", data),
 
   // Customers
-  customerList: () => get<any[]>("/customer/list"),
+  customerList: () => get<any[]>("/customer/"),
   customerCreate: (data: any) => post<any>("/customer/", data),
 
   // Suppliers
