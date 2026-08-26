@@ -18,6 +18,8 @@ import (
 	"goWMS/api/modules/backorder"
 	"goWMS/api/modules/billing"
 	"goWMS/api/modules/comments"
+	"goWMS/api/modules/consolidate"
+	"goWMS/api/modules/countersale"
 	"goWMS/api/modules/customer"
 	"goWMS/api/modules/cyclecount"
 	"goWMS/api/modules/dispatch"
@@ -162,6 +164,8 @@ func main() {
 	packinglist.RegisterSupplierAlias(api.Group("/suppliers"), pool)
 	picking.Register(api.Group("/picking"), pool)
 	picking.RegisterWave(api.Group("/picking"), pool)
+	countersale.Register(api.Group("/counter-sale"), pool)
+	consolidate.Register(api.Group("/consolidate"), pool)
 	// PO create/edit require coarser permissions (po.create / po.edit).
 	poGroup := api.Group("/po")
 	poGroup.Use(rbac.RequirePermission("po.view"))

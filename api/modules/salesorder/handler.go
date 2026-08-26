@@ -205,6 +205,7 @@ func listOrders(db *pgxpool.Pool) fiber.Handler {
 		customer := c.Query("customer")
 		prioMin := c.Query("priority_min")
 		q := c.Query("q")
+		includeCounter := c.Query("include_counter") == "1" || strings.EqualFold(c.Query("order_type"), "Counter")
 
 		sql := `
 			SELECT so.id, so.name, so.customer_name, COALESCE(so.wms_status, so.status, 'draft'),
@@ -215,6 +216,9 @@ func listOrders(db *pgxpool.Pool) fiber.Handler {
 			FROM sales_orders so WHERE 1=1`
 		args := []any{}
 		n := 1
+		if !includeCounter {
+			sql += ` AND COALESCE(so.order_type,'Sales') <> 'Counter'`
+		}
 		if status != "" {
 			sql += ` AND COALESCE(so.wms_status, so.status) ILIKE $` + strconv.Itoa(n)
 			args = append(args, status)

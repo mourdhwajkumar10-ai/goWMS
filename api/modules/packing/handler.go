@@ -66,6 +66,8 @@ func createBox(db *pgxpool.Pool) fiber.Handler {
 			Label        string `json:"label"`
 			PickListID   int    `json:"pick_list_id"`
 			DeliveryNote string `json:"delivery_note"`
+			WarehouseID  int    `json:"warehouse_id"`
+			SalesOrderID int    `json:"sales_order_id"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -75,20 +77,50 @@ func createBox(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		var pickListID any
+		var whID, packLoc, soID any
 		if body.PickListID != 0 {
 			pickListID = body.PickListID
+			var wh, pack *int
+			_ = db.QueryRow(c.Context(), `
+				SELECT warehouse_id, packing_location_id FROM pick_lists WHERE id=$1`, body.PickListID).
+				Scan(&wh, &pack)
+			if wh != nil {
+				whID = *wh
+			}
+			if pack != nil {
+				packLoc = *pack
+			}
+		}
+		if body.WarehouseID != 0 {
+			whID = body.WarehouseID
+		}
+		if body.SalesOrderID != 0 {
+			soID = body.SalesOrderID
 		}
 		var dn any
 		if body.DeliveryNote != "" {
 			dn = body.DeliveryNote
 		}
 
+		// Resume open box with same warehouse+label.
+		if whID != nil {
+			var existing int
+			err := db.QueryRow(c.Context(), `
+				SELECT id FROM boxes
+				WHERE warehouse_id=$1 AND label=$2 AND COALESCE(loaded,false)=false
+				LIMIT 1`, whID, body.Label).Scan(&existing)
+			if err == nil {
+				return shared.OK(c, fiber.Map{"id": existing, "label": body.Label, "resumed": true})
+			}
+		}
+
 		var id int
 		err := db.QueryRow(c.Context(),
-			`INSERT INTO boxes (label, pick_list_id, delivery_note) VALUES ($1,$2,$3) RETURNING id`,
-			body.Label, pickListID, dn).Scan(&id)
+			`INSERT INTO boxes (label, pick_list_id, delivery_note, warehouse_id, packing_location_id, sales_order_id)
+			 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			body.Label, pickListID, dn, whID, packLoc, soID).Scan(&id)
 		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			return shared.Err(c, fiber.StatusConflict, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "label": body.Label})
 	}
@@ -176,13 +208,52 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item not found: "+body.ItemCode)
 		}
 
-		// Gate against the pick list, but only when the box is linked to one.
-		// Ad-hoc boxes keep their previous unrestricted behaviour.
 		var pickListID *int
 		if err := db.QueryRow(c.Context(),
 			`SELECT pick_list_id FROM boxes WHERE id=$1`, boxID).Scan(&pickListID); err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "box not found")
 		}
+
+		// Typed fulfillment lists use AssignToBox (packed_qty + ceiling).
+		if pickListID != nil {
+			typed, err := fulfillment.IsTyped(c.Context(), db, *pickListID)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			if typed {
+				tx, err := db.Begin(c.Context())
+				if err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				defer tx.Rollback(c.Context())
+				id, warning, err := fulfillment.AssignToBox(c.Context(), tx, fulfillment.AssignToBoxInput{
+					BoxID:      boxID,
+					PickListID: *pickListID,
+					ItemCode:   body.ItemCode,
+					Quantity:   body.Quantity,
+					BatchNo:    body.BatchNo,
+					ScannedBy:  userID(c),
+				})
+				if err != nil {
+					return shared.Err(c, fiber.StatusConflict, err.Error())
+				}
+				if err := tx.Commit(c.Context()); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				var declared float64
+				_ = db.QueryRow(c.Context(), `SELECT COALESCE(declared_weight,0) FROM boxes WHERE id=$1`, boxID).Scan(&declared)
+				resp := fiber.Map{"id": id, "box_id": boxID, "declared_weight": declared, "engine": "fulfillment"}
+				if warning != "" {
+					resp["warning"] = warning
+					resp["weight_ok"] = false
+				} else {
+					resp["weight_ok"] = true
+				}
+				return shared.OK(c, resp)
+			}
+		}
+
+		// Legacy / ad-hoc boxes keep unrestricted insert with soft weight warn.
 		if pickListID != nil {
 			var ceiling float64
 			if err := db.QueryRow(c.Context(), `
@@ -214,7 +285,6 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			batch = body.BatchNo
 		}
 
-		// Soft weight validation from item master
 		var unitWeight float64
 		_ = db.QueryRow(c.Context(), `
 			SELECT COALESCE(weight_per_unit,0) FROM items WHERE code=$1`, body.ItemCode).Scan(&unitWeight)

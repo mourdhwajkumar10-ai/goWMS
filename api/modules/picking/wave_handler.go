@@ -1,11 +1,11 @@
 package picking
 
 // Wave picking — batches multiple confirmed SOs into one FEFO pick list.
-// Uses the same shared.ListFEFOCandidates + ReserveBalance path as single-order pick.
-// Registered via picking.RegisterWave from main.go.
+// Writes wave_order_lines with priority-attributed shares for put-to-order.
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -29,6 +29,7 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 			SalesOrderIDs []int  `json:"sales_order_ids"`
 			WarehouseID   int    `json:"warehouse_id"`
 			WaveName      string `json:"wave_name"`
+			Sort          string `json:"sort"` // location | item
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -40,31 +41,45 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 		if err != nil || whID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "warehouse_id required")
 		}
-
-		// Aggregate demand across SOs
-		type demand struct {
-			ItemCode string
-			Qty      float64
-			SONames  []string
+		sortBy := strings.ToLower(strings.TrimSpace(body.Sort))
+		if sortBy != "item" {
+			sortBy = "location"
 		}
-		agg := map[string]*demand{}
+
+		type soDemand struct {
+			SalesOrderID     int
+			SalesOrderItemID int
+			SOName           string
+			Customer         string
+			Priority         int
+			ItemCode         string
+			Qty              float64
+		}
+		var demands []soDemand
 		soLabels := []string{}
+		seenSO := map[int]bool{}
 
 		for _, soID := range body.SalesOrderIDs {
-			var soName, status string
+			var soName, customer, status string
+			var priority int
 			err := db.QueryRow(c.Context(), `
-				SELECT name, COALESCE(wms_status, status, 'draft') FROM sales_orders WHERE id=$1`, soID).
-				Scan(&soName, &status)
+				SELECT name, COALESCE(customer_name,''), COALESCE(wms_status, status, 'draft'),
+				       COALESCE(priority, 99)
+				FROM sales_orders WHERE id=$1`, soID).
+				Scan(&soName, &customer, &status, &priority)
 			if err != nil {
 				return shared.Err(c, fiber.StatusBadRequest, fmt.Sprintf("sales order %d not found", soID))
 			}
 			if strings.EqualFold(status, "draft") || strings.EqualFold(status, "cancelled") {
 				return shared.Err(c, fiber.StatusBadRequest, soName+" must be confirmed")
 			}
-			soLabels = append(soLabels, soName)
+			if !seenSO[soID] {
+				soLabels = append(soLabels, soName)
+				seenSO[soID] = true
+			}
 
 			rows, err := db.Query(c.Context(), `
-				SELECT soi.item_code,
+				SELECT soi.id, soi.item_code,
 				       COALESCE(soi.qty,0) - COALESCE(soi.picked_qty,0)
 				     - COALESCE((SELECT SUM(GREATEST(
 				           COALESCE(pli.allocated_qty,0) - COALESCE(pli.picked_qty,0)
@@ -80,27 +95,41 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			for rows.Next() {
+				var itemID int
 				var code string
 				var qty float64
-				if err := rows.Scan(&code, &qty); err != nil {
+				if err := rows.Scan(&itemID, &code, &qty); err != nil {
 					rows.Close()
 					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 				}
 				if qty <= 0 {
 					continue
 				}
-				if d, ok := agg[code]; ok {
-					d.Qty += qty
-					d.SONames = append(d.SONames, soName)
-				} else {
-					agg[code] = &demand{ItemCode: code, Qty: qty, SONames: []string{soName}}
-				}
+				demands = append(demands, soDemand{
+					SalesOrderID: soID, SalesOrderItemID: itemID, SOName: soName,
+					Customer: customer, Priority: priority, ItemCode: code, Qty: qty,
+				})
 			}
 			rows.Close()
 		}
 
-		if len(agg) == 0 {
+		if len(demands) == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "no open lines across selected orders")
+		}
+
+		type aggDemand struct {
+			ItemCode string
+			Qty      float64
+			Shares   []soDemand
+		}
+		agg := map[string]*aggDemand{}
+		for _, d := range demands {
+			if a, ok := agg[d.ItemCode]; ok {
+				a.Qty += d.Qty
+				a.Shares = append(a.Shares, d)
+			} else {
+				agg[d.ItemCode] = &aggDemand{ItemCode: d.ItemCode, Qty: d.Qty, Shares: []soDemand{d}}
+			}
 		}
 
 		var whName string
@@ -134,12 +163,19 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		allocatedAny := false
+		type boGroup struct {
+			SOName, Customer string
+			Lines            []shared.ShortageLine
+		}
+		boBySO := map[int]*boGroup{}
+
 		for _, d := range agg {
 			cands, err := shared.ListFEFOCandidates(c.Context(), tx, whID, d.ItemCode, true)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			remaining := d.Qty
+			allocated := 0.0
 			for _, cand := range cands {
 				if remaining <= 0 {
 					break
@@ -171,9 +207,46 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 				}
 				allocatedAny = true
+				allocated += take
 				remaining -= take
 			}
-			if remaining > 0 {
+
+			// Attribute allocated qty to orders by priority (lower = higher priority).
+			shares := append([]soDemand(nil), d.Shares...)
+			sort.SliceStable(shares, func(i, j int) bool {
+				if shares[i].Priority != shares[j].Priority {
+					return shares[i].Priority < shares[j].Priority
+				}
+				return shares[i].SalesOrderID < shares[j].SalesOrderID
+			})
+			left := allocated
+			for _, sh := range shares {
+				take := sh.Qty
+				if take > left {
+					take = left
+				}
+				short := sh.Qty - take
+				if take > 0 {
+					_, err = tx.Exec(c.Context(), `
+						INSERT INTO wave_order_lines
+						  (pick_list_id, sales_order_id, sales_order_item_id, item_code, required_qty, consolidated_qty)
+						VALUES ($1,$2,$3,$4,$5,0)`,
+						pickID, sh.SalesOrderID, sh.SalesOrderItemID, sh.ItemCode, take)
+					if err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+					left -= take
+				}
+				if short > 0.0001 {
+					g := boBySO[sh.SalesOrderID]
+					if g == nil {
+						g = &boGroup{SOName: sh.SOName, Customer: sh.Customer}
+						boBySO[sh.SalesOrderID] = g
+					}
+					g.Lines = append(g.Lines, shared.ShortageLine{ItemCode: sh.ItemCode, Qty: short})
+				}
+			}
+			if remaining > 0.0001 {
 				_, _ = tx.Exec(c.Context(), `
 					INSERT INTO pick_list_items (
 						pick_list_id, item_code, warehouse, ordered_qty, picked_qty,
@@ -184,6 +257,22 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 		if !allocatedAny {
 			return shared.Err(c, fiber.StatusConflict, "insufficient stock for wave")
 		}
+
+		for _, g := range boBySO {
+			if _, _, err := shared.CreateBackorderFromShortages(
+				c.Context(), tx, pickID, g.SOName, g.Customer, whName, g.Lines); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, "backorder: "+err.Error())
+			}
+		}
+
+		// Persist preferred walk sort as a comment on the list name prefix when item-sorted.
+		if sortBy == "item" {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE pick_lists SET customer = COALESCE(customer,'') || CASE
+				  WHEN COALESCE(customer,'') LIKE '%[sort:item]%' THEN '' ELSE ' [sort:item]' END
+				WHERE id=$1`, pickID)
+		}
+
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -195,7 +284,8 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 		return shared.OK(c, fiber.Map{
 			"id": pickID, "name": pickName, "wave": waveLabel,
 			"sales_orders": soLabels, "picking_mode": "wave",
-			"note": "Wave picking — review before enabling in production UI",
+			"fulfillment_type": "wave", "sort": sortBy,
+			"pick_list_id": pickID,
 		})
 	}
 }
@@ -203,24 +293,26 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 func listWaves(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
-			SELECT id, name, sales_order_no, customer, status, created_at
+			SELECT id, name, sales_order_no, customer, status, created_at,
+			       COALESCE(fulfillment_type,'')
 			FROM pick_lists WHERE picking_mode='wave' ORDER BY id DESC LIMIT 50`)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer rows.Close()
 		type row struct {
-			ID         int        `json:"id"`
-			Name       string     `json:"name"`
-			SalesOrder *string    `json:"sales_order_no"`
-			Customer   *string    `json:"customer"`
-			Status     *string    `json:"status"`
-			CreatedAt  *time.Time `json:"created_at"`
+			ID              int        `json:"id"`
+			Name            string     `json:"name"`
+			SalesOrder      *string    `json:"sales_order_no"`
+			Customer        *string    `json:"customer"`
+			Status          *string    `json:"status"`
+			CreatedAt       *time.Time `json:"created_at"`
+			FulfillmentType string     `json:"fulfillment_type"`
 		}
 		var list []row
 		for rows.Next() {
 			var r row
-			if err := rows.Scan(&r.ID, &r.Name, &r.SalesOrder, &r.Customer, &r.Status, &r.CreatedAt); err != nil {
+			if err := rows.Scan(&r.ID, &r.Name, &r.SalesOrder, &r.Customer, &r.Status, &r.CreatedAt, &r.FulfillmentType); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, r)

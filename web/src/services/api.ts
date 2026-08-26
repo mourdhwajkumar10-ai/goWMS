@@ -345,12 +345,27 @@ export const api = {
   pickWave: (data: any) => post<any>("/picking/wave", data),
   pickWaves: () => get<any[]>("/picking/waves"),
 
+  // Counter sale
+  counterSaleCreate: (data: any) => post<any>("/counter-sale/", data),
+  counterSaleGet: (id: number) => get<any>(`/counter-sale/${id}`),
+  counterSaleScan: (id: number, data: any) => post<any>(`/counter-sale/${id}/scan`, data),
+  counterSaleComplete: (id: number, data: any) => post<any>(`/counter-sale/${id}/complete`, data),
+  counterSaleCancel: (id: number) => post<any>(`/counter-sale/${id}/cancel`, {}),
+
+  // Wave consolidation
+  consolidateScanItem: (data: any) => post<any>("/consolidate/scan-item", data),
+  consolidatePlace: (data: any) => post<any>("/consolidate/place", data),
+  consolidateStatus: (waveId: number) => get<any>(`/consolidate/${waveId}/status`),
+  consolidateReconcile: (waveId: number, data?: any) =>
+    post<any>(`/consolidate/${waveId}/reconcile`, data || {}),
+
   // Packing
   packSessions: () => get<any[]>("/packing/sessions"),
   packCreate: (data: any) => post<any>("/packing/", data),
   packGet: (id: number) => get<any>(`/packing/${id}`),
   packLoad: (id: number) => post<any>(`/packing/${id}/load`, {}),
   packLabel: (id: number) => get<any>(`/packing/${id}/label`),
+  packItem: (id: number, data: any) => post<any>(`/packing/${id}/item`, data),
 
   // Dispatch
   dispatchTrips: () => get<any[]>("/dispatch/trips"),

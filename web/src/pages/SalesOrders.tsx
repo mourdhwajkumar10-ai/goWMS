@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 import CSVImport from '../components/CSVTools'
 import Comments from '../components/Comments'
@@ -36,6 +36,7 @@ function priorityBadge(p: number | null, label?: string) {
 }
 
 export default function SalesOrders() {
+  const navigate = useNavigate()
   const [list, setList] = useState<SORow[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [showNew, setShowNew] = useState(false)
@@ -162,7 +163,7 @@ export default function SalesOrders() {
   const confirmSO = async (id: number) => {
     const r = await api.soConfirm(id)
     if (r.ok) {
-      notify({ type: 'success', title: 'Confirmed', message: 'Ready for picking' })
+      notify({ type: 'success', title: 'Confirmed', message: 'Next: Create Pick to allocate stock and open a pick list' })
       openSO(id); loadList()
     } else {
       notify({ type: 'error', title: 'Confirm failed', message: r.error || '' })
@@ -182,11 +183,30 @@ export default function SalesOrders() {
   const createPick = async (id: number) => {
     const r = await api.soCreatePick(id)
     if (r.ok) {
-      notify({ type: 'success', title: 'Pick List Created', message: r.data.name || r.data.pick_list_name })
-      openSO(id); loadList()
+      const pickId = r.data.id || r.data.pick_list_id
+      const pickName = r.data.name || r.data.pick_list_name
+      notify({ type: 'success', title: 'Pick List Created', message: pickName })
+      if (pickId) {
+        navigate(`/pick?list=${pickId}&rf=1`)
+      } else {
+        openSO(id); loadList()
+      }
     } else {
       notify({ type: 'error', title: 'Allocate failed', message: r.error || '' })
     }
+  }
+
+  /** Confirm (if draft) then FEFO-create pick — one action for warehouse release. */
+  const confirmAndCreatePick = async (id: number) => {
+    const status = String(selected?.status || '').toLowerCase()
+    if (status === 'draft') {
+      const conf = await api.soConfirm(id)
+      if (!conf.ok) {
+        notify({ type: 'error', title: 'Confirm failed', message: conf.error || '' })
+        return
+      }
+    }
+    await createPick(id)
   }
 
   const overridePriority = async () => {
@@ -229,7 +249,7 @@ export default function SalesOrders() {
       <div className="page-head desk-page-head">
         <div style={{ minWidth: 0, flex: '1 1 auto' }}>
           <h1 className="page-title">Sales Orders</h1>
-          <p className="page-sub">Priority queue · confirm · create pick</p>
+          <p className="page-sub">Create → Confirm &amp; Create Pick → floor picks on Picking</p>
         </div>
         <div className="page-actions">
           <button
@@ -403,7 +423,12 @@ export default function SalesOrders() {
             </div>
             <div className="flex gap-2 flex-wrap">
               {(selected.status === 'draft' || selected.status === 'Draft') && (
-                <button onClick={() => confirmSO(selected.id)} className="erpnext-btn-primary">Confirm</button>
+                <>
+                  <button onClick={() => confirmAndCreatePick(selected.id)} className="erpnext-btn-primary">
+                    Confirm &amp; Create Pick
+                  </button>
+                  <button onClick={() => confirmSO(selected.id)} className="erpnext-btn-secondary">Confirm only</button>
+                </>
               )}
               {selected.status !== 'cancelled' && selected.status !== 'Cancelled' && selected.status !== 'draft' && selected.status !== 'Draft' && (
                 <>

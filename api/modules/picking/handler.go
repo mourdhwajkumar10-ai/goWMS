@@ -286,12 +286,16 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			salesOrder, customer *string
 			warehouseID          *int
 			stockConsumed        bool
+			fulfillmentType      *string
+			packingLocID         *int
 		)
 		err = db.QueryRow(c.Context(), `
 			SELECT name, sales_order_no, customer, warehouse_id, COALESCE(status,'draft'),
-			       COALESCE(picking_mode,'scan'), COALESCE(stock_consumed,false)
+			       COALESCE(picking_mode,'scan'), COALESCE(stock_consumed,false),
+			       fulfillment_type, packing_location_id
 			FROM pick_lists WHERE id=$1`, id).
-			Scan(&name, &salesOrder, &customer, &warehouseID, &status, &mode, &stockConsumed)
+			Scan(&name, &salesOrder, &customer, &warehouseID, &status, &mode, &stockConsumed,
+				&fulfillmentType, &packingLocID)
 		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "pick list not found")
 		}
@@ -299,10 +303,16 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
+		sortBy := strings.ToLower(c.Query("sort"))
+		orderSQL := `ORDER BY pli.location_code NULLS LAST, pli.id`
+		if sortBy == "item" || (customer != nil && strings.Contains(*customer, "[sort:item]")) {
+			orderSQL = `ORDER BY pli.item_code, pli.location_code NULLS LAST, pli.id`
+		}
+
 		rows, err := db.Query(c.Context(), `
 			SELECT pli.id, pli.item_code, COALESCE(i.name, pli.item_code),
 			       COALESCE(pli.ordered_qty,0), COALESCE(pli.picked_qty,0), COALESCE(pli.allocated_qty,0),
-			       COALESCE(pli.consumed_qty,0), COALESCE(pli.status,'pending'),
+			       COALESCE(pli.consumed_qty,0), COALESCE(pli.packed_qty,0), COALESCE(pli.status,'pending'),
 			       COALESCE(pli.location_code, ''), pli.location_id, COALESCE(pli.batch_no,''),
 			       pli.expiry_date, pli.balance_id,
 			       CASE
@@ -314,7 +324,7 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			FROM pick_list_items pli
 			LEFT JOIN items i ON i.code = pli.item_code
 			WHERE pli.pick_list_id = $1
-			ORDER BY pli.location_code NULLS LAST, pli.id`, id)
+			`+orderSQL, id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -329,6 +339,7 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			PickedQty    float64    `json:"picked_qty"`
 			AllocatedQty float64    `json:"allocated_qty"`
 			ConsumedQty  float64    `json:"consumed_qty"`
+			PackedQty    float64    `json:"packed_qty"`
 			Status       string     `json:"status"`
 			BinLocation  string     `json:"bin_location"`
 			LocationCode string     `json:"location_code"`
@@ -344,7 +355,7 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			var it item
 			var expiry *time.Time
 			if err := rows.Scan(&it.ID, &it.ItemCode, &it.ItemName, &it.OrderedQty, &it.PickedQty, &it.AllocatedQty,
-				&it.ConsumedQty, &it.Status, &it.LocationCode, &it.LocationID, &it.BatchNo, &expiry,
+				&it.ConsumedQty, &it.PackedQty, &it.Status, &it.LocationCode, &it.LocationID, &it.BatchNo, &expiry,
 				&it.BalanceID, &it.FEFOBadge); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
@@ -356,10 +367,15 @@ func getPickList(db *pgxpool.Pool) fiber.Handler {
 			items = append(items, it)
 		}
 
+		ft := ""
+		if fulfillmentType != nil {
+			ft = *fulfillmentType
+		}
 		return shared.OK(c, fiber.Map{
 			"id": id, "name": name, "sales_order_no": salesOrder, "customer": customer,
 			"warehouse_id": warehouseID, "status": status, "picking_mode": mode,
 			"stock_consumed": stockConsumed, "total_qty": total, "picked_qty": picked,
+			"fulfillment_type": ft, "packing_location_id": packingLocID,
 			"items": items,
 		})
 	}

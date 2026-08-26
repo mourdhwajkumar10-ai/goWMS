@@ -37,6 +37,9 @@ import PurchaseInvoices from "./pages/PurchaseInvoices";
 import StockEntries from "./pages/StockEntries";
 import StockReconciliations from "./pages/StockReconciliations";
 import SalesOrders from "./pages/SalesOrders";
+import CounterSale from "./pages/CounterSale";
+import Wave from "./pages/Wave";
+import Consolidate from "./pages/Consolidate";
 import Employees from "./pages/Employees";
 import Roles from "./pages/Roles";
 import Returns from "./pages/Returns";
@@ -103,6 +106,9 @@ export default function App() {
         <Route path="transfers" element={<Transfers />} />
         <Route path="po" element={<PurchaseOrders />} />
         <Route path="sales-orders" element={<SalesOrders />} />
+        <Route path="counter-sale" element={<CounterSale />} />
+        <Route path="wave" element={<Wave />} />
+        <Route path="consolidate" element={<Consolidate />} />
         <Route path="backorders" element={<Backorders />} />
         <Route path="returns" element={<Returns />} />
         <Route path="employees" element={<Employees />} />

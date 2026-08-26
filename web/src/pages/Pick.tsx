@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, CheckSquare, MapPin, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
+import GuidedPickJob from '../components/GuidedPickJob'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete, { withTrailingEmptyRow, stripTrailingEmptyRows } from '../components/ItemAutocomplete'
 import ListPager from '../components/ListPager'
@@ -24,6 +25,7 @@ interface PickList {
   sales_order_no: string | null
   status: string | null
   picking_mode: string | null
+  fulfillment_type?: string | null
   total_qty: number
   picked_qty: number
   allocated_qty?: number
@@ -48,7 +50,10 @@ interface PickItem {
 }
 
 export default function Pick() {
-  const rf = useRfUi()
+  const shellRf = useRfUi()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const forceRf = searchParams.get('rf') === '1' || searchParams.get('mode') === 'rf'
+  const rf = shellRf || forceRf
   const { toasts } = useScannerToasts()
   const [lists, setLists] = useState<PickList[]>([])
   const [warehouses, setWarehouses] = useState<any[]>([])
@@ -84,6 +89,20 @@ export default function Pick() {
     api.soList('status=confirmed').then(r => { if (r.ok) setConfirmedSOs(r.data ?? []) })
   }, [])
 
+  const enterRfPick = (listId?: number | null) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('rf', '1')
+    if (listId) next.set('list', String(listId))
+    setSearchParams(next, { replace: false })
+  }
+
+  const exitRfPick = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('rf')
+    next.delete('mode')
+    setSearchParams(next, { replace: true })
+  }
+
   const pager = useClientPager(lists)
 
   const createWave = async () => {
@@ -99,7 +118,7 @@ export default function Pick() {
     if (r.ok) {
       notify({ type: 'success', title: 'Wave created', message: r.data.name })
       setShowWave(false); setWaveSOIds('')
-      loadLists(); openList(r.data.id)
+      loadLists(); enterRfPick(r.data.id)
     } else notify({ type: 'error', title: 'Wave failed', message: r.error || '' })
   }
 
@@ -154,7 +173,7 @@ export default function Pick() {
       resetForm()
       loadLists()
       notify({ type: 'success', title: 'Pick List Created', message: `${r.data.name} — stock reserved` })
-      openList(r.data.id)
+      enterRfPick(r.data.id)
     } else {
       notify({ type: 'error', title: 'Allocate failed', message: r.error || 'Could not create pick list' })
     }
@@ -168,6 +187,32 @@ export default function Pick() {
     const r = await api.get(`/picking/${id}`)
     if (r.ok) setSelectedList(r.data)
   }
+
+  const openListDesk = (id: number) => {
+    const next = new URLSearchParams(searchParams)
+    next.set('list', String(id))
+    next.delete('rf')
+    next.delete('mode')
+    setSearchParams(next, { replace: false })
+    void openList(id)
+  }
+
+  const clearSelectedList = () => {
+    const next = new URLSearchParams(searchParams)
+    next.delete('list')
+    next.delete('id')
+    setSearchParams(next, { replace: true })
+    setSelectedList(null)
+  }
+
+  const listIdParam = searchParams.get('list') || searchParams.get('id')
+  useEffect(() => {
+    const id = listIdParam ? Number(listIdParam) : 0
+    if (id > 0) void openList(id)
+    else setSelectedList(null)
+    // Deep-link / post-create navigation: reopen when ?list= changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listIdParam])
 
   const handleScan = (code: string) => {
     setShowScanner(false)
@@ -259,6 +304,17 @@ export default function Pick() {
         <ScannerToastBar toasts={toasts} />
         {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
+        {forceRf && !shellRf && (
+          <button
+            type="button"
+            className="scan-btn scan-btn-outline"
+            style={{ alignSelf: 'flex-start', width: 'auto', marginBottom: 8 }}
+            onClick={exitRfPick}
+          >
+            <ArrowLeft size={14} /> Desk list
+          </button>
+        )}
+
         {!selectedList ? (
           <>
             <div className="scan-bottom-bar">
@@ -330,7 +386,7 @@ export default function Pick() {
                   key={l.id}
                   type="button"
                   className="scan-select-card"
-                  onClick={() => openList(l.id)}
+                  onClick={() => enterRfPick(l.id)}
                   style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
                 >
                   <div className="scan-select-card-title">{l.name}</div>
@@ -351,25 +407,39 @@ export default function Pick() {
                 <div className="scan-section-card" style={{ textAlign: 'center' }}>
                   <p style={{ fontWeight: 600, marginBottom: 6, color: 'var(--foreground)' }}>No pick lists yet</p>
                   <p style={{ color: 'var(--muted-foreground)', fontSize: 13, marginBottom: 12, lineHeight: 1.4 }}>
-                    Create a list with +, then open it — camera and item/bin scan show on that screen.
+                    On Sales Orders: Confirm the order, then Create Pick. FEFO reserves stock and the list appears here.
                   </p>
-                  <button
-                    type="button"
-                    className="scan-btn scan-btn-primary"
-                    onClick={() => { setShowNew(true); setShowWave(false) }}
-                  >
-                    <Plus size={16} /> New pick list
-                  </button>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <Link to="/sales-orders" className="scan-btn scan-btn-primary" style={{ textDecoration: 'none' }}>
+                      Go to Sales Orders
+                    </Link>
+                    <button
+                      type="button"
+                      className="scan-btn scan-btn-outline"
+                      onClick={() => { setShowNew(true); setShowWave(false) }}
+                    >
+                      <Plus size={16} /> Free-form pick list
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
           </>
         ) : (
           <>
-            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelectedList(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={clearSelectedList} style={{ alignSelf: 'flex-start', width: 'auto' }}>
               <ArrowLeft size={16} strokeWidth={1.8} /> Back to lists
             </button>
 
+            {selectedList.fulfillment_type ? (
+              <GuidedPickJob
+                pickListId={selectedList.id}
+                hideCustomer={selectedList.fulfillment_type === 'wave' || selectedList.picking_mode === 'wave'}
+                onExit={clearSelectedList}
+                onComplete={(data) => setSelectedList(data)}
+              />
+            ) : (
+              <>
             <div className="scan-section-card">
               <div className="scan-select-card-title">{selectedList.name}</div>
               <div className="scan-select-card-sub">
@@ -389,7 +459,6 @@ export default function Pick() {
                   if (!clean) return
                   setScanTarget('item')
                   setScanItem(clean)
-                  // If bin already filled (from line select), log immediately
                   const line = selectedList.items?.find((x: PickItem) => x.id === scanLineId)
                     || selectedList.items?.find((x: PickItem) => x.item_code.toUpperCase() === clean.toUpperCase() && x.status !== 'picked')
                   if (line) {
@@ -474,6 +543,8 @@ export default function Pick() {
             <Link to={`/pack?pick_list_id=${selectedList.id}`} className="scan-btn scan-btn-primary" style={{ textAlign: 'center', textDecoration: 'none' }}>
               Go to pack
             </Link>
+              </>
+            )}
           </>
         )}
       </ScannerLayout>
@@ -487,16 +558,19 @@ export default function Pick() {
       <PageHead
         eyebrow="Stock"
         title="Picking"
-        subtitle="Wave and FEFO-allocated picks"
+        subtitle="Wave and FEFO-allocated picks · Scan opens RF floor picking"
         actions={
           <>
-            <Button variant="outline" onClick={() => { setScanTarget('item'); setShowScanner(true) }}>
+            <Button variant="outline" onClick={() => enterRfPick(selectedList?.id)}>
               <ScanLine size={14} /> Scan
             </Button>
-            <Button variant="outline" onClick={() => { setShowWave(!showWave); setShowNew(false); setSelectedList(null) }}>
-              {showWave ? 'Cancel Wave' : 'Wave Pick'}
+            <Link to="/wave" className="erpnext-btn-secondary inline-flex items-center gap-1 px-3 py-2 text-sm rounded-md border">
+              Wave desk
+            </Link>
+            <Button variant="outline" onClick={() => { setShowWave(!showWave); setShowNew(false); clearSelectedList() }}>
+              {showWave ? 'Cancel Wave' : 'Quick Wave'}
             </Button>
-            <Button onClick={() => { setShowNew(!showNew); setShowWave(false); setSelectedList(null) }}>
+            <Button onClick={() => { setShowNew(!showNew); setShowWave(false); clearSelectedList() }}>
               <Plus size={14} /> {showNew ? 'Cancel' : 'New Pick List'}
             </Button>
           </>
@@ -622,18 +696,35 @@ export default function Pick() {
               <tbody>
                 {pager.pageItems.map(l => (
                   <tr key={l.id}>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openList(l.id)}>{l.name}</td>
+                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openListDesk(l.id)}>{l.name}</td>
                     <td>{l.sales_order_no || '—'}</td>
                     <td>{l.customer || '—'}</td>
                     <td>{statusBadge(l.status || 'pending')}</td>
                     <td>{l.picking_mode || '—'}</td>
                     <td>{l.picked_qty} / {l.total_qty}</td>
                     <td>
-                      <button onClick={() => openList(l.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                      <div className="flex gap-1 flex-wrap">
+                        <button onClick={() => openListDesk(l.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                        <button onClick={() => enterRfPick(l.id)} className="erpnext-btn-primary text-xs">
+                          <ScanLine size={12} /> Scan
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No pick lists</td></tr>}
+                {pager.total === 0 && (
+                  <tr>
+                    <td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>
+                      <p style={{ marginBottom: 8 }}>No pick lists yet</p>
+                      <p style={{ fontSize: 12, marginBottom: 12 }}>
+                        Confirm a sales order, then use <strong>Create Pick</strong> (or Confirm &amp; Create Pick). Stock must be allocatable via FEFO.
+                      </p>
+                      <Link to="/sales-orders" className="erpnext-btn-primary text-xs" style={{ textDecoration: 'none' }}>
+                        Sales Orders
+                      </Link>
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -649,6 +740,9 @@ export default function Pick() {
               </p>
             </div>
             <div className="flex gap-2 flex-wrap">
+              <Button onClick={() => enterRfPick(selectedList.id)}>
+                <ScanLine size={14} /> Start RF Scan
+              </Button>
               <Link to={`/pack?pick_list_id=${selectedList.id}`} className="erpnext-btn-primary">Go to Pack</Link>
               <button
                 className="erpnext-btn-secondary"
@@ -677,61 +771,34 @@ export default function Pick() {
                     const r = await api.pickCancel(selectedList.id)
                     if (r.ok) {
                       notify({ type: 'warning', title: 'Cancelled', message: 'Reservations released' })
-                      setSelectedList(null); loadLists()
+                      clearSelectedList(); loadLists()
                     } else notify({ type: 'error', title: 'Cancel failed', message: r.error || '' })
                   }}
                 >Cancel & Release</button>
               )}
-              <button onClick={() => setSelectedList(null)} className="erpnext-btn-secondary">Back</button>
+              <button onClick={clearSelectedList} className="erpnext-btn-secondary">Back</button>
             </div>
           </div>
 
-          <div className="p-4">
-            <h4 className="font-medium text-sm mb-2">Scan to Pick</h4>
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-              <div>
-                <label className="erpnext-label">Item Code</label>
-                <div className="flex gap-1">
-                  <input
-                    className="erpnext-input"
-                    value={scanItem}
-                    onChange={e => setScanItem(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
-                    placeholder="ITEM-001"
-                  />
-                  <button onClick={() => { setScanTarget('item'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}><ScanLine size={18} strokeWidth={1.8} /></button>
-                </div>
+          <div className="p-4 space-y-4">
+            {/* Primary: RF floor pick — matches Receiving/Putaway scanner quality */}
+            <div
+              className="rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3"
+              style={{ background: 'var(--muted, #f4f4f5)', border: '1px solid var(--border)' }}
+            >
+              <div className="flex-1 min-w-0">
+                <h4 className="font-medium text-sm mb-1">Floor picking</h4>
+                <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                  Camera + item/bin scan for this list. Same RF flow as receiving.
+                </p>
               </div>
-              <div>
-                <label className="erpnext-label">Suggested / Scanned Bin</label>
-                <div className="flex gap-1">
-                  <input
-                    className="erpnext-input"
-                    value={scanBin}
-                    onChange={e => setScanBin(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
-                    placeholder="A-01-01"
-                  />
-                  <button onClick={() => { setScanTarget('bin'); setShowScanner(true) }} style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}><ScanLine size={18} strokeWidth={1.8} /></button>
-                </div>
-              </div>
-              <div>
-                <label className="erpnext-label">Quantity</label>
-                <input
-                  className="erpnext-input"
-                  type="number"
-                  value={scanQty}
-                  onChange={e => setScanQty(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
-                />
-              </div>
-              <div className="flex items-end">
-                <button onClick={logScan} className="erpnext-btn-primary">Log Pick</button>
-              </div>
+              <Button onClick={() => enterRfPick(selectedList.id)} className="shrink-0">
+                <ScanLine size={14} /> Start RF Scan
+              </Button>
             </div>
 
             {selectedList.items && selectedList.items.length > 0 && (
-              <div className="mt-4">
+              <div>
                 <h4 className="font-medium text-sm mb-2">Pick Items (FEFO)</h4>
                 <div className="table-wrap">
                   <table className="erpnext-table text-sm">
@@ -753,7 +820,12 @@ export default function Pick() {
                           <td>{statusBadge(pi.status)}</td>
                           <td>
                             {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
-                              <button onClick={() => selectLine(pi)} className="erpnext-btn-secondary text-xs">Pick</button>
+                              <button
+                                onClick={() => { selectLine(pi); enterRfPick(selectedList.id) }}
+                                className="erpnext-btn-secondary text-xs"
+                              >
+                                Pick
+                              </button>
                             )}
                           </td>
                         </tr>
@@ -763,6 +835,76 @@ export default function Pick() {
                 </div>
               </div>
             )}
+
+            {/* Secondary: collapsed desk form for exceptions only */}
+            <details className="rounded-lg" style={{ border: '1px solid var(--border)' }}>
+              <summary
+                className="cursor-pointer px-4 py-3 text-sm font-medium select-none"
+                style={{ color: 'var(--text-dim)' }}
+              >
+                Manual / exception pick
+              </summary>
+              <div className="px-4 pb-4 pt-1">
+                <p className="text-xs mb-3" style={{ color: 'var(--text-dim)' }}>
+                  Type item, bin, and qty without the camera. Prefer <strong>Start RF Scan</strong> for floor work.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+                  <div>
+                    <label className="erpnext-label">Item Code</label>
+                    <div className="flex gap-1">
+                      <input
+                        className="erpnext-input"
+                        value={scanItem}
+                        onChange={e => setScanItem(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                        placeholder="ITEM-001"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => enterRfPick(selectedList.id)}
+                        title="Open RF scanner"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}
+                      >
+                        <ScanLine size={18} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Suggested / Scanned Bin</label>
+                    <div className="flex gap-1">
+                      <input
+                        className="erpnext-input"
+                        value={scanBin}
+                        onChange={e => setScanBin(e.target.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                        placeholder="A-01-01"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => enterRfPick(selectedList.id)}
+                        title="Open RF scanner"
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}
+                      >
+                        <ScanLine size={18} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="erpnext-label">Quantity</label>
+                    <input
+                      className="erpnext-input"
+                      type="number"
+                      value={scanQty}
+                      onChange={e => setScanQty(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button onClick={logScan} className="erpnext-btn-secondary">Log Pick</button>
+                  </div>
+                </div>
+              </div>
+            </details>
           </div>
 
           <div className="p-4" style={{ borderTop: '1px solid var(--border)' }}>

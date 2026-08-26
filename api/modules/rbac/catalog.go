@@ -79,6 +79,7 @@ var PathPermission = map[string]string{
 	"customer":        "sales_orders.access",
 	"picking":         "picking.access",
 	"packing":         "packing.access",
+	"consolidate":     "packing.access",
 	"counter-sale":    "counter_sale.access",
 	"dispatch":        "dispatch.access",
 	"backorder":       "backorders.access",

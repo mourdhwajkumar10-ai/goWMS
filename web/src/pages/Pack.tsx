@@ -5,6 +5,7 @@ import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import CameraScanner from '../components/CameraScanner'
 import Comments from '../components/Comments'
+import GuidedPackJob from '../components/GuidedPackJob'
 import RfShell from '../components/RfShell'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
@@ -130,6 +131,16 @@ export default function Pack() {
 
   if (rf) {
     const itemCount = selectedBox?.items?.length ?? 0
+    if (pickListId && !selectedBox) {
+      return (
+        <RfShell title="Packing" meta={`PL ${pickListId}`}>
+          <GuidedPackJob
+            pickListId={+pickListId}
+            onExit={() => setPickListId('')}
+          />
+        </RfShell>
+      )
+    }
     return (
       <RfShell
         title="Packing"

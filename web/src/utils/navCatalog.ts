@@ -93,7 +93,10 @@ export const NAV_CATALOG: NavItemDef[] = [
   // ── Outbound ──
   { to: '/pick', label: 'Picking', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
   { to: '/pack', label: 'Packing', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/consolidate', label: 'Consolidate', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true, desk: false },
   { to: '/dispatch', label: 'Dispatch', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/counter-sale', label: 'Counter Sale', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor', 'billing'], permissions: ['counter_sale.access'] },
+  { to: '/wave', label: 'Wave', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
   { to: '/sales-orders', label: 'Sales Order', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
   { to: '/delivery-notes', label: 'Delivery Note', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['po.view'] },
   { to: '/backorders', label: 'Backorders', section: 'outbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
@@ -148,10 +151,10 @@ export const FLOOR_NAV: Record<string, string[]> = {
 export const HANDHELD_BY_ROLE: Record<string, string[]> = {
   qi: ['/receiving', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
   picker: ['/pick', '/stock-scan', '/cycle-count', '/quick-count', '/notifications'],
-  packer: ['/pack', '/notifications'],
+  packer: ['/pack', '/consolidate', '/notifications'],
   dispatcher: ['/dispatch', '/notifications'],
   driver: ['/dispatch', '/notifications'],
-  billing: ['/notifications'],
+  billing: ['/counter-sale', '/notifications'],
 }
 
 /** All task-execution pages available on handheld (catalog floor tiles, stable order). */
