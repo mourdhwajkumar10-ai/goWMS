@@ -412,7 +412,7 @@ export default function PutawayWizard() {
           <h1>Putaway</h1>
         </div>
 
-        <div className="scan-select-list">
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
           <button type="button" className="scan-select-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
             <div className="scan-select-card-title">By Zone</div>
             <div className="scan-select-card-sub">Batch putaway by HSN zone</div>
@@ -464,14 +464,14 @@ export default function PutawayWizard() {
     return (
       <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => navigate('mode_select', 'backward')}>← Back</ButtonPress>
+          <button onClick={() => navigate('mode_select', 'backward')} className="erpnext-btn-secondary">← Back</button>
           <h1>Select Zone</h1>
         </div>
         {dataLoading ? (
           <SkeletonCards count={4} />
         ) : (
           <>
-            <div className="scan-select-list">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
               {zones.map(z => (
                 <button
                   key={z.zone}
@@ -520,7 +520,7 @@ export default function PutawayWizard() {
     return (
       <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => navigate(mode === 'zone' ? 'zone_select' : 'mode_select', 'backward')}>← Back</ButtonPress>
+          <button onClick={() => navigate(mode === 'zone' ? 'zone_select' : 'mode_select', 'backward')} className="erpnext-btn-secondary">← Back</button>
           <h1>{selectedZone ? `Zone ${selectedZone} · ${ZONE_LABELS[selectedZone] || ''}` : 'Select Items'}</h1>
         </div>
 
@@ -668,7 +668,7 @@ export default function PutawayWizard() {
     return (
       <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => navigate('item_pick', 'backward')}>← Back</ButtonPress>
+          <button onClick={() => navigate('item_pick', 'backward')} className="erpnext-btn-secondary">← Back</button>
           <h1>Putaway</h1>
           {session && (
             <ButtonPress className="erpnext-btn-secondary pw-cancel-btn" onClick={handleCancelSession}>
@@ -998,7 +998,7 @@ export default function PutawayWizard() {
     return (
       <div className={`desk-page ${animClass}`}>
         <div className="desk-head">
-          <ButtonPress onClick={() => navigate('putaway', 'backward')}>← Back</ButtonPress>
+          <button onClick={() => navigate('putaway', 'backward')} className="erpnext-btn-secondary">← Back</button>
           <h1>Doesn't Fit</h1>
         </div>
         {cti && (
