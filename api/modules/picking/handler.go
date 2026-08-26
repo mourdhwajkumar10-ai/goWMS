@@ -488,6 +488,18 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
+		// Keep sales-order progress honest. Free-form and wave lists have no
+		// single owning order; the helper no-ops for those.
+		var soNo string
+		if err := tx.QueryRow(c.Context(),
+			`SELECT COALESCE(sales_order_no,'') FROM pick_lists WHERE id=$1`,
+			body.PickListID).Scan(&soNo); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := shared.SyncSalesOrderProgress(c.Context(), tx, soNo); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
