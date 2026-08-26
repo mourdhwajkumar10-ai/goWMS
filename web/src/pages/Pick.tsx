@@ -684,155 +684,165 @@ export default function Pick() {
       )}
 
       {!selectedList ? (
-        <div className="erpnext-card">
-          <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
-            <h3 className="font-semibold">Pick Lists</h3>
-            <ListPager pager={pager} placeholder="Search pick lists…" />
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <input
+                className="erpnext-input"
+                value={pager.q}
+                onChange={e => pager.setQ(e.target.value)}
+                placeholder="Search pick lists…"
+              />
+            </div>
+            <ListPager pager={pager} />
           </div>
-          <div className="p-4 table-wrap">
-            <table className="erpnext-table">
-              <thead>
-                <tr><th>Name</th><th>Sales Order</th><th>Customer</th><th>Status</th><th>Mode</th><th>Picked</th><th>Action</th></tr>
-              </thead>
-              <tbody>
-                {pager.pageItems.map(l => (
-                  <tr key={l.id}>
-                    <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openListDesk(l.id)}>{l.name}</td>
-                    <td>{l.sales_order_no || '—'}</td>
-                    <td>{l.customer || '—'}</td>
-                    <td>{statusBadge(l.status || 'pending')}</td>
-                    <td>{l.picking_mode || '—'}</td>
-                    <td>{l.picked_qty} / {l.total_qty}</td>
-                    <td>
-                      <div className="flex gap-1 flex-wrap">
-                        <button onClick={() => openListDesk(l.id)} className="erpnext-btn-secondary text-xs">Open</button>
-                        <button onClick={() => enterRfPick(l.id)} className="erpnext-btn-primary text-xs">
-                          <ScanLine size={12} /> Scan
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {pager.total === 0 && (
-                  <tr>
-                    <td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>
-                      <p style={{ marginBottom: 8 }}>No pick lists yet</p>
-                      <p style={{ fontSize: 12, marginBottom: 12 }}>
-                        Confirm a sales order, then use <strong>Create Pick</strong> (or Confirm &amp; Create Pick). Stock must be allocatable via FEFO.
-                      </p>
-                      <Link to="/sales-orders" className="erpnext-btn-primary text-xs" style={{ textDecoration: 'none' }}>
-                        Sales Orders
-                      </Link>
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: 12 }}>
+            {pager.pageItems.map(l => (
+              <div
+                key={l.id}
+                className="erpnext-card"
+                style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+                onClick={() => openListDesk(l.id)}
+                onMouseEnter={e => e.currentTarget.style.boxShadow = 'var(--md-shadow)'}
+                onMouseLeave={e => e.currentTarget.style.boxShadow = ''}
+              >
+                <div className="px-4 py-3 flex items-start justify-between">
+                  <div>
+                    <div className="font-semibold text-sm" style={{ color: 'var(--accent)' }}>{l.name}</div>
+                    <div className="text-xs mt-0.5" style={{ color: 'var(--text-dim)' }}>{l.sales_order_no || '—'} · {l.customer || 'No customer'}</div>
+                  </div>
+                  {statusBadge(l.status || 'pending')}
+                </div>
+                <div className="px-4 py-2 flex items-center justify-between" style={{ borderTop: '1px solid var(--border)', background: 'var(--muted, #f8f9fa)' }}>
+                  <span className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                    {l.picking_mode || 'scan'} · {l.picked_qty ?? 0}/{l.total_qty ?? 0} picked
+                  </span>
+                  <button
+                    type="button"
+                    className="erpnext-btn-primary text-xs"
+                    onClick={e => { e.stopPropagation(); enterRfPick(l.id) }}
+                  >
+                    <ScanLine size={12} /> Scan
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
+
+          {pager.total === 0 && (
+            <div className="erpnext-card text-center py-10">
+              <p className="font-medium mb-1">No pick lists yet</p>
+              <p className="text-xs mb-3" style={{ color: 'var(--text-dim)' }}>
+                Confirm a sales order, then use <strong>Create Pick</strong>.
+              </p>
+              <Link to="/sales-orders" className="erpnext-btn-primary text-xs" style={{ textDecoration: 'none' }}>
+                Sales Orders
+              </Link>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="erpnext-card">
-          <div className="px-4 py-3 flex items-center justify-between flex-wrap gap-2" style={{ borderBottom: '1px solid var(--border)' }}>
-            <div>
-              <h3 className="font-semibold">{selectedList.name}</h3>
-              <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-                {selectedList.sales_order_no} — {selectedList.customer || 'No customer'}
+        <div className="space-y-3">
+          <div className="flex items-center gap-3">
+            <button onClick={clearSelectedList} className="erpnext-btn-secondary">
+              ← Back
+            </button>
+            <div className="flex-1">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold" style={{ fontSize: 18, color: 'var(--accent)' }}>{selectedList.name}</span>
+                {statusBadge(selectedList.status || 'pending')}
+              </div>
+              <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                {selectedList.sales_order_no} · {selectedList.customer || 'No customer'}
                 {selectedList.stock_consumed ? ' · stock consumed' : ' · reserved until pack/dispatch'}
-              </p>
+              </div>
             </div>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-2">
               <Button onClick={() => enterRfPick(selectedList.id)}>
-                <ScanLine size={14} /> Start RF Scan
+                <ScanLine size={14} /> RF Scan
               </Button>
-              <Link to={`/pack?pick_list_id=${selectedList.id}`} className="erpnext-btn-primary">Go to Pack</Link>
-              <button
-                className="erpnext-btn-secondary"
-                onClick={async () => {
-                  const r = await api.pickPrint(selectedList.id)
-                  if (r.ok && r.data?.html) {
-                    const w = window.open('', '_blank')
-                    if (w) { w.document.write(r.data.html); w.document.close(); w.print() }
-                  } else notify({ type: 'error', title: 'Print failed', message: r.error || '' })
-                }}
-              >Print</button>
-              <button
-                className="erpnext-btn-secondary"
-                onClick={async () => {
-                  const r = await api.backorderAutoFromPick(selectedList.id)
-                  if (r.ok) notify({ type: 'success', title: 'Backorder', message: r.data.created ? r.data.backorder_no : r.data.message })
-                  else notify({ type: 'error', title: 'Backorder failed', message: r.error || '' })
-                }}
-              >BO from shortage</button>
-              {selectedList.status !== 'cancelled' && selectedList.status !== 'completed' && (
-                <button
-                  className="erpnext-btn-secondary"
-                  style={{ color: 'var(--red)' }}
-                  onClick={async () => {
-                    if (!confirm('Cancel pick list and release reserved stock?')) return
-                    const r = await api.pickCancel(selectedList.id)
-                    if (r.ok) {
-                      notify({ type: 'warning', title: 'Cancelled', message: 'Reservations released' })
-                      clearSelectedList(); loadLists()
-                    } else notify({ type: 'error', title: 'Cancel failed', message: r.error || '' })
-                  }}
-                >Cancel & Release</button>
-              )}
-              <button onClick={clearSelectedList} className="erpnext-btn-secondary">Back</button>
+              <Link to={`/pack?pick_list_id=${selectedList.id}`} className="erpnext-btn-primary">
+                Pack →
+              </Link>
             </div>
           </div>
 
-          <div className="p-4 space-y-4">
-            {/* Primary: RF floor pick — matches Receiving/Putaway scanner quality */}
-            <div
-              className="rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-3"
-              style={{ background: 'var(--muted, #f4f4f5)', border: '1px solid var(--border)' }}
-            >
-              <div className="flex-1 min-w-0">
-                <h4 className="font-medium text-sm mb-1">Floor picking</h4>
-                <p className="text-xs" style={{ color: 'var(--text-dim)' }}>
-                  Camera + item/bin scan for this list. Same RF flow as receiving.
-                </p>
-              </div>
-              <Button onClick={() => enterRfPick(selectedList.id)} className="shrink-0">
-                <ScanLine size={14} /> Start RF Scan
-              </Button>
-            </div>
+          <div className="flex gap-2 flex-wrap">
+            <button
+              className="erpnext-btn-secondary text-xs"
+              onClick={async () => {
+                const r = await api.pickPrint(selectedList.id)
+                if (r.ok && r.data?.html) {
+                  const w = window.open('', '_blank')
+                  if (w) { w.document.write(r.data.html); w.document.close(); w.print() }
+                } else notify({ type: 'error', title: 'Print failed', message: r.error || '' })
+              }}
+            >Print</button>
+            <button
+              className="erpnext-btn-secondary text-xs"
+              onClick={async () => {
+                const r = await api.backorderAutoFromPick(selectedList.id)
+                if (r.ok) notify({ type: 'success', title: 'Backorder', message: r.data.created ? r.data.backorder_no : r.data.message })
+                else notify({ type: 'error', title: 'Backorder failed', message: r.error || '' })
+              }}
+            >BO from shortage</button>
+            {selectedList.status !== 'cancelled' && selectedList.status !== 'completed' && (
+              <button
+                className="erpnext-btn-secondary text-xs"
+                style={{ color: 'var(--red)' }}
+                onClick={async () => {
+                  if (!confirm('Cancel pick list and release reserved stock?')) return
+                  const r = await api.pickCancel(selectedList.id)
+                  if (r.ok) {
+                    notify({ type: 'warning', title: 'Cancelled', message: 'Reservations released' })
+                    clearSelectedList(); loadLists()
+                  } else notify({ type: 'error', title: 'Cancel failed', message: r.error || '' })
+                }}
+              >Cancel & Release</button>
+            )}
+          </div>
 
+          <div className="space-y-3">
             {selectedList.items && selectedList.items.length > 0 && (
               <div>
-                <h4 className="font-medium text-sm mb-2">Pick Items (FEFO)</h4>
-                <div className="table-wrap">
-                  <table className="erpnext-table text-sm">
-                    <thead>
-                      <tr><th>Item</th><th>Name</th><th>Alloc</th><th>Picked</th><th>Location</th><th>Batch</th><th>Status</th><th></th></tr>
-                    </thead>
-                    <tbody>
-                      {selectedList.items.map((pi: PickItem) => (
-                        <tr key={pi.id} className={scanLineId === pi.id ? 'bg-black/5' : undefined}>
-                          <td className="font-medium">{pi.item_code}{fefoBadge(pi.fefo_badge)}</td>
-                          <td>{pi.item_name}</td>
-                          <td>{pi.allocated_qty ?? pi.qty}</td>
-                          <td>{pi.picked_qty}</td>
-                          <td>{pi.location_code || pi.bin_location || '—'}</td>
-                          <td>
-                            {pi.batch_no || '—'}
-                            {pi.expiry_date ? <span className="block text-xs" style={{ color: 'var(--text-dim)' }}>{String(pi.expiry_date).slice(0, 10)}</span> : null}
-                          </td>
-                          <td>{statusBadge(pi.status)}</td>
-                          <td>
-                            {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
-                              <button
-                                onClick={() => { selectLine(pi); enterRfPick(selectedList.id) }}
-                                className="erpnext-btn-secondary text-xs"
-                              >
-                                Pick
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-medium text-sm">Pick Items</h4>
+                  <span className="text-xs" style={{ color: 'var(--text-dim)' }}>
+                    {selectedList.items.filter((i: PickItem) => i.status === 'picked' || i.status === 'delivered').length}/{selectedList.items.length} picked
+                  </span>
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 8 }}>
+                  {selectedList.items.map((pi: PickItem) => (
+                    <div
+                      key={pi.id}
+                      className="erpnext-card px-4 py-3"
+                      style={{ borderLeft: `3px solid ${pi.status === 'picked' || pi.status === 'delivered' ? 'var(--green)' : pi.status === 'shortage' ? 'var(--red)' : 'var(--border)'}` }}
+                    >
+                      <div className="flex items-start justify-between mb-1">
+                        <div>
+                          <span className="font-medium text-sm">{pi.item_code}</span>{fefoBadge(pi.fefo_badge)}
+                          <div className="text-xs" style={{ color: 'var(--text-dim)' }}>{pi.item_name}</div>
+                        </div>
+                        {statusBadge(pi.status)}
+                      </div>
+                      <div className="flex items-center gap-4 text-xs mt-2" style={{ color: 'var(--text-dim)' }}>
+                        <span>📦 {pi.allocated_qty ?? pi.qty}</span>
+                        <span>✅ {pi.picked_qty}</span>
+                        <span>📍 {pi.location_code || pi.bin_location || '—'}</span>
+                        {pi.batch_no && <span>🔢 {pi.batch_no}</span>}
+                      </div>
+                      {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
+                        <button
+                          onClick={() => { selectLine(pi); enterRfPick(selectedList.id) }}
+                          className="erpnext-btn-primary text-xs mt-2"
+                          style={{ width: '100%' }}
+                        >
+                          <ScanLine size={12} /> Pick this item
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}

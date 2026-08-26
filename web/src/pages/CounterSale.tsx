@@ -199,12 +199,16 @@ export default function CounterSale() {
                   <div style={{ flex: 1, minWidth: 160 }}>
                     <ItemAutocomplete
                       value={l.item_code}
-                      onSelect={(found) => updateLine(idx, {
-                        item_code: found.code,
-                        item_name: found.name,
-                        mrp: (found as any).mrp,
-                        gst: (found as any).gst_percentage,
-                      })}
+                      onSelect={(found) => {
+                        const caseQty = Number((found as any).carton_qty ?? (found as any).pack_qty ?? (found as any).min_order_qty) || 1
+                        updateLine(idx, {
+                          item_code: found.code,
+                          item_name: found.name,
+                          qty: caseQty,
+                          mrp: (found as any).mrp,
+                          gst: (found as any).gst_percentage,
+                        })
+                      }}
                       onChangeText={(t) => updateLine(idx, { item_code: t })}
                     />
                   </div>

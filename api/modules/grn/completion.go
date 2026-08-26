@@ -281,6 +281,19 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 				"net_offset": shortCount > 0 && excessCount > 0,
 			},
 		})
+
+		// Auto-post stock to INCOMING-01 when GRN is ready for putaway.
+		// Without this, items never appear on the putaway screen because
+		// stock_location_balances has no rows at incoming locations.
+		if next == "putaway_pending" {
+			c.Locals("grnCloseStatus", "completed")
+			c.Locals("grnCloseSilent", true)
+			_ = doCloseSession(c, db, sessionID)
+			writeEvent(db, c, sessionID, "STOCK_POSTED_AUTO", fiber.Map{
+				"result": "completed", "payload": fiber.Map{"source": "auto_finalize"},
+			})
+		}
+
 		return shared.OK(c, fiber.Map{
 			"id": sessionID, "status": next,
 			"shortages_recorded": shortCount, "excesses_recorded": excessCount,

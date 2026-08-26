@@ -63,10 +63,12 @@ export default function SalesOrders() {
 
   const pickSOItem = (idx: number, found: any) => {
     const u = [...items]
+    const caseQty = Number(found.carton_qty ?? found.pack_qty ?? found.min_order_qty) || 1
     u[idx] = {
       ...u[idx],
       item_code: found.code,
       item_name: found.name || u[idx].item_name,
+      qty: caseQty,
       rate: +found.standard_rate || +found.mrp || u[idx].rate,
     }
     setSOLines(u)

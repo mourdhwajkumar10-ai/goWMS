@@ -605,8 +605,13 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		zoneFilter := strings.TrimSpace(c.Query("zone"))
 
-		query := `
-			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,		       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
+		// Build a query that includes both:
+		// 1. Items already in stock_location_balances at incoming/hold/staging locations
+		// 2. Items from GRN sessions that are ready for putaway but stock hasn't been posted yet
+		//    (safety net for GRNs stuck at putaway_pending before auto-finalize was added)
+		incomingQuery := `
+			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
+		       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
 		       slb.suggested_location_id, wl2.code,
 		       ` + hsnZoneSQL + ` as zone
 		FROM stock_location_balances slb
@@ -616,6 +621,23 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
 		WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
 
+		unpostedGRNQuery := `
+			SELECT gl.id + 1000000, gl.item_code, i.name, COALESCE(w.id,1), COALESCE(w.code,'MAIN'),
+		       wl.id, wl.code, COALESCE(gl.batch_no,''), COALESCE(gl.scanned_qty,0), wl.location_type,
+		       NULL::int, NULL::text,
+		       ` + hsnZoneSQL + ` as zone
+		FROM grn_lines gl
+		JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+		JOIN grn_sessions gs ON gs.id = gc.grn_session_id
+		JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
+		LEFT JOIN items i ON i.code = gl.item_code
+		LEFT JOIN warehouses w ON w.id = COALESCE(gs.warehouse_id, 1)
+		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
+		  AND COALESCE(gs.stock_posted_at) IS NULL
+		  AND COALESCE(gl.scanned_qty,0) > 0`
+
+		query := incomingQuery + ` UNION ALL ` + unpostedGRNQuery
+
 		args := []any{}
 		argIdx := 1
 		if zoneFilter != "" {
@@ -624,7 +646,7 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 			argIdx++
 		}
 
-		query += ` ORDER BY slb.updated_at ASC`
+		query += ` ORDER BY 2 ASC`
 
 		// Pending = incoming/hold balances not yet moved to storage.
 		rows, err := db.Query(c.Context(), query, args...)
@@ -670,6 +692,16 @@ func queueZones(db *pgxpool.Pool) fiber.Handler {
 				JOIN warehouse_locations wl ON wl.id = slb.location_id
 				LEFT JOIN items i ON i.code = slb.item_code
 				WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
+				UNION ALL
+				SELECT `+hsnZoneSQL+` as zone
+				FROM grn_lines gl
+				JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+				JOIN grn_sessions gs ON gs.id = gc.grn_session_id
+				JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
+				LEFT JOIN items i ON i.code = gl.item_code
+				WHERE gs.status IN ('putaway_pending','putaway_in_progress')
+				  AND COALESCE(gs.stock_posted_at) IS NULL
+				  AND COALESCE(gl.scanned_qty,0) > 0
 			) sub
 			GROUP BY zone
 			ORDER BY zone`)
