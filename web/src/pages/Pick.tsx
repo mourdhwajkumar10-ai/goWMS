@@ -437,6 +437,7 @@ export default function Pick() {
                 hideCustomer={selectedList.fulfillment_type === 'wave' || selectedList.picking_mode === 'wave'}
                 onExit={clearSelectedList}
                 onComplete={(data) => setSelectedList(data)}
+                onProgress={(data) => setSelectedList(data)}
               />
             ) : (
               <>

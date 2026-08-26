@@ -165,6 +165,7 @@ func main() {
 	picking.Register(api.Group("/picking"), pool)
 	picking.RegisterWave(api.Group("/picking"), pool)
 	countersale.Register(api.Group("/counter-sale"), pool)
+	go countersale.StartIdleReaper(ctx, pool)
 	consolidate.Register(api.Group("/consolidate"), pool)
 	// PO create/edit require coarser permissions (po.create / po.edit).
 	poGroup := api.Group("/po")

@@ -21,7 +21,11 @@ type Props = {
   pickListId: number
   onExit?: () => void
   onComplete?: (list: any) => void
+  onProgress?: (list: any) => void
   hideCustomer?: boolean
+  /** Counter sale (F1) has no backorder concept — walk-in customers can't be
+   * backordered, so hide the "can't find it" escalation there. */
+  disableCantFind?: boolean
 }
 
 function openLines(items: PickItem[]) {
@@ -31,7 +35,7 @@ function openLines(items: PickItem[]) {
   })
 }
 
-export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCustomer }: Props) {
+export default function GuidedPickJob({ pickListId, onExit, onComplete, onProgress, hideCustomer, disableCantFind }: Props) {
   const [list, setList] = useState<any>(null)
   const [phase, setPhase] = useState<'location' | 'item'>('location')
   const [scanValue, setScanValue] = useState('')
@@ -40,7 +44,11 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCust
   const [reason, setReason] = useState('')
   const [overrideOpen, setOverrideOpen] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
+  const [needsSupervisor, setNeedsSupervisor] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [cantFindOpen, setCantFindOpen] = useState(false)
+  const [cantFindReason, setCantFindReason] = useState('')
+  const [cantFindBusy, setCantFindBusy] = useState(false)
 
   const reload = useCallback(async () => {
     const r = await api.pickGet(pickListId)
@@ -65,6 +73,10 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCust
     setScanValue('')
     setVerdict('idle')
     setReason('')
+    setOverrideOpen(false)
+    setNeedsSupervisor(false)
+    setCantFindOpen(false)
+    setCantFindReason('')
     setQty(Math.max(1, Math.ceil((current.allocated_qty || current.ordered_qty) - current.picked_qty)))
   }, [current?.id])
 
@@ -102,16 +114,24 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCust
         override_reason: opts?.override ? overrideReason : undefined,
       })
       if (!r.ok) {
+        const msg = r.error || 'Scan rejected'
         setVerdict('error')
-        setReason(r.error || 'Scan rejected')
-        if ((r.error || '').toLowerCase().includes('wrong') || (r.error || '').toLowerCase().includes('override')) {
+        setReason(msg)
+        const lower = msg.toLowerCase()
+        if (lower.includes('supervisor override required')) {
+          // Caller lacks picking.override — retrying won't help, a supervisor must scan.
+          setOverrideOpen(false)
+          setNeedsSupervisor(true)
+        } else if (lower.includes('wrong') || lower.includes('override')) {
           setOverrideOpen(true)
         }
         return
       }
+      setNeedsSupervisor(false)
       setVerdict('ok')
       setOverrideOpen(false)
       const next = await reload()
+      if (next.ok) onProgress?.(next.data)
       if (next.ok) {
         const still = openLines(next.data.items || [])
         if (!still.length) {
@@ -125,6 +145,39 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCust
       }
     } finally {
       setBusy(false)
+    }
+  }
+
+  const submitCantFind = async () => {
+    if (!current || cantFindBusy) return
+    if (!cantFindReason.trim()) return
+    setCantFindBusy(true)
+    try {
+      const r = await api.pickCantFind(pickListId, {
+        pick_list_item_id: current.id,
+        item_code: current.item_code,
+        reason: cantFindReason.trim(),
+      })
+      if (!r.ok) {
+        notify({ type: 'error', title: "Can't flag line", message: r.error || 'Failed' })
+        return
+      }
+      notify({ type: 'success', title: 'Flagged for supervisor review', message: `${current.item_code} · ${r.data?.flag_no || ''}` })
+      setCantFindOpen(false)
+      setCantFindReason('')
+      const next = await reload()
+      if (next.ok) {
+        const still = openLines(next.data.items || [])
+        if (!still.length) {
+          onComplete?.(next.data)
+        } else {
+          setScanValue('')
+          setPhase('location')
+          setVerdict('idle')
+        }
+      }
+    } finally {
+      setCantFindBusy(false)
     }
   }
 
@@ -195,25 +248,74 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, hideCust
           </div>
         }
         footer={
-          overrideOpen ? (
-            <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div className="scan-section-title">Supervisor override</div>
-              <input
-                className="scan-count-input"
-                value={overrideReason}
-                onChange={e => setOverrideReason(e.target.value)}
-                placeholder="Reason required…"
-              />
-              <button
-                type="button"
-                className="scan-btn scan-btn-primary"
-                disabled={!overrideReason.trim()}
-                onClick={() => void submit({ override: true })}
-              >
-                Override & continue
-              </button>
-            </div>
-          ) : null
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {overrideOpen && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="scan-section-title">Supervisor override</div>
+                <input
+                  className="scan-count-input"
+                  value={overrideReason}
+                  onChange={e => setOverrideReason(e.target.value)}
+                  placeholder="Reason required…"
+                />
+                <button
+                  type="button"
+                  className="scan-btn scan-btn-primary"
+                  disabled={!overrideReason.trim()}
+                  onClick={() => void submit({ override: true })}
+                >
+                  Override & continue
+                </button>
+              </div>
+            )}
+            {needsSupervisor && !overrideOpen && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div className="scan-section-title">Supervisor needed</div>
+                <div className="scan-select-card-sub">
+                  This override needs a supervisor to approve it. Ask a supervisor to log in and retry the scan, or use "Can't find it" to send it for review instead.
+                </div>
+              </div>
+            )}
+            {disableCantFind ? null : cantFindOpen ? (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="scan-section-title">Can't find {current.item_code}?</div>
+                <textarea
+                  className="scan-count-input"
+                  style={{ minHeight: 60, resize: 'vertical' }}
+                  value={cantFindReason}
+                  onChange={e => setCantFindReason(e.target.value)}
+                  placeholder="Reason — e.g. bin empty, item not on shelf…"
+                />
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className="scan-btn scan-btn-outline"
+                    onClick={() => { setCantFindOpen(false); setCantFindReason('') }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="scan-btn scan-btn-primary"
+                    disabled={!cantFindReason.trim() || cantFindBusy}
+                    onClick={() => void submitCantFind()}
+                  >
+                    {cantFindBusy ? 'Flagging…' : 'Flag for supervisor'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              !overrideOpen && (
+                <button
+                  type="button"
+                  className="scan-btn scan-btn-outline"
+                  onClick={() => setCantFindOpen(true)}
+                >
+                  Can't find it?
+                </button>
+              )
+            )}
+          </div>
         }
       />
     </>

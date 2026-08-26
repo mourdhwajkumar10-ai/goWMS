@@ -44,6 +44,7 @@ import Employees from "./pages/Employees";
 import Roles from "./pages/Roles";
 import Returns from "./pages/Returns";
 import Backorders from "./pages/Backorders";
+import ShortageReview from "./pages/ShortageReview";
 import AuditLogs from "./pages/AuditLogs";
 import DockReceiving from "./pages/DockReceiving";
 import ItemVerifier from "./pages/ItemVerifier";
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="wave" element={<Wave />} />
         <Route path="consolidate" element={<Consolidate />} />
         <Route path="backorders" element={<Backorders />} />
+        <Route path="shortage-review" element={<ShortageReview />} />
         <Route path="returns" element={<Returns />} />
         <Route path="employees" element={<Employees />} />
         <Route path="roles" element={<Roles />} />

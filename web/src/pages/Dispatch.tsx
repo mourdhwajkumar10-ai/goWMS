@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ArrowLeft, Package, Plus, ScanLine, Search } from 'lucide-react'
+import { Package, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import CameraScanner from '../components/CameraScanner'
@@ -83,7 +83,7 @@ export default function Dispatch() {
 
   const loadBox = async () => {
     if (!loadBoxId || !selectedTrip) return
-    const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { box_id: +loadBoxId })
+    const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { label: loadBoxId })
     if (r.ok) {
       notify({
         type: 'success',
@@ -177,10 +177,14 @@ export default function Dispatch() {
   })
   const rfTripMore = useLoadMore(rfTrips, 10, `${rfQuery}|${rfTrips.length}`)
 
+  const loadedBoxCount = selectedTrip ? (selectedTrip.boxes || []).filter((b: any) => b.loaded).length : 0
+  const totalBoxCount = selectedTrip ? (selectedTrip.boxes || []).length : 0
   const tripStat = selectedTrip
-    ? String((selectedTrip.stops || []).filter((s: Stop) => s.visited).length)
+    ? totalBoxCount > 0 ? String(loadedBoxCount) : ''
     : String(trips.filter(t => t.status === 'completed').length)
-  const tripStatOf = selectedTrip ? `/ ${(selectedTrip.stops || []).length}` : undefined
+  const tripStatOf = selectedTrip
+    ? totalBoxCount > 0 ? `/ ${totalBoxCount}` : undefined
+    : undefined
 
   if (rf) {
     return (
@@ -189,6 +193,7 @@ export default function Dispatch() {
         stat={tripStat}
         statOf={tripStatOf}
         meta={selectedTrip ? selectedTrip.trip_no : undefined}
+        onBack={selectedTrip ? () => setSelectedTrip(null) : undefined}
       >
         {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
@@ -227,8 +232,8 @@ export default function Dispatch() {
                   }}
                   placeholder="Vehicle no"
                 />
-                <input className="scan-count-input" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Driver name" />
-                <select className="scan-count-input" value={carrierId} onChange={e => setCarrierId(e.target.value)}>
+                <input className="scan-text-input" value={driverName} onChange={e => setDriverName(e.target.value)} placeholder="Driver name" />
+                <select className="scan-text-input" value={carrierId} onChange={e => setCarrierId(e.target.value)}>
                   <option value="">No carrier</option>
                   {carriers.map((c: any) => (
                     <option key={c.id} value={c.id}>{c.name}{c.carrier_code ? ` (${c.carrier_code})` : ''}</option>
@@ -273,10 +278,6 @@ export default function Dispatch() {
           </>
         ) : (
           <>
-            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelectedTrip(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
-              <ArrowLeft size={16} strokeWidth={1.8} /> Back to trips
-            </button>
-
             <div className="scan-section-card">
               <div className="scan-select-card-title">{selectedTrip.trip_no}</div>
               <div className="scan-select-card-sub">
@@ -285,8 +286,56 @@ export default function Dispatch() {
             </div>
 
             {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled') && (
-              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void startTrip(selectedTrip.id)}>
-                Start trip
+              <>
+                <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
+                  <CameraScanner
+                    open
+                    embedded
+                    minimal
+                    continuous
+                    onClose={() => {}}
+                    onScan={(code) => {
+                      const clean = String(code || '').trim()
+                      if (!clean) return
+                      setLoadBoxId(clean)
+                    }}
+                  />
+                </div>
+
+                <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
+                  <div className="scan-input-chip">
+                    <Package size={16} strokeWidth={1.8} />
+                    <input
+                      value={loadBoxId}
+                      onChange={e => setLoadBoxId(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void loadBox() } }}
+                      placeholder="Scan box label…"
+                      autoComplete="off"
+                    />
+                    <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan box">
+                      <ScanLine size={16} />
+                    </button>
+                  </div>
+                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => void loadBox()}>Load box</button>
+                </div>
+              </>
+            )}
+
+            {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled') && (
+              <button
+                type="button"
+                className="scan-btn"
+                disabled={loadedBoxCount === 0}
+                onClick={() => void startTrip(selectedTrip.id)}
+                style={{
+                  opacity: loadedBoxCount === 0 ? 0.4 : 1,
+                  pointerEvents: loadedBoxCount === 0 ? 'none' : 'auto',
+                  background: 'var(--primary)',
+                  color: '#fff',
+                  cursor: loadedBoxCount === 0 ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Start trip {loadedBoxCount === 0 ? '(load boxes first)' : ''}
               </button>
             )}
             {selectedTrip.status === 'in_transit' && (
@@ -296,43 +345,13 @@ export default function Dispatch() {
               </div>
             )}
 
-            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
-              <CameraScanner
-                open
-                embedded
-                minimal
-                continuous
-                onClose={() => {}}
-                onScan={(code) => {
-                  const clean = String(code || '').trim()
-                  if (!clean) return
-                  setLoadBoxId(clean)
-                }}
-              />
-            </div>
-
-            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-              <div className="scan-input-chip">
-                <Package size={16} strokeWidth={1.8} />
-                <input
-                  value={loadBoxId}
-                  onChange={e => setLoadBoxId(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void loadBox() } }}
-                  placeholder="Box ID…"
-                  autoComplete="off"
-                />
-                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan box">
-                  <ScanLine size={16} />
-                </button>
+            {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled' || selectedTrip.status === 'in_transit') && (
+              <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div className="scan-section-title">Generate DN + stop</div>
+                <input className="scan-text-input" value={dnCustomer} onChange={e => setDnCustomer(e.target.value)} placeholder="Customer" />
+                <button type="button" className="scan-btn scan-btn-outline" onClick={() => void generateDN()}>Generate DN</button>
               </div>
-              <button type="button" className="scan-btn scan-btn-primary" onClick={() => void loadBox()}>Load box</button>
-            </div>
-
-            <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div className="scan-section-title">Generate DN + stop</div>
-              <input className="scan-count-input" value={dnCustomer} onChange={e => setDnCustomer(e.target.value)} placeholder="Customer" />
-              <button type="button" className="scan-btn scan-btn-outline" onClick={() => void generateDN()}>Generate DN</button>
-            </div>
+            )}
 
             {(selectedTrip.boxes || []).length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -356,7 +375,7 @@ export default function Dispatch() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div className="scan-section-title">Stops + POD</div>
                 <input
-                  className="scan-count-input"
+                  className="scan-text-input"
                   value={podSig}
                   onChange={e => setPodSig(e.target.value)}
                   placeholder="Signature / POD note"

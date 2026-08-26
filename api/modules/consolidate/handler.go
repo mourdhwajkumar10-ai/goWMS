@@ -1,10 +1,15 @@
 package consolidate
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
 	"goWMS/api/modules/fulfillment"
+	"goWMS/api/modules/notifications"
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -12,12 +17,15 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var errNoPackingContext = errors.New("wave has no packing_location_id/warehouse_id set — cannot move leftover stock")
+
 // Register wires wave consolidation under /consolidate.
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/scan-item", scanItem(db))
 	r.Post("/place", place(db))
 	r.Get("/:waveId/status", status(db))
 	r.Post("/:waveId/reconcile", reconcile(db))
+	r.Get("/:waveId/reconciliations", listReconciliations(db))
 }
 
 func scanItem(db *pgxpool.Pool) fiber.Handler {
@@ -194,55 +202,123 @@ func place(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+type waveOrderRow struct {
+	SalesOrderID    int     `json:"sales_order_id"`
+	SalesOrderNo    string  `json:"sales_order_no"`
+	Customer        string  `json:"customer"`
+	Priority        int     `json:"priority"`
+	RequiredQty     float64 `json:"required_qty"`
+	ConsolidatedQty float64 `json:"consolidated_qty"`
+	Complete        bool    `json:"complete"`
+	HasAllocation   bool    `json:"has_allocation"`
+	ShortQty        float64 `json:"short_qty"`
+}
+
+type leftoverLine struct {
+	ItemCode string  `json:"item_code"`
+	Qty      float64 `json:"qty"`
+}
+
+// waveOrders loads per-SO required/consolidated totals for a wave. Orders
+// with required_qty == 0 are excluded from "complete" scoring (nothing was
+// ever attributed to them — not a packing shortfall).
+func waveOrders(ctx context.Context, db shared.DBTX, waveID int) ([]waveOrderRow, error) {
+	rows, err := db.Query(ctx, `
+		SELECT wol.sales_order_id, so.name, COALESCE(so.customer_name,''), COALESCE(so.priority,99),
+		       SUM(wol.required_qty), SUM(wol.consolidated_qty)
+		FROM wave_order_lines wol
+		JOIN sales_orders so ON so.id = wol.sales_order_id
+		WHERE wol.pick_list_id=$1
+		GROUP BY wol.sales_order_id, so.name, so.customer_name, so.priority
+		ORDER BY COALESCE(so.priority,99), so.name`, waveID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var orders []waveOrderRow
+	for rows.Next() {
+		var o waveOrderRow
+		if err := rows.Scan(&o.SalesOrderID, &o.SalesOrderNo, &o.Customer, &o.Priority,
+			&o.RequiredQty, &o.ConsolidatedQty); err != nil {
+			return nil, err
+		}
+		o.HasAllocation = o.RequiredQty > 0.0001
+		o.ShortQty = o.RequiredQty - o.ConsolidatedQty
+		if o.ShortQty < 0 {
+			o.ShortQty = 0
+		}
+		o.Complete = !o.HasAllocation || o.ShortQty <= 0.0001
+		orders = append(orders, o)
+	}
+	return orders, rows.Err()
+}
+
+// leftoverBreakdown reports, per item, how much picked stock is still sitting
+// unconsolidated at the packing location for this wave.
+func leftoverBreakdown(ctx context.Context, db shared.DBTX, waveID int) ([]leftoverLine, float64, error) {
+	rows, err := db.Query(ctx, `
+		SELECT item_code, SUM(GREATEST(COALESCE(picked_qty,0)-COALESCE(packed_qty,0),0)) AS qty
+		FROM pick_list_items
+		WHERE pick_list_id=$1
+		GROUP BY item_code
+		HAVING SUM(GREATEST(COALESCE(picked_qty,0)-COALESCE(packed_qty,0),0)) > 0.0001
+		ORDER BY item_code`, waveID)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	var lines []leftoverLine
+	var total float64
+	for rows.Next() {
+		var l leftoverLine
+		if err := rows.Scan(&l.ItemCode, &l.Qty); err != nil {
+			return nil, 0, err
+		}
+		lines = append(lines, l)
+		total += l.Qty
+	}
+	return lines, total, rows.Err()
+}
+
 func status(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		waveID, err := strconv.Atoi(c.Params("waveId"))
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid wave id")
 		}
-		rows, err := db.Query(c.Context(), `
-			SELECT wol.sales_order_id, so.name, COALESCE(so.customer_name,''), COALESCE(so.priority,99),
-			       SUM(wol.required_qty), SUM(wol.consolidated_qty),
-			       BOOL_AND(wol.consolidated_qty >= wol.required_qty - 0.0001)
-			FROM wave_order_lines wol
-			JOIN sales_orders so ON so.id = wol.sales_order_id
-			WHERE wol.pick_list_id=$1
-			GROUP BY wol.sales_order_id, so.name, so.customer_name, so.priority
-			ORDER BY COALESCE(so.priority,99), so.name`, waveID)
+		orders, err := waveOrders(c.Context(), db, waveID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		defer rows.Close()
-		type orderRow struct {
-			SalesOrderID   int     `json:"sales_order_id"`
-			SalesOrderNo   string  `json:"sales_order_no"`
-			Customer       string  `json:"customer"`
-			Priority       int     `json:"priority"`
-			RequiredQty    float64 `json:"required_qty"`
-			ConsolidatedQty float64 `json:"consolidated_qty"`
-			Complete       bool    `json:"complete"`
-		}
-		var orders []orderRow
 		allDone := true
-		for rows.Next() {
-			var o orderRow
-			if err := rows.Scan(&o.SalesOrderID, &o.SalesOrderNo, &o.Customer, &o.Priority,
-				&o.RequiredQty, &o.ConsolidatedQty, &o.Complete); err != nil {
-				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-			}
+		var incomplete []waveOrderRow
+		for _, o := range orders {
 			if !o.Complete {
 				allDone = false
+				incomplete = append(incomplete, o)
 			}
-			orders = append(orders, o)
 		}
 
-		var leftover float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(GREATEST(COALESCE(picked_qty,0)-COALESCE(packed_qty,0),0)),0)
-			FROM pick_list_items WHERE pick_list_id=$1`, waveID).Scan(&leftover)
+		leftoverLines, leftover, err := leftoverBreakdown(c.Context(), db, waveID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if leftoverLines == nil {
+			leftoverLines = []leftoverLine{}
+		}
+		if incomplete == nil {
+			incomplete = []waveOrderRow{}
+		}
+
+		var waveStatus string
+		_ = db.QueryRow(c.Context(), `SELECT COALESCE(status,'') FROM pick_lists WHERE id=$1`, waveID).Scan(&waveStatus)
 
 		return shared.OK(c, fiber.Map{
-			"wave_id": waveID, "orders": orders, "all_complete": allDone, "leftover_qty": leftover,
+			"wave_id": waveID, "orders": orders, "all_complete": allDone,
+			"leftover_qty": leftover, "leftover_breakdown": leftoverLines,
+			"incomplete_orders": incomplete,
+			"ready_to_reconcile": allDone && leftover <= 0.0001,
+			"wave_status": waveStatus,
 		})
 	}
 }
@@ -254,27 +330,274 @@ func reconcile(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid wave id")
 		}
 		var body struct {
-			Force bool   `json:"force"`
-			Note  string `json:"note"`
+			Force      bool   `json:"force"`
+			Note       string `json:"note"`
+			Resolution string `json:"resolution"` // return_to_stock | write_off | none
 		}
 		_ = shared.Bind(c, &body)
-
-		var leftover float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(GREATEST(COALESCE(picked_qty,0)-COALESCE(packed_qty,0),0)),0)
-			FROM pick_list_items WHERE pick_list_id=$1`, waveID).Scan(&leftover)
-		if leftover > 0.0001 && !body.Force {
-			return shared.Err(c, fiber.StatusConflict,
-				"leftover stock at packing location — investigate or force reconcile")
+		if body.Resolution == "" {
+			body.Resolution = "none"
 		}
-		_, err = db.Exec(c.Context(), `
-			UPDATE pick_lists SET status='completed' WHERE id=$1 AND picking_mode='wave'`, waveID)
+
+		var waveStatus string
+		var whID, packLocID *int
+		if err := db.QueryRow(c.Context(), `
+			SELECT COALESCE(status,''), warehouse_id, packing_location_id
+			FROM pick_lists WHERE id=$1`, waveID).Scan(&waveStatus, &whID, &packLocID); err != nil {
+			if err == pgx.ErrNoRows {
+				return shared.Err(c, fiber.StatusNotFound, "wave not found")
+			}
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if waveStatus == "completed" {
+			return shared.OK(c, fiber.Map{"wave_id": waveID, "reconciled": true, "already": true})
+		}
+
+		orders, err := waveOrders(c.Context(), db, waveID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		var incomplete []waveOrderRow
+		for _, o := range orders {
+			if !o.Complete {
+				incomplete = append(incomplete, o)
+			}
+		}
+		leftoverLines, leftover, err := leftoverBreakdown(c.Context(), db, waveID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		clean := leftover <= 0.0001 && len(incomplete) == 0
+		if !clean {
+			if !body.Force {
+				if leftoverLines == nil {
+					leftoverLines = []leftoverLine{}
+				}
+				if incomplete == nil {
+					incomplete = []waveOrderRow{}
+				}
+				return c.Status(fiber.StatusConflict).JSON(fiber.Map{
+					"ok":    false,
+					"error": "wave not ready — leftover stock or incomplete orders. Force reconcile with a reason to close it out.",
+					"data": fiber.Map{
+						"leftover_qty":       leftover,
+						"leftover_breakdown": leftoverLines,
+						"incomplete_orders":  incomplete,
+					},
+				})
+			}
+			if strings.TrimSpace(body.Note) == "" {
+				return shared.Err(c, fiber.StatusBadRequest, "reason required to force reconcile")
+			}
+			if !rbac.HasPermission(c, "picking.override") {
+				return shared.Err(c, fiber.StatusForbidden, "picking.override required to force reconcile")
+			}
+			if leftover > 0.0001 && body.Resolution == "none" {
+				return shared.Err(c, fiber.StatusBadRequest, "resolution required for leftover stock: return_to_stock or write_off")
+			}
+		} else {
+			body.Resolution = "none"
+		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		if leftover > 0.0001 {
+			switch body.Resolution {
+			case "return_to_stock":
+				if err := returnLeftoverToStock(c.Context(), tx, waveID, whID, packLocID, leftoverLines); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, "return to stock: "+err.Error())
+				}
+			case "write_off":
+				if err := writeOffLeftover(c.Context(), tx, waveID, whID, packLocID, leftoverLines); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, "write off: "+err.Error())
+				}
+			}
+		}
+
+		// Any order still short after reconciliation gets its shortfall
+		// captured as a proper item-level backorder so demand isn't silently
+		// dropped (and doesn't collide with other waves' backorder lines).
+		var whName string
+		if whID != nil {
+			_ = tx.QueryRow(c.Context(), `SELECT COALESCE(name,code) FROM warehouses WHERE id=$1`, *whID).Scan(&whName)
+		}
+		for _, o := range incomplete {
+			if o.ShortQty <= 0.0001 {
+				continue
+			}
+			shortLines, err := waveOrderShortageLines(c.Context(), tx, waveID, o.SalesOrderID)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, "shortage lines: "+err.Error())
+			}
+			if _, _, err := shared.CreateBackorderFromShortages(c.Context(), tx, waveID, o.SalesOrderNo, o.Customer, whName, shortLines); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, "backorder shortfall: "+err.Error())
+			}
+		}
+
+		leftoverJSON, _ := json.Marshal(leftoverLines)
+		incompleteJSON, _ := json.Marshal(incomplete)
+		if _, err := tx.Exec(c.Context(), `
+			INSERT INTO wave_reconciliations (
+				pick_list_id, leftover_qty, leftover_breakdown, incomplete_orders,
+				resolution, forced, reason, resolved_by
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			waveID, leftover, leftoverJSON, incompleteJSON, body.Resolution, !clean, body.Note, userID(c)); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "audit log: "+err.Error())
+		}
+
+		if _, err := tx.Exec(c.Context(), `
+			UPDATE pick_lists SET status='completed' WHERE id=$1`, waveID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if !clean {
+			notifications.Emit(c.Context(), db, "warning", "Wave force-reconciled",
+				"Wave "+strconv.Itoa(waveID)+" closed with "+body.Resolution+" — "+body.Note, 0)
+		}
+
 		return shared.OK(c, fiber.Map{
-			"wave_id": waveID, "reconciled": true, "leftover_qty": leftover, "note": body.Note,
+			"wave_id": waveID, "reconciled": true, "forced": !clean,
+			"leftover_qty": leftover, "resolution": body.Resolution,
+			"incomplete_orders": len(incomplete),
 		})
+	}
+}
+
+// returnLeftoverToStock moves unconsolidated picked stock from the packing
+// location back into a storage location in the same warehouse, so it isn't
+// stranded at packing and isn't lost from stock either.
+func returnLeftoverToStock(ctx context.Context, tx shared.DBTX, waveID int, whID, packLocID *int, lines []leftoverLine) error {
+	if packLocID == nil || whID == nil {
+		return errNoPackingContext
+	}
+	for _, l := range lines {
+		if l.Qty <= 0 {
+			continue
+		}
+		var storageLocID int
+		// Prefer a location already holding this item (put it back where it came from).
+		err := tx.QueryRow(ctx, `
+			SELECT wl.id FROM stock_location_balances slb
+			JOIN warehouse_locations wl ON wl.id = slb.location_id
+			WHERE slb.item_code=$1 AND wl.warehouse_id=$2 AND wl.location_type IN ('storage','pick_face')
+			  AND COALESCE(wl.disabled,false)=false
+			ORDER BY slb.actual_qty DESC LIMIT 1`, l.ItemCode, *whID).Scan(&storageLocID)
+		if err != nil {
+			err = tx.QueryRow(ctx, `
+				SELECT id FROM warehouse_locations
+				WHERE warehouse_id=$1 AND location_type='storage' AND COALESCE(disabled,false)=false
+				ORDER BY id LIMIT 1`, *whID).Scan(&storageLocID)
+		}
+		if err != nil {
+			return err
+		}
+		if err := shared.AdjustLocationQtyTx(ctx, tx, l.ItemCode, *whID, *packLocID, "", -l.Qty); err != nil {
+			return err
+		}
+		if err := shared.AdjustLocationQtyTx(ctx, tx, l.ItemCode, *whID, storageLocID, "", l.Qty); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeOffLeftover removes stranded leftover stock from the books entirely
+// (shrinkage / miscount write-off) and posts a ledger entry for traceability.
+func writeOffLeftover(ctx context.Context, tx shared.DBTX, waveID int, whID, packLocID *int, lines []leftoverLine) error {
+	if packLocID == nil || whID == nil {
+		return errNoPackingContext
+	}
+	var whName string
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(name,code) FROM warehouses WHERE id=$1`, *whID).Scan(&whName)
+	for _, l := range lines {
+		if l.Qty <= 0 {
+			continue
+		}
+		if err := shared.AdjustLocationQtyTx(ctx, tx, l.ItemCode, *whID, *packLocID, "", -l.Qty); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO stock_ledger_entries (
+				item_code, warehouse, actual_qty, voucher_type, voucher_no,
+				posting_date, posting_datetime, creation
+			) VALUES ($1,$2,$3,'Wave Reconcile Write-off',$4,CURRENT_DATE,NOW(),NOW())`,
+			l.ItemCode, whName, -l.Qty, "WAVE-"+strconv.Itoa(waveID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// waveOrderShortageLines returns the per-item shortfall (required minus
+// consolidated) for one sales order within a wave, for backorder creation.
+func waveOrderShortageLines(ctx context.Context, db shared.DBTX, waveID, salesOrderID int) ([]shared.ShortageLine, error) {
+	rows, err := db.Query(ctx, `
+		SELECT item_code, SUM(required_qty) - SUM(consolidated_qty) AS short_qty
+		FROM wave_order_lines
+		WHERE pick_list_id=$1 AND sales_order_id=$2
+		GROUP BY item_code
+		HAVING SUM(required_qty) - SUM(consolidated_qty) > 0.0001`, waveID, salesOrderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var lines []shared.ShortageLine
+	for rows.Next() {
+		var l shared.ShortageLine
+		if err := rows.Scan(&l.ItemCode, &l.Qty); err != nil {
+			return nil, err
+		}
+		lines = append(lines, l)
+	}
+	return lines, rows.Err()
+}
+
+func listReconciliations(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		waveID, err := strconv.Atoi(c.Params("waveId"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid wave id")
+		}
+		rows, err := db.Query(c.Context(), `
+			SELECT id, leftover_qty, COALESCE(leftover_breakdown,'[]'), COALESCE(incomplete_orders,'[]'),
+			       resolution, forced, COALESCE(reason,''), resolved_by, resolved_at::text
+			FROM wave_reconciliations WHERE pick_list_id=$1 ORDER BY resolved_at DESC`, waveID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error()+" — apply migrations/052_wave_reconciliations.sql")
+		}
+		defer rows.Close()
+		type row struct {
+			ID                int             `json:"id"`
+			LeftoverQty       float64         `json:"leftover_qty"`
+			LeftoverBreakdown json.RawMessage `json:"leftover_breakdown"`
+			IncompleteOrders  json.RawMessage `json:"incomplete_orders"`
+			Resolution        string          `json:"resolution"`
+			Forced            bool            `json:"forced"`
+			Reason            string          `json:"reason"`
+			ResolvedBy        *int            `json:"resolved_by"`
+			ResolvedAt        string          `json:"resolved_at"`
+		}
+		var list []row
+		for rows.Next() {
+			var r row
+			if err := rows.Scan(&r.ID, &r.LeftoverQty, &r.LeftoverBreakdown, &r.IncompleteOrders,
+				&r.Resolution, &r.Forced, &r.Reason, &r.ResolvedBy, &r.ResolvedAt); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			list = append(list, r)
+		}
+		if list == nil {
+			list = []row{}
+		}
+		return shared.OK(c, list)
 	}
 }
 

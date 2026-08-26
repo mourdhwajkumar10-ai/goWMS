@@ -48,9 +48,7 @@ export default function Backorders() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-lg font-semibold">Backorders</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            v2 supports multi-SO (migration 010). v1 keeps UNIQUE(sales_order_no).
-          </p>
+
         </div>
         <div className="flex gap-2">
           <button className={tab === 'v2' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('v2')}>v2</button>

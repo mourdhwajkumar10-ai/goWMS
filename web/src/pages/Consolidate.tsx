@@ -22,6 +22,10 @@ export default function Consolidate() {
   const [reason, setReason] = useState('')
   const [qty, setQty] = useState(1)
   const [busy, setBusy] = useState(false)
+  const [forceOpen, setForceOpen] = useState(false)
+  const [forceReason, setForceReason] = useState('')
+  const [forceResolution, setForceResolution] = useState<'return_to_stock' | 'write_off'>('return_to_stock')
+  const [reconcileBusy, setReconcileBusy] = useState(false)
 
   const loadStatus = useCallback(async () => {
     if (!waveId) return
@@ -98,15 +102,56 @@ export default function Consolidate() {
     }
   }
 
-  const reconcile = async (force = false) => {
-    if (!waveId) return
-    const r = await api.post<{ leftover_qty?: number }>(`/consolidate/${waveId}/reconcile`, { force })
-    if (!r.ok) {
-      notify({ type: 'error', title: 'Reconcile blocked', message: r.error || '' })
+  const reconcile = async () => {
+    if (!waveId || reconcileBusy) return
+    setReconcileBusy(true)
+    try {
+      const r = await api.post<{ leftover_qty?: number }>(`/consolidate/${waveId}/reconcile`, { force: false })
+      if (!r.ok) {
+        // Backend reports a structured breakdown when the wave isn't clean;
+        // open the force-reconcile panel instead of just erroring out.
+        setForceOpen(true)
+        notify({ type: 'warning', title: 'Wave not ready', message: r.error || 'Leftover stock or incomplete orders remain' })
+        await loadStatus()
+        return
+      }
+      notify({ type: 'success', title: 'Wave reconciled', message: `leftover ${r.data?.leftover_qty ?? 0}` })
+      setForceOpen(false)
+      setForceReason('')
+      await loadStatus()
+    } finally {
+      setReconcileBusy(false)
+    }
+  }
+
+  const forceReconcile = async () => {
+    if (!waveId || reconcileBusy) return
+    if (!forceReason.trim()) {
+      notify({ type: 'error', title: 'Reason required', message: 'Explain why this wave is being force-closed' })
       return
     }
-    notify({ type: 'success', title: 'Wave reconciled', message: `leftover ${r.data?.leftover_qty ?? 0}` })
-    await loadStatus()
+    setReconcileBusy(true)
+    try {
+      const r = await api.post<any>(`/consolidate/${waveId}/reconcile`, {
+        force: true,
+        note: forceReason.trim(),
+        resolution: forceResolution,
+      })
+      if (!r.ok) {
+        notify({ type: 'error', title: 'Force reconcile failed', message: r.error || '' })
+        return
+      }
+      notify({
+        type: 'success',
+        title: 'Wave force-reconciled',
+        message: `${r.data?.resolution || forceResolution} · ${r.data?.incomplete_orders ?? 0} order(s) sent to backorder`,
+      })
+      setForceOpen(false)
+      setForceReason('')
+      await loadStatus()
+    } finally {
+      setReconcileBusy(false)
+    }
   }
 
   const board = (
@@ -115,21 +160,77 @@ export default function Consolidate() {
       {(status?.orders || []).map((o: any) => (
         <div key={o.sales_order_id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
           <span>{o.sales_order_no} · {o.customer}</span>
-          <span style={{ color: o.complete ? 'var(--green, #2e7d32)' : 'inherit' }}>
-            {o.consolidated_qty}/{o.required_qty} {o.complete ? '✓' : ''}
+          <span style={{ color: o.complete ? 'var(--green, #2e7d32)' : 'var(--amber, #b45309)' }}>
+            {o.consolidated_qty}/{o.required_qty} {o.complete ? '✓' : `short ${o.short_qty ?? (o.required_qty - o.consolidated_qty)}`}
           </span>
         </div>
       ))}
       {status && (
-        <div style={{ fontSize: 12, opacity: 0.75 }}>Leftover in pool: {status.leftover_qty}</div>
+        <div style={{ fontSize: 12, opacity: 0.75 }}>
+          Leftover in pool: {status.leftover_qty}
+          {status.ready_to_reconcile ? ' · ready to reconcile' : ' · not ready'}
+        </div>
       )}
+      {(status?.leftover_breakdown || []).length > 0 && (
+        <div style={{ fontSize: 12, borderTop: '1px solid var(--border, #e5e7eb)', paddingTop: 6 }}>
+          <div style={{ opacity: 0.7, marginBottom: 2 }}>Leftover by item</div>
+          {status.leftover_breakdown.map((l: any) => (
+            <div key={l.item_code} style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>{l.item_code}</span><span>{l.qty}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+
+  const forcePanel = forceOpen && (
+    <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8, borderColor: 'var(--amber, #b45309)' }}>
+      <div className="scan-section-title">Force reconcile — supervisor only</div>
+      <div style={{ fontSize: 12, opacity: 0.8 }}>
+        This wave has leftover stock and/or incomplete orders. Forcing will
+        {' '}back-order every remaining short line and either return leftover
+        stock to storage or write it off, with a full audit trail.
+      </div>
+      {(status?.incomplete_orders || []).length > 0 && (
+        <div style={{ fontSize: 12 }}>
+          <div style={{ opacity: 0.7 }}>Will back-order:</div>
+          {status.incomplete_orders.map((o: any) => (
+            <div key={o.sales_order_id}>{o.sales_order_no} · short {o.short_qty}</div>
+          ))}
+        </div>
+      )}
+      {(status?.leftover_qty ?? 0) > 0.0001 && (
+        <div style={{ display: 'flex', gap: 8, fontSize: 13 }}>
+          <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input type="radio" checked={forceResolution === 'return_to_stock'} onChange={() => setForceResolution('return_to_stock')} />
+            Return leftover to stock
+          </label>
+          <label style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+            <input type="radio" checked={forceResolution === 'write_off'} onChange={() => setForceResolution('write_off')} />
+            Write off leftover
+          </label>
+        </div>
+      )}
+      <input
+        className="scan-text-input"
+        placeholder="Reason (required)"
+        value={forceReason}
+        onChange={e => setForceReason(e.target.value)}
+      />
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button type="button" className="scan-btn scan-btn-primary" disabled={reconcileBusy} onClick={() => void forceReconcile()}>
+          {reconcileBusy ? 'Working…' : 'Force reconcile'}
+        </button>
+        <button type="button" className="scan-btn scan-btn-outline" onClick={() => setForceOpen(false)}>Cancel</button>
+      </div>
     </div>
   )
 
   const job = !waveId ? (
     <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div className="scan-section-title">Wave pick list ID</div>
-      <input className="scan-count-input" value={waveId} onChange={e => setWaveId(e.target.value)} placeholder="Wave pick list id" />
+      <input className="scan-text-input" value={waveId} onChange={e => setWaveId(e.target.value)} placeholder="Wave pick list id" />
       <button type="button" className="scan-btn scan-btn-primary" onClick={() => void loadStatus()}>Open</button>
     </div>
   ) : phase === 'item' ? (
@@ -173,8 +274,9 @@ export default function Consolidate() {
             Skip / next item
           </button>
           {board}
-          <button type="button" className="scan-btn scan-btn-outline" onClick={() => void reconcile(false)}>
-            Reconcile wave
+          {forcePanel}
+          <button type="button" className="scan-btn scan-btn-outline" disabled={reconcileBusy} onClick={() => void reconcile()}>
+            {reconcileBusy ? 'Working…' : 'Reconcile wave'}
           </button>
         </div>
       }
@@ -196,8 +298,9 @@ export default function Consolidate() {
         eyebrow="Outbound"
         title="Wave consolidation"
         subtitle="Scan item → put to order box"
-        actions={<Button onClick={() => void reconcile(false)}>Reconcile</Button>}
+        actions={<Button disabled={reconcileBusy} onClick={() => void reconcile()}>Reconcile</Button>}
       />
+      {forcePanel}
       {job}
     </div>
   )

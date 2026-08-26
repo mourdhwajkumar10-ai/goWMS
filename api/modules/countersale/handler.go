@@ -19,6 +19,7 @@ import (
 func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Use(rbac.RequirePermission("counter_sale.access"))
 	r.Post("/", createSession(db))
+	r.Get("/invoice/:name/pdf", downloadInvoicePDF(db))
 	r.Get("/:id", getSession(db))
 	r.Post("/:id/scan", scanLine(db))
 	r.Post("/:id/complete", completeSession(db))
@@ -361,6 +362,14 @@ func scanLine(db *pgxpool.Pool) fiber.Handler {
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
+		}
+		if body.Override {
+			if strings.TrimSpace(body.OverrideReason) == "" {
+				return shared.Err(c, fiber.StatusBadRequest, "override_reason required")
+			}
+			if !rbac.HasPermission(c, "picking.override") {
+				return shared.Err(c, fiber.StatusForbidden, "supervisor override required — ask a supervisor to approve this scan")
+			}
 		}
 		tx, err := db.Begin(c.Context())
 		if err != nil {

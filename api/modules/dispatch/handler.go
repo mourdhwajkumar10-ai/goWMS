@@ -206,16 +206,21 @@ func loadBox(db *pgxpool.Pool) fiber.Handler {
 			tripID = 0
 		}
 
-		var body struct {
-			BoxID  int `json:"box_id"`
-			TripID int `json:"trip_id"`
-		}
-		if err := shared.Bind(c, &body); err != nil {
-			return err
-		}
-		if body.BoxID == 0 {
-			return shared.Err(c, fiber.StatusBadRequest, "box_id required")
-		}
+	var body struct {
+		BoxID  int    `json:"box_id"`
+		Label  string `json:"label"`
+		TripID int    `json:"trip_id"`
+	}
+	if err := shared.Bind(c, &body); err != nil {
+		return err
+	}
+	// Accept label (string) and resolve to box_id if needed
+	if body.BoxID == 0 && body.Label != "" {
+		_ = db.QueryRow(c.Context(), `SELECT id FROM boxes WHERE label=$1`, body.Label).Scan(&body.BoxID)
+	}
+	if body.BoxID == 0 {
+		return shared.Err(c, fiber.StatusBadRequest, "box_id or label required")
+	}
 		if tripID == 0 {
 			tripID = body.TripID
 		}

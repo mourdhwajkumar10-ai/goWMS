@@ -37,6 +37,24 @@ function stopTracks(stream: MediaStream | null) {
   }
 }
 
+// Camera on/off is a per-device preference: once a picker turns it off (glare,
+// battery, privacy on the floor), it should stay off across screens instead of
+// re-prompting for camera access on every new pick/pack/consolidate line.
+const CAMERA_PREF_KEY = "gowms_camera_on";
+
+function readCameraPref(): boolean {
+  try {
+    const v = localStorage.getItem(CAMERA_PREF_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+}
+
+function writeCameraPref(on: boolean) {
+  try { localStorage.setItem(CAMERA_PREF_KEY, on ? "1" : "0"); } catch {}
+}
+
 export default function CameraScanner({
   open,
   onClose,
@@ -52,7 +70,7 @@ export default function CameraScanner({
   const detectorRef = useRef<any>(null);
   const animRef = useRef<number>(0);
   const sessionRef = useRef(0);
-  const cameraOnRef = useRef(true);
+  const cameraOnRef = useRef(readCameraPref());
   const busyRef = useRef(false);
   const lastCodeRef = useRef<{ value: string; at: number } | null>(null);
   const onScanRef = useRef(onScan);
@@ -63,7 +81,7 @@ export default function CameraScanner({
   continuousRef.current = continuous;
 
   const [torchOn, setTorchOn] = useState(false);
-  const [cameraOn, setCameraOn] = useState(true);
+  const [cameraOn, setCameraOn] = useState(readCameraPref);
   const [cameraState, setCameraState] = useState<CameraState>("starting");
   const [facing, setFacing] = useState<"environment" | "user">("environment");
   const facingRef = useRef<"environment" | "user">("environment");
@@ -119,6 +137,7 @@ export default function CameraScanner({
   const toggleCamera = useCallback(() => {
     if (cameraOnRef.current) {
       cameraOnRef.current = false;
+      writeCameraPref(false);
       bumpSession();
       setTorchOn(false);
       setScanning(false);
@@ -129,6 +148,7 @@ export default function CameraScanner({
       return;
     }
     cameraOnRef.current = true;
+    writeCameraPref(true);
     setError("");
     setCameraState("starting");
     setCameraOn(true);

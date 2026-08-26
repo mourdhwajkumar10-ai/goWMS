@@ -40,7 +40,25 @@ func TestRequirePermissionMiddlewareDeny(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			app := fiber.New()
+			// shared.Err writes the JSON body itself and returns *fiber.Error
+			// only so nested callers stop; without a custom ErrorHandler,
+			// Fiber's default handler overwrites that body with plain text.
+			// Mirror cmd/server/main.go's handler so this test exercises the
+			// same body-already-sent behavior as production.
+			app := fiber.New(fiber.Config{
+				ErrorHandler: func(c *fiber.Ctx, err error) error {
+					if len(c.Response().Body()) > 0 {
+						return nil
+					}
+					code := fiber.StatusInternalServerError
+					msg := err.Error()
+					if e, ok := err.(*fiber.Error); ok {
+						code = e.Code
+						msg = e.Message
+					}
+					return c.Status(code).JSON(fiber.Map{"error": msg, "ok": false})
+				},
+			})
 			app.Get("/t", func(c *fiber.Ctx) error {
 				c.Locals("role", tt.role)
 				return c.Next()

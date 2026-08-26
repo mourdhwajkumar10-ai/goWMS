@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { api } from '../services/api'
+import { api, getToken } from '../services/api'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
 import GuidedPickJob from '../components/GuidedPickJob'
@@ -37,6 +37,7 @@ export default function CounterSale() {
   const [paymentMode, setPaymentMode] = useState('Cash')
   const [receipt, setReceipt] = useState<any>(null)
   const [busy, setBusy] = useState(false)
+  const [pdfBusy, setPdfBusy] = useState(false)
 
   useEffect(() => {
     api.get<any[]>('/masterdata/warehouses').then(r => { if (r.ok) setWarehouses(r.data || []) })
@@ -127,6 +128,32 @@ export default function CounterSale() {
     }
   }
 
+  const downloadReceiptPdf = async () => {
+    const invoiceName = receipt?.invoice?.name
+    if (!invoiceName || pdfBusy) return
+    setPdfBusy(true)
+    try {
+      const url = api.counterSaleInvoicePdfUrl(invoiceName)
+      const token = getToken()
+      const res = await fetch(url, { headers: token ? { Authorization: `Bearer ${token}` } : {} })
+      if (!res.ok) {
+        notify({ type: 'error', title: 'PDF failed', message: `HTTP ${res.status}` })
+        return
+      }
+      const blob = await res.blob()
+      const objUrl = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = `${invoiceName}.pdf`
+      a.click()
+      URL.revokeObjectURL(objUrl)
+    } catch (e: any) {
+      notify({ type: 'error', title: 'PDF failed', message: e?.message || 'Network error' })
+    } finally {
+      setPdfBusy(false)
+    }
+  }
+
   const cancel = async () => {
     if (!session?.pick_list_id) {
       setStep('cart')
@@ -147,22 +174,22 @@ export default function CounterSale() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
                 <label className="erpnext-label">Customer</label>
-                <input className="erpnext-input scan-count-input" value={customer} onChange={e => setCustomer(e.target.value)} />
+                <input className="erpnext-input scan-text-input" value={customer} onChange={e => setCustomer(e.target.value)} />
               </div>
               <div>
                 <label className="erpnext-label">Warehouse</label>
-                <select className="erpnext-input scan-count-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+                <select className="erpnext-input scan-text-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
                   <option value="">Default</option>
                   {warehouses.map((w: any) => <option key={w.id} value={w.id}>{w.code || w.name}</option>)}
                 </select>
               </div>
               <div>
                 <label className="erpnext-label">GSTIN</label>
-                <input className="erpnext-input scan-count-input" value={gstin} onChange={e => setGstin(e.target.value)} />
+                <input className="erpnext-input scan-text-input" value={gstin} onChange={e => setGstin(e.target.value)} />
               </div>
               <div>
                 <label className="erpnext-label">Place of supply</label>
-                <input className="erpnext-input scan-count-input" value={place} onChange={e => setPlace(e.target.value)} />
+                <input className="erpnext-input scan-text-input" value={place} onChange={e => setPlace(e.target.value)} />
               </div>
             </div>
 
@@ -212,15 +239,13 @@ export default function CounterSale() {
       )}
 
       {step === 'pick' && session?.pick_list_id && (
-        <>
-          <GuidedPickJob
-            pickListId={session.pick_list_id}
-            hideCustomer
-            onComplete={() => setStep('finish')}
-            onExit={() => void cancel()}
-          />
-          <Button disabled={busy} onClick={() => setStep('finish')}>Finish sale</Button>
-        </>
+        <GuidedPickJob
+          pickListId={session.pick_list_id}
+          hideCustomer
+          disableCantFind
+          onComplete={() => setStep('finish')}
+          onExit={() => void cancel()}
+        />
       )}
 
       {step === 'finish' && !receipt && (
@@ -240,6 +265,9 @@ export default function CounterSale() {
           </div>
           <div>Total <strong>₹{(session?.grand_total ?? totals.grand).toFixed(2)}</strong></div>
           <Button disabled={busy} onClick={() => void complete()}>Issue invoice & ship</Button>
+          <div className="scan-select-card-sub" style={{ fontSize: 12 }}>
+            Idle sessions auto-cancel and release stock after ~20 minutes.
+          </div>
           <button type="button" className="scan-btn scan-btn-outline" onClick={() => void cancel()}>Cancel sale</button>
         </div>
       )}
@@ -250,6 +278,9 @@ export default function CounterSale() {
           <div>Invoice <strong>{receipt.invoice?.name}</strong></div>
           <div>₹{Number(receipt.invoice?.grand_total || 0).toFixed(2)} · {receipt.payment_mode}</div>
           <div>Box {receipt.box_label}</div>
+          <button type="button" className="scan-btn scan-btn-outline" disabled={pdfBusy} onClick={() => void downloadReceiptPdf()}>
+            {pdfBusy ? 'Preparing PDF…' : 'Download PDF'}
+          </button>
           <Button onClick={() => { setReceipt(null); setSession(null); setLines([{ item_code: '', qty: 1, discount_pct: 0 }]); setStep('cart') }}>
             New sale
           </Button>

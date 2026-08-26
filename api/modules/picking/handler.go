@@ -9,6 +9,7 @@ import (
 
 	"goWMS/api/modules/fulfillment"
 	"goWMS/api/modules/notifications"
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -24,6 +25,7 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/lists", listPickLists(db)) // frontend alias
 	r.Get("/:id/print", printPickList(db))
 	r.Post("/:id/cancel", cancelPickList(db))
+	RegisterShortageFlags(r, db)
 	r.Get("/:id", getPickList(db))
 }
 
@@ -404,6 +406,14 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 		}
 		if body.PickListID == 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "pick_list_id required")
+		}
+		if body.Override {
+			if strings.TrimSpace(body.OverrideReason) == "" {
+				return shared.Err(c, fiber.StatusBadRequest, "override_reason required")
+			}
+			if !rbac.HasPermission(c, "picking.override") {
+				return shared.Err(c, fiber.StatusForbidden, "supervisor override required — ask a supervisor to approve this scan")
+			}
 		}
 
 		tx, err := db.Begin(c.Context())

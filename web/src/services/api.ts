@@ -344,6 +344,12 @@ export const api = {
   pickCancel: (id: number) => post<any>(`/picking/${id}/cancel`, {}),
   pickWave: (data: any) => post<any>("/picking/wave", data),
   pickWaves: () => get<any[]>("/picking/waves"),
+  pickCantFind: (pickListId: number, data: any) => post<any>(`/picking/${pickListId}/cant-find`, data),
+  shortageFlags: (status?: string) => get<any[]>(`/picking/shortage-flags${status ? `?status=${status}` : ""}`),
+  shortageFlagApprove: (flagId: number, note?: string) =>
+    post<any>(`/picking/shortage-flags/${flagId}/approve`, { note: note || "" }),
+  shortageFlagReject: (flagId: number, note: string) =>
+    post<any>(`/picking/shortage-flags/${flagId}/reject`, { note }),
 
   // Counter sale
   counterSaleCreate: (data: any) => post<any>("/counter-sale/", data),
@@ -351,6 +357,7 @@ export const api = {
   counterSaleScan: (id: number, data: any) => post<any>(`/counter-sale/${id}/scan`, data),
   counterSaleComplete: (id: number, data: any) => post<any>(`/counter-sale/${id}/complete`, data),
   counterSaleCancel: (id: number) => post<any>(`/counter-sale/${id}/cancel`, {}),
+  counterSaleInvoicePdfUrl: (invoiceName: string) => `${BASE}/counter-sale/invoice/${encodeURIComponent(invoiceName)}/pdf`,
 
   // Wave consolidation
   consolidateScanItem: (data: any) => post<any>("/consolidate/scan-item", data),
@@ -358,6 +365,7 @@ export const api = {
   consolidateStatus: (waveId: number) => get<any>(`/consolidate/${waveId}/status`),
   consolidateReconcile: (waveId: number, data?: any) =>
     post<any>(`/consolidate/${waveId}/reconcile`, data || {}),
+  consolidateReconciliations: (waveId: number) => get<any[]>(`/consolidate/${waveId}/reconciliations`),
 
   // Packing
   packSessions: () => get<any[]>("/packing/sessions"),
