@@ -625,6 +625,7 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		allocatedAny := false
+		shortages := make([]shared.ShortageLine, 0)
 		for _, sl := range soLines {
 			cands, err := shared.ListFEFOCandidates(c.Context(), tx, whID, sl.ItemCode, true)
 			if err != nil {
@@ -674,10 +675,17 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 				if err != nil {
 					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 				}
+				shortages = append(shortages, shared.ShortageLine{ItemCode: sl.ItemCode, Qty: remaining})
 			}
 		}
 		if !allocatedAny {
 			return shared.Err(c, fiber.StatusConflict, "insufficient stock to allocate any line (FEFO)")
+		}
+
+		boNo, boCreated, err := shared.CreateBackorderFromShortages(
+			c.Context(), tx, pickID, name, customer, whName, shortages)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
 		if err := tx.Commit(c.Context()); err != nil {
@@ -690,6 +698,7 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 		return shared.OK(c, fiber.Map{
 			"id": pickID, "pick_list_id": pickID, "name": pickName,
 			"pick_list_name": pickName, "sales_order": name, "warehouse_id": whID,
+			"shortage_lines": len(shortages), "backorder_auto": boCreated, "backorder_no": boNo,
 		})
 	}
 }

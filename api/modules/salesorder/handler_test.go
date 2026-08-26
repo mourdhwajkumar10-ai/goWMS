@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"goWMS/api/internal/testdb"
+	"goWMS/api/modules/shared"
 )
 
 func TestNetOpenDemandExcludesOpenReservations(t *testing.T) {
@@ -85,5 +86,47 @@ func TestOpenPickGuardDetectsExistingList(t *testing.T) {
 		LIMIT 1`, f.SalesOrderNo).Scan(&id, &name)
 	if err == nil {
 		t.Error("guard still blocks after cancel, want no open list")
+	}
+}
+
+func TestBackorderCreatedForShortage(t *testing.T) {
+	tx := testdb.Tx(t)
+	ctx := context.Background()
+	f := testdb.Seed(t, tx)
+
+	var pickID int
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO pick_lists (name, sales_order_no, warehouse_id, status, picking_mode)
+		VALUES ('PL-TEST-BO', $1, $2, 'open', 'scan') RETURNING id`,
+		f.SalesOrderNo, f.WarehouseID).Scan(&pickID); err != nil {
+		t.Fatalf("insert pick list: %v", err)
+	}
+
+	boNo, created, err := shared.CreateBackorderFromShortages(ctx, tx, pickID,
+		f.SalesOrderNo, "Test Customer", f.WarehouseName,
+		[]shared.ShortageLine{{ItemCode: f.ItemCode, Qty: 3}})
+	if err != nil {
+		t.Fatalf("create backorder: %v", err)
+	}
+	if !created || boNo == "" {
+		t.Fatalf("created=%v boNo=%q, want true and a number", created, boNo)
+	}
+
+	var lines int
+	if err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM backorder_lines_v2 bl
+		JOIN backorders_v2 b ON b.id = bl.backorder_id
+		WHERE b.backorder_no=$1`, boNo).Scan(&lines); err != nil {
+		t.Fatalf("count lines: %v", err)
+	}
+	if lines != 1 {
+		t.Errorf("backorder lines = %d, want 1", lines)
+	}
+
+	// No shortages must create nothing, without erroring.
+	_, created, err = shared.CreateBackorderFromShortages(ctx, tx, pickID,
+		f.SalesOrderNo, "Test Customer", f.WarehouseName, nil)
+	if err != nil || created {
+		t.Errorf("empty shortages: created=%v err=%v, want false and nil", created, err)
 	}
 }

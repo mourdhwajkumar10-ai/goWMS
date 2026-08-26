@@ -187,40 +187,37 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 
 		notifications.EmitPickCreated(c.Context(), db, name, body.SalesOrder)
 
-		// Auto-create backorder from shortage lines
-		shortageCount := 0
+		shortages := make([]shared.ShortageLine, 0)
 		for _, ln := range lines {
 			if ln.Status == "shortage" {
-				shortageCount++
+				shortages = append(shortages, shared.ShortageLine{ItemCode: ln.ItemCode, Qty: ln.OrderedQty})
 				notifications.EmitShortage(c.Context(), db, name, ln.ItemCode)
 			}
 		}
 		boCreated := false
 		var boNo string
-		if shortageCount > 0 {
-			var boID int
-			err = db.QueryRow(c.Context(), `
-				INSERT INTO backorders_v2 (backorder_no, sales_order_no, customer, notes, status, source_pick_list_id)
-				VALUES ('BO2-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('backorders_v2_id_seq')::TEXT,5,'0'),
-					$1,$2,$3,'pending',$4) RETURNING id, backorder_no`,
-				body.SalesOrder, body.Customer, "auto from pick create", id).Scan(&boID, &boNo)
+		if len(shortages) > 0 {
+			// Post-commit: match prior free-form behaviour (notifications already fired).
+			tx2, err := db.Begin(c.Context())
 			if err == nil {
-				boCreated = true
-				for _, ln := range lines {
-					if ln.Status != "shortage" {
-						continue
-					}
-					_, _ = db.Exec(c.Context(), `
-						INSERT INTO backorder_lines_v2 (backorder_id, item_code, qty, status)
-						VALUES ($1,$2,$3,'pending')`, boID, ln.ItemCode, ln.OrderedQty)
+				boNo, boCreated, err = shared.CreateBackorderFromShortages(
+					c.Context(), tx2, id, body.SalesOrder, body.Customer, whName, shortages)
+				if err != nil {
+					_ = tx2.Rollback(c.Context())
+					boCreated = false
+					boNo = ""
+				} else if err := tx2.Commit(c.Context()); err != nil {
+					boCreated = false
+					boNo = ""
+				} else if boCreated {
+					notifications.EmitBackorderCreated(c.Context(), db, boNo, len(shortages))
 				}
-				notifications.EmitBackorderCreated(c.Context(), db, boNo, shortageCount)
 			}
 		}
 
 		return shared.OK(c, fiber.Map{
 			"id": id, "name": name, "status": "open", "warehouse_id": whID,
-			"shortage_lines": shortageCount, "backorder_auto": boCreated, "backorder_no": boNo,
+			"shortage_lines": len(shortages), "backorder_auto": boCreated, "backorder_no": boNo,
 		})
 	}
 }
