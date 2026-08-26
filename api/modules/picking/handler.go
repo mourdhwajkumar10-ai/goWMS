@@ -472,12 +472,20 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 
 		// Auto-complete when all allocated lines are fully picked.
 		var remaining int
-		_ = tx.QueryRow(c.Context(), `
+		if err := tx.QueryRow(c.Context(), `
 			SELECT COUNT(*) FROM pick_list_items
 			WHERE pick_list_id=$1 AND COALESCE(allocated_qty,0) > 0
-			  AND COALESCE(picked_qty,0) < COALESCE(allocated_qty, ordered_qty)`).Scan(&remaining)
+			  AND COALESCE(picked_qty,0) < COALESCE(allocated_qty, ordered_qty)`,
+			body.PickListID).Scan(&remaining); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 		if remaining == 0 {
-			_, _ = tx.Exec(c.Context(), `UPDATE pick_lists SET status='completed' WHERE id=$1 AND COALESCE(stock_consumed,false)=false`, body.PickListID)
+			if _, err := tx.Exec(c.Context(),
+				`UPDATE pick_lists SET status='completed'
+				 WHERE id=$1 AND COALESCE(stock_consumed,false)=false`,
+				body.PickListID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
 
 		if err := tx.Commit(c.Context()); err != nil {
