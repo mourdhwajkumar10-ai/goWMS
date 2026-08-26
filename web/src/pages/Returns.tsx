@@ -3,6 +3,7 @@ import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import ItemAutocomplete from '../components/ItemAutocomplete'
 
 export default function Returns() {
   const [list, setList] = useState<any[]>([])
@@ -105,7 +106,7 @@ export default function Returns() {
             <div className="md:col-span-2"><label className="erpnext-label">Reason *</label><input className="erpnext-input" value={reason} onChange={e => setReason(e.target.value)} /></div>
             <div><label className="erpnext-label">Sales Invoice</label><input className="erpnext-input" value={invoice} onChange={e => setInvoice(e.target.value)} /></div>
             <div><label className="erpnext-label">Delivery Note</label><input className="erpnext-input" value={dnNo} onChange={e => setDnNo(e.target.value)} /></div>
-            <div><label className="erpnext-label">Item</label><input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} /></div>
+            <div><label className="erpnext-label">Item</label><ItemAutocomplete value={itemCode} onSelect={(found) => setItemCode(found.code)} onChangeText={(t) => setItemCode(t)} placeholder="Scan or type..." /></div>
             <div><label className="erpnext-label">Qty</label><input className="erpnext-input" type="number" value={qty} onChange={e => setQty(e.target.value)} /></div>
           </div>
           <button className="erpnext-btn-primary" onClick={create}>Create Claim</button>
@@ -155,7 +156,7 @@ export default function Returns() {
             <button className="erpnext-btn-primary" onClick={() => receive(selected.id)}>Mark Received</button>
           )}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div><label className="erpnext-label">Item</label><input className="erpnext-input" value={restockItem} onChange={e => setRestockItem(e.target.value)} /></div>
+            <div><label className="erpnext-label">Item</label><ItemAutocomplete value={restockItem} onSelect={(found) => setRestockItem(found.code)} onChangeText={(t) => setRestockItem(t)} placeholder="Scan or type..." /></div>
             <div><label className="erpnext-label">Qty</label><input className="erpnext-input" type="number" value={restockQty} onChange={e => setRestockQty(e.target.value)} /></div>
             <div><label className="erpnext-label">Hold/Damaged Location ID</label><input className="erpnext-input" value={locId} onChange={e => setLocId(e.target.value)} /></div>
           </div>

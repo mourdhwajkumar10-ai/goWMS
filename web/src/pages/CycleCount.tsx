@@ -43,7 +43,7 @@ export default function CycleCount() {
   const [countDrafts, setCountDrafts] = useState<Record<number, string>>({})
 
   const [tier, setTier] = useState('A')
-  const [scheduledDate, setScheduledDate] = useState('')
+  const [scheduledDate, setScheduledDate] = useState(new Date().toISOString().slice(0, 10))
   const [warehouse, setWarehouse] = useState('')
   const [aisle, setAisle] = useState('')
   const [warehouses, setWarehouses] = useState<any[]>([])

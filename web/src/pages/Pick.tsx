@@ -66,6 +66,8 @@ export default function Pick() {
 
   const [salesOrder, setSalesOrder] = useState('')
   const [customer, setCustomer] = useState('')
+  const [customerList, setCustomerList] = useState<any[]>([])
+  const [showCustDrop, setShowCustDrop] = useState(false)
   const [warehouseId, setWarehouseId] = useState('')
   const [items, setItems] = useState<{ item_code: string; qty: number }[]>([{ item_code: '', qty: 1 }])
   const emptyPickLine = () => ({ item_code: '', qty: 1 })
@@ -87,6 +89,7 @@ export default function Pick() {
     loadLists()
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
     api.soList('status=confirmed').then(r => { if (r.ok) setConfirmedSOs(r.data ?? []) })
+    api.customerList().then(r => { if (r.ok) setCustomerList(r.data ?? []) })
   }, [])
 
   const enterRfPick = (listId?: number | null) => {
@@ -615,9 +618,29 @@ export default function Pick() {
                 <label className="erpnext-label">Sales Order No</label>
                 <input className="erpnext-input" value={salesOrder} onChange={e => setSalesOrder(e.target.value)} placeholder="SO-001" />
               </div>
-              <div>
+              <div style={{ position: 'relative' }}>
                 <label className="erpnext-label">Customer</label>
-                <input className="erpnext-input" value={customer} onChange={e => setCustomer(e.target.value)} />
+                <input
+                  className="erpnext-input"
+                  value={customer}
+                  onFocus={() => setShowCustDrop(true)}
+                  onChange={e => { setCustomer(e.target.value); setShowCustDrop(true) }}
+                  onBlur={() => setTimeout(() => setShowCustDrop(false), 200)}
+                  placeholder="Type to search..."
+                />
+                {showCustDrop && customerList.length > 0 && (
+                  <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 200, overflowY: 'auto' }}>
+                    {customerList
+                      .filter((c: any) => !customer || (c.name || '').toLowerCase().includes(customer.toLowerCase()))
+                      .slice(0, 10)
+                      .map((c: any) => (
+                        <div key={c.id} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: 13 }} onMouseDown={() => { setCustomer(c.name); setShowCustDrop(false) }}>
+                          <div style={{ fontWeight: 600 }}>{c.name}</div>
+                          {c.customer_group && <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{c.customer_group}</div>}
+                        </div>
+                      ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="erpnext-label">Warehouse</label>

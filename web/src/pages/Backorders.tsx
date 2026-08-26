@@ -3,6 +3,7 @@ import { api, getToken } from '../services/api'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import ItemAutocomplete from '../components/ItemAutocomplete'
 
 export default function Backorders() {
   const [tab, setTab] = useState<'v1' | 'v2'>('v2')
@@ -10,6 +11,8 @@ export default function Backorders() {
   const [listV2, setListV2] = useState<any[]>([])
   const [so, setSo] = useState('')
   const [customer, setCustomer] = useState('')
+  const [customerList, setCustomerList] = useState<any[]>([])
+  const [showCustDrop, setShowCustDrop] = useState(false)
   const [notes, setNotes] = useState('')
   const [itemCode, setItemCode] = useState('')
   const [qty, setQty] = useState('1')
@@ -18,7 +21,7 @@ export default function Backorders() {
     api.backorderList().then(r => { if (r.ok) setList(r.data ?? []) })
     api.backorderV2List().then(r => { if (r.ok) setListV2(r.data ?? []) })
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); api.customerList().then(r => { if (r.ok) setCustomerList(r.data ?? []) }) }, [])
   const pager = useClientPager(tab === 'v2' ? listV2 : list)
 
   const create = async () => {
@@ -59,10 +62,10 @@ export default function Backorders() {
       <div className="erpnext-card p-4">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <div><label className="erpnext-label">Sales Order *</label><input className="erpnext-input" value={so} onChange={e => setSo(e.target.value)} /></div>
-          <div><label className="erpnext-label">Customer</label><input className="erpnext-input" value={customer} onChange={e => setCustomer(e.target.value)} /></div>
+          <div style={{ position: 'relative' }}><label className="erpnext-label">Customer</label><input className="erpnext-input" value={customer} onFocus={() => setShowCustDrop(true)} onChange={e => { setCustomer(e.target.value); setShowCustDrop(true) }} onBlur={() => setTimeout(() => setShowCustDrop(false), 200)} placeholder="Type to search..." />{showCustDrop && customerList.length > 0 && (<div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 200, overflowY: 'auto' }}>{customerList.filter((c: any) => !customer || (c.name || '').toLowerCase().includes(customer.toLowerCase())).slice(0, 10).map((c: any) => (<div key={c.id} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: 13 }} onMouseDown={() => { setCustomer(c.name); setShowCustDrop(false) }}><div style={{ fontWeight: 600 }}>{c.name}</div></div>))}</div>)}</div>
           {tab === 'v2' && (
             <>
-              <div><label className="erpnext-label">Item</label><input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} /></div>
+              <div><label className="erpnext-label">Item</label><ItemAutocomplete value={itemCode} onSelect={(found) => setItemCode(found.code)} onChangeText={(t) => setItemCode(t)} placeholder="Scan or type..." /></div>
               <div><label className="erpnext-label">Qty</label><input className="erpnext-input" type="number" value={qty} onChange={e => setQty(e.target.value)} /></div>
             </>
           )}

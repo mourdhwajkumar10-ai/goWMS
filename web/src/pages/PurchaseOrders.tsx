@@ -56,7 +56,7 @@ export default function PurchaseOrders() {
   const [company, setCompany] = useState('Nirvana')
   const [currency, setCurrency] = useState('INR')
   const [txnDate, setTxnDate] = useState(new Date().toISOString().slice(0, 10))
-  const [schDate, setSchDate] = useState('')
+  const [schDate, setSchDate] = useState(new Date().toISOString().slice(0, 10))
   const [setWarehouse, setSetWarehouse] = useState('')
   const [costCenter, setCostCenter] = useState('')
   const [project, setProject] = useState('')
