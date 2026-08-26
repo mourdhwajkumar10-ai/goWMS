@@ -412,56 +412,48 @@ export default function PutawayWizard() {
           <h1>Putaway</h1>
         </div>
 
-        <div className="pw-mode-grid">
-          <ButtonPress className="pw-mode-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }}>
-            <span className="pw-mode-icon">⇨</span>
-            <span className="pw-mode-label">By Zone</span>
-            <span className="pw-mode-subtitle">Batch putaway by HSN zone</span>
-          </ButtonPress>
-          <ButtonPress className="pw-mode-card" onClick={() => { setMode('item'); navigate('item_pick', 'forward') }}>
-            <span className="pw-mode-icon">📦</span>
-            <span className="pw-mode-label">By Item</span>
-            <span className="pw-mode-subtitle">Single item putaway</span>
-          </ButtonPress>
+        <div className="scan-select-list">
+          <button type="button" className="scan-select-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
+            <div className="scan-select-card-title">By Zone</div>
+            <div className="scan-select-card-sub">Batch putaway by HSN zone</div>
+            <div className="scan-select-card-meta">
+              <span>{queue.length} pending</span>
+              <span>{zones.length} zones</span>
+              <span style={{ color: 'var(--primary)' }}>Open →</span>
+            </div>
+          </button>
+          <button type="button" className="scan-select-card" onClick={() => { setMode('item'); navigate('item_pick', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
+            <div className="scan-select-card-title">By Item</div>
+            <div className="scan-select-card-sub">Single item putaway</div>
+            <div className="scan-select-card-meta">
+              <span>{queue.length} in queue</span>
+              <span style={{ color: 'var(--primary)' }}>Open →</span>
+            </div>
+          </button>
         </div>
 
-        <div className="pw-queue-banner">
-          <span className="pw-queue-count">{queue.length}</span>
-          <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>items pending in staging</div>
-            <div className="pw-queue-label">Ready for putaway to storage bins</div>
+        {queue.length === 0 && !dataLoading && (
+          <div className="scan-empty" style={{ marginTop: 8 }}>
+            <div className="scan-empty-icon"><span style={{ fontSize: 40, opacity: 0.5 }}>⇨</span></div>
+            <div className="scan-empty-title">All clear!</div>
+            <div className="scan-empty-msg">No items waiting for putaway</div>
           </div>
-        </div>
-
-        {dataLoading ? (
-          <SkeletonCards count={2} />
-        ) : queue.length > 0 ? (
-          <div>
-            <p style={{ fontWeight: 600, fontSize: 13, marginBottom: 8, color: 'var(--text-dim, #888)' }}>Top items:</p>
-            {queue.slice(0, 5).map(q => (
-              <div key={q.id} className="pw-queue-item">
-                <div className="pw-queue-item-info">
-                  <span className="pw-queue-item-code">{q.item_code}</span>
-                  <span className="pw-queue-item-name">{q.item_name || ''}</span>
-                  <span className="pw-queue-item-qty">From {q.location_code}</span>
-                  {q.suggested_location_code && (
-                    <span className="text-dim text-xs" style={{ marginLeft: 8, color: 'var(--accent)' }}>
-                      → {q.suggested_location_code}
-                    </span>
-                  )}
+        )}
+        {queue.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div className="scan-section-title">Queue ({queue.length})</div>
+            {queue.slice(0, 10).map(q => (
+              <div key={q.id} className="scan-row">
+                <div className="scan-row-info">
+                  <div className="scan-row-code">{q.item_code}</div>
+                  <div className="scan-row-desc">{q.item_name || ''} · {q.location_code}</div>
                 </div>
-                <div className="pw-queue-item-actions">
-                  <span className="pw-qty-badge">{q.qty} pcs</span>
+                <div className="scan-row-meta">
+                  <div className="scan-row-qty">{q.qty}</div>
                 </div>
               </div>
             ))}
           </div>
-        ) : (
-          <EmptyState
-            icon="⇨"
-            title="No items staged"
-            message="Items must be staged before putaway"
-          />
         )}
       </div>
     )
@@ -479,31 +471,41 @@ export default function PutawayWizard() {
           <SkeletonCards count={4} />
         ) : (
           <>
-            <div className="pw-zone-grid">
+            <div className="scan-select-list">
               {zones.map(z => (
-                <ButtonPress
+                <button
                   key={z.zone}
-                  className="pw-zone-card"
+                  type="button"
+                  className="scan-select-card"
                   onClick={() => { setSelectedZone(z.zone); navigate('item_pick', 'forward') }}
+                  style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
                 >
-              <span
-                className="pw-zone-letter"
-                data-zone={z.zone}
-                style={{ background: ZONE_COLORS[z.zone] || '#6b7280' }}
-              >
-                {z.zone}
-              </span>
-              <div className="pw-zone-info">
-                <div className="pw-zone-name">{ZONE_LABELS[z.zone] || `Zone ${z.zone}`}</div>
-                <div className="pw-zone-count">{z.count} items ready</div>
+                  <div className="scan-select-card-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    <span
+                      style={{
+                        width: 28, height: 28, borderRadius: '50%',
+                        background: ZONE_COLORS[z.zone] || '#6b7280',
+                        color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontWeight: 700, fontSize: 13, flexShrink: 0,
+                      }}
+                    >{z.zone}</span>
+                    {ZONE_LABELS[z.zone] || `Zone ${z.zone}`}
+                  </div>
+                  <div className="scan-select-card-sub">{z.count} items ready for putaway</div>
+                  <div className="scan-select-card-meta">
+                    <span>{z.count} items</span>
+                    <span style={{ color: 'var(--primary)' }}>Open →</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {zones.length === 0 && (
+              <div className="scan-empty" style={{ marginTop: 8 }}>
+                <div className="scan-empty-icon"><span style={{ fontSize: 40, opacity: 0.5 }}>⇨</span></div>
+                <div className="scan-empty-title">No zones ready</div>
+                <div className="scan-empty-msg">No items are staged for putaway</div>
               </div>
-              <span className="pw-zone-arrow">→</span>
-            </ButtonPress>
-          ))}
-          </div>
-          {zones.length === 0 && (
-            <EmptyState icon="⇨" title="No zones ready" message="No items are staged for putaway" />
-          )}
+            )}
           </>
         )}
       </div>
