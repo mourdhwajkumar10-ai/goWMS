@@ -1,6 +1,7 @@
 package packing
 
 import (
+	"fmt"
 	"strconv"
 	"time"
 
@@ -174,6 +175,39 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item not found: "+body.ItemCode)
 		}
 
+		// Gate against the pick list, but only when the box is linked to one.
+		// Ad-hoc boxes keep their previous unrestricted behaviour.
+		var pickListID *int
+		if err := db.QueryRow(c.Context(),
+			`SELECT pick_list_id FROM boxes WHERE id=$1`, boxID).Scan(&pickListID); err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "box not found")
+		}
+		if pickListID != nil {
+			var ceiling float64
+			if err := db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(COALESCE(picked_qty,0)),0)
+				FROM pick_list_items WHERE pick_list_id=$1 AND item_code=$2`,
+				*pickListID, body.ItemCode).Scan(&ceiling); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			if ceiling <= 0 {
+				return shared.Err(c, fiber.StatusBadRequest,
+					"SKU not picked on this pick list: "+body.ItemCode)
+			}
+			var packed float64
+			if err := db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(bi.quantity),0)
+				FROM box_items bi JOIN boxes b ON b.id = bi.box_id
+				WHERE b.pick_list_id=$1 AND bi.item_code=$2`,
+				*pickListID, body.ItemCode).Scan(&packed); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			if packed+body.Quantity > ceiling+0.0001 {
+				return shared.Err(c, fiber.StatusConflict, fmt.Sprintf(
+					"over-pack: %.0f of %.0f picked already packed", packed, ceiling))
+			}
+		}
+
 		var batch any
 		if body.BatchNo != "" {
 			batch = body.BatchNo
@@ -238,6 +272,18 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 		}
 		if body.ItemCode == "" || body.Quantity <= 0 {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code and quantity > 0 required")
+		}
+
+		var inBox float64
+		if err := db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(quantity),0) FROM box_items
+			WHERE box_id=$1 AND item_code=$2`, boxID, body.ItemCode).Scan(&inBox); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if body.Quantity > inBox+0.0001 {
+			return shared.Err(c, fiber.StatusConflict, fmt.Sprintf(
+				"cannot reverse %.0f — only %.0f of %s in this box",
+				body.Quantity, inBox, body.ItemCode))
 		}
 
 		var itemID int
