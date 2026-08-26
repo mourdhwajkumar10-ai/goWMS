@@ -102,6 +102,19 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onComm
       setOpen(false)
       return
     }
+    // If there are results and user pressed Enter, auto-select the first match
+    if (results.length > 0 && query.trim()) {
+      const q = query.trim().toLowerCase()
+      const match = results.find((r: any) =>
+        (r.code || '').toLowerCase().includes(q) ||
+        (r.name || '').toLowerCase().includes(q) ||
+        (r.barcode || '').toLowerCase() === q
+      ) || results[0]
+      if (match) {
+        handleSelect(match)
+        return
+      }
+    }
     setOpen(false)
     if (committedRef.current) return
     committedRef.current = true
@@ -169,6 +182,17 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onComm
           if (e.key === 'Enter') {
             e.preventDefault()
             handleCommit()
+          } else if (e.key === 'Tab' && query.trim() && results.length > 0) {
+            // Tab also auto-selects the first match, then lets focus move naturally
+            const q = query.trim().toLowerCase()
+            const match = results.find((r: any) =>
+              (r.code || '').toLowerCase().includes(q) ||
+              (r.name || '').toLowerCase().includes(q)
+            ) || results[0]
+            if (match) {
+              e.preventDefault()
+              handleSelect(match)
+            }
           }
           onKeyDown?.(e)
         }}
