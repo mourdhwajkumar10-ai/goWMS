@@ -133,8 +133,13 @@ func ResolveWarehouseID(ctx context.Context, db *pgxpool.Pool, warehouseID *int)
 }
 
 // AdjustLocationQty upserts a location balance by delta.
-// Staging locations (incoming/hold/damaged/staging) are marked unallocatable.
+// Staging / packing locations are marked unallocatable.
 func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batch string, delta float64) error {
+	return AdjustLocationQtyTx(ctx, db, itemCode, warehouseID, locationID, batch, delta)
+}
+
+// AdjustLocationQtyTx is the DBTX form used by the fulfillment engine inside transactions.
+func AdjustLocationQtyTx(ctx context.Context, db DBTX, itemCode string, warehouseID, locationID int, batch string, delta float64) error {
 	itemCode = strings.TrimSpace(itemCode)
 	var batchArg any
 	if strings.TrimSpace(batch) == "" {
@@ -147,14 +152,16 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 	_ = db.QueryRow(ctx, `SELECT COALESCE(location_type,'storage') FROM warehouse_locations WHERE id=$1`, locationID).Scan(&locType)
 	alloc := "allocatable"
 	switch strings.ToLower(locType) {
-	case "incoming", "hold", "damaged", "staging":
+	case "incoming", "hold", "damaged", "staging", "packing", "quarantine", "returns":
 		alloc = "unallocatable"
 	}
 
 	var existingID int
 	err := db.QueryRow(ctx, `
 		SELECT id FROM stock_location_balances
-		WHERE item_code=$1 AND location_id=$2 AND COALESCE(batch_no,'')=COALESCE($3,'')`,
+		WHERE item_code=$1 AND location_id=$2 AND COALESCE(batch_no,'')=COALESCE($3,'')
+		ORDER BY id
+		FOR UPDATE`,
 		itemCode, locationID, batchArg).Scan(&existingID)
 	if err == pgx.ErrNoRows {
 		_, err = db.Exec(ctx, `
@@ -162,7 +169,6 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 			VALUES ($1,$2,$3,$4,$5,0,$6)`,
 			itemCode, warehouseID, locationID, batchArg, delta, alloc)
 		if err != nil {
-			// Pre-021 without allocation_status
 			_, err = db.Exec(ctx, `
 				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty)
 				VALUES ($1,$2,$3,$4,$5,0)`,
@@ -192,8 +198,8 @@ func AdjustLocationQty(ctx context.Context, db *pgxpool.Pool, itemCode string, w
 	}
 
 	if strings.ToLower(locType) == "incoming" && delta > 0 {
-		if OnIncomingStock != nil {
-			OnIncomingStock(ctx, db, itemCode, warehouseID, locationID, batchArg, delta)
+		if pool, ok := db.(*pgxpool.Pool); ok && OnIncomingStock != nil {
+			OnIncomingStock(ctx, pool, itemCode, warehouseID, locationID, batchArg, delta)
 		}
 	}
 
