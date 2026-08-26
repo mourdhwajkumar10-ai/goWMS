@@ -558,8 +558,18 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 		_ = db.QueryRow(c.Context(), `SELECT COALESCE(name, code) FROM warehouses WHERE id=$1`, whID).Scan(&whName)
 
 		rows, err := db.Query(c.Context(), `
-			SELECT item_code, COALESCE(qty,0) - COALESCE(picked_qty,0)
-			FROM sales_order_items WHERE sales_order_id=$1 AND COALESCE(qty,0) > COALESCE(picked_qty,0)`, id)
+			SELECT soi.item_code,
+			       COALESCE(soi.qty,0) - COALESCE(soi.picked_qty,0)
+			     - COALESCE((SELECT SUM(GREATEST(
+			           COALESCE(pli.allocated_qty,0) - COALESCE(pli.picked_qty,0)
+			         - COALESCE(pli.consumed_qty,0), 0))
+			       FROM pick_list_items pli
+			       JOIN pick_lists pl ON pl.id = pli.pick_list_id
+			       WHERE pl.sales_order_no = $2
+			         AND pl.status IN ('draft','open')
+			         AND pli.item_code = soi.item_code), 0) AS open_qty
+			FROM sales_order_items soi
+			WHERE soi.sales_order_id = $1`, id, name)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -588,6 +598,20 @@ func createPickFromSO(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		defer tx.Rollback(c.Context())
+
+		var openID int
+		var openName string
+		err = tx.QueryRow(c.Context(), `
+			SELECT id, name FROM pick_lists
+			WHERE sales_order_no=$1 AND status IN ('draft','open')
+			LIMIT 1 FOR UPDATE`, name).Scan(&openID, &openName)
+		if err == nil {
+			return shared.Err(c, fiber.StatusConflict,
+				fmt.Sprintf("open pick list %s already exists for %s", openName, name))
+		}
+		if err != nil && err != pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
 
 		var pickID int
 		var pickName string

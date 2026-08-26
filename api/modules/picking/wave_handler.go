@@ -63,8 +63,18 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 			soLabels = append(soLabels, soName)
 
 			rows, err := db.Query(c.Context(), `
-				SELECT item_code, COALESCE(qty,0)-COALESCE(picked_qty,0)
-				FROM sales_order_items WHERE sales_order_id=$1 AND COALESCE(qty,0)>COALESCE(picked_qty,0)`, soID)
+				SELECT soi.item_code,
+				       COALESCE(soi.qty,0) - COALESCE(soi.picked_qty,0)
+				     - COALESCE((SELECT SUM(GREATEST(
+				           COALESCE(pli.allocated_qty,0) - COALESCE(pli.picked_qty,0)
+				         - COALESCE(pli.consumed_qty,0), 0))
+				       FROM pick_list_items pli
+				       JOIN pick_lists pl ON pl.id = pli.pick_list_id
+				       WHERE pl.sales_order_no = $2
+				         AND pl.status IN ('draft','open')
+				         AND pli.item_code = soi.item_code), 0) AS open_qty
+				FROM sales_order_items soi
+				WHERE soi.sales_order_id = $1`, soID, soName)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
