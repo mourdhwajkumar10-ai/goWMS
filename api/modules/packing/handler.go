@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"time"
 
+	"goWMS/api/modules/fulfillment"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -341,22 +342,32 @@ func markLoaded(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		if !stockConsumed && pickListID != nil && *pickListID > 0 {
-			var plConsumed bool
-			_ = tx.QueryRow(c.Context(), `
-				SELECT COALESCE(stock_consumed,false) FROM pick_lists WHERE id=$1 FOR UPDATE`, *pickListID).
-				Scan(&plConsumed)
-			if !plConsumed {
-				if err := shared.ConsumePickListStock(c.Context(), tx, *pickListID); err != nil {
-					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-				}
+			typed, err := fulfillment.IsTyped(c.Context(), tx, *pickListID)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, boxID)
+			if typed {
+				if err := fulfillment.ShipBox(c.Context(), tx, boxID); err != nil {
+					return shared.Err(c, fiber.StatusConflict, err.Error())
+				}
+			} else {
+				var plConsumed bool
+				_ = tx.QueryRow(c.Context(), `
+					SELECT COALESCE(stock_consumed,false) FROM pick_lists WHERE id=$1 FOR UPDATE`, *pickListID).
+					Scan(&plConsumed)
+				if !plConsumed {
+					if err := shared.ConsumePickListStock(c.Context(), tx, *pickListID); err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+				}
+				_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, boxID)
+			}
 		} else if !stockConsumed {
 			_, _ = tx.Exec(c.Context(), `UPDATE boxes SET stock_consumed=true WHERE id=$1`, boxID)
 		}
 
 		if _, err := tx.Exec(c.Context(),
-			`UPDATE boxes SET loaded=true, loaded_at=NOW() WHERE id=$1`, boxID); err != nil {
+			`UPDATE boxes SET loaded=true, loaded_at=COALESCE(loaded_at,NOW()) WHERE id=$1`, boxID); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 

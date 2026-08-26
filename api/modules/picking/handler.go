@@ -1,11 +1,13 @@
 package picking
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
+	"goWMS/api/modules/fulfillment"
 	"goWMS/api/modules/notifications"
 	"goWMS/api/modules/shared"
 
@@ -68,11 +70,15 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 
 		var id int
 		var name string
+		packLocID, err := fulfillment.ResolvePackingLocationID(c.Context(), tx, whID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "packing location: "+err.Error())
+		}
 		err = tx.QueryRow(c.Context(),
-			`INSERT INTO pick_lists (name,sales_order_no,customer,warehouse_id,status,picking_mode)
-			 VALUES ('PL-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('pick_lists_id_seq')::TEXT,5,'0'),$1,$2,$3,'open','scan')
+			`INSERT INTO pick_lists (name,sales_order_no,customer,warehouse_id,status,picking_mode,fulfillment_type,packing_location_id)
+			 VALUES ('PL-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('pick_lists_id_seq')::TEXT,5,'0'),$1,$2,$3,'open','scan','single',$4)
 			 RETURNING id, name`,
-			body.SalesOrder, body.Customer, whID).Scan(&id, &name)
+			body.SalesOrder, body.Customer, whID, packLocID).Scan(&id, &name)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -368,6 +374,8 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			ScannedBin     string  `json:"scanned_bin"`
 			ExpectedBin    string  `json:"expected_bin"`
 			Quantity       float64 `json:"quantity"`
+			Override       bool    `json:"override"`
+			OverrideReason string  `json:"override_reason"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
@@ -388,11 +396,62 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 		}
 		defer tx.Rollback(c.Context())
 
+		typed, err := fulfillment.IsTyped(c.Context(), tx, body.PickListID)
+		if err != nil {
+			if err == pgx.ErrNoRows {
+				return shared.Err(c, fiber.StatusNotFound, "pick list not found")
+			}
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if typed {
+			res, err := fulfillment.ConfirmPick(c.Context(), tx, fulfillment.ConfirmPickInput{
+				PickListID:     body.PickListID,
+				PickListItemID: body.PickListItemID,
+				ItemCode:       body.ItemCode,
+				ScannedBin:     body.ScannedBin,
+				ExpectedBin:    body.ExpectedBin,
+				Quantity:       body.Quantity,
+				ScannedBy:      userID(c),
+				Override:       body.Override,
+				OverrideBy:     userID(c),
+				OverrideReason: body.OverrideReason,
+			})
+			if err != nil {
+				switch {
+				case errors.Is(err, fulfillment.ErrWrongLocation),
+					errors.Is(err, fulfillment.ErrWrongItem),
+					errors.Is(err, fulfillment.ErrOverPick),
+					errors.Is(err, fulfillment.ErrLineNotPickable):
+					_ = tx.Commit(c.Context()) // persist rejected scan log
+					status := fiber.StatusConflict
+					msg := err.Error()
+					if errors.Is(err, fulfillment.ErrWrongLocation) {
+						msg = "wrong location — scan the prompted bin (or override with reason)"
+					} else if errors.Is(err, fulfillment.ErrWrongItem) {
+						msg = "wrong item"
+					} else if errors.Is(err, fulfillment.ErrLineNotPickable) {
+						msg = "line not pickable"
+					}
+					return shared.Err(c, status, msg)
+				default:
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+			}
+			if err := tx.Commit(c.Context()); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			return shared.OK(c, fiber.Map{
+				"id": res.LogID, "log_no": res.LogNo, "location_drift": res.LocationDrift,
+				"pick_list_item_id": res.PickListItemID, "picked_qty": res.PickedQty, "status": res.Status,
+				"list_completed": res.ListCompleted, "engine": "fulfillment",
+			})
+		}
+
 		var (
-			itemID                         int
-			itemCode, locCode, status      string
-			ordered, picked, allocated     float64
-			balanceID                      *int
+			itemID                     int
+			itemCode, locCode, status  string
+			ordered, picked, allocated float64
+			balanceID                  *int
 		)
 		if body.PickListItemID > 0 {
 			err = tx.QueryRow(c.Context(), `

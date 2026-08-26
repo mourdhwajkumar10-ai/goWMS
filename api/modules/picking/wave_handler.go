@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"goWMS/api/modules/fulfillment"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -119,11 +120,15 @@ func createWave(db *pgxpool.Pool) fiber.Handler {
 
 		var pickID int
 		var pickName string
+		packLocID, err := fulfillment.ResolvePackingLocationID(c.Context(), tx, whID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "packing location: "+err.Error())
+		}
 		err = tx.QueryRow(c.Context(), `
-			INSERT INTO pick_lists (name, sales_order_no, customer, warehouse_id, status, picking_mode)
+			INSERT INTO pick_lists (name, sales_order_no, customer, warehouse_id, status, picking_mode, fulfillment_type, packing_location_id)
 			VALUES ('PL-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('pick_lists_id_seq')::TEXT,5,'0'),
-				$1, $2, $3, 'open', 'wave')
-			RETURNING id, name`, soCSV, waveLabel, whID).Scan(&pickID, &pickName)
+				$1, $2, $3, 'open', 'wave', 'wave', $4)
+			RETURNING id, name`, soCSV, waveLabel, whID, packLocID).Scan(&pickID, &pickName)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
