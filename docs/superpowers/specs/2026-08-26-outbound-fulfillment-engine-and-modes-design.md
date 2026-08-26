@@ -63,7 +63,9 @@ Every row below was confirmed against code, not inferred from documentation.
 | `items` already has `mrp`, `hsn_no`, `gst_percentage`, `max_rate_discount` | `migrations/017_item_commercial_fields.sql` |
 | `sales_orders.order_type` exists, defaulting to `'Sales'` | `migrations/002_operations.sql:492` |
 | `boxes` has no `warehouse_id`; label is free text with no uniqueness | `migrations/002_operations.sql:150–158` |
+| **B7 (new):** the auto-complete query in `logPickScan` passes no argument for its `$1`, the error is discarded, so `remaining` stays 0 and **every pick list is marked `completed` on the first item scan** | `api/modules/picking/handler.go:474–481` |
 | Zero test coverage across all outbound modules | no `*_test.go` under `salesorder`, `picking`, `packing`, `dispatch` |
+| No database test harness exists anywhere; all 19 test files are pure unit tests | `api/**/*_test.go` |
 | `offlineQueue.flushScans` exists but is never called | `web/src/utils/offlineQueue.ts` |
 
 **Consequence:** F2 is roughly 80% built, F3 roughly 20%, F1 does not exist, and sales invoicing does not exist.
@@ -221,7 +223,9 @@ Every primitive locks affected `stock_location_balances` rows with `SELECT … F
 
 ### 6.5 Sales-order progress
 
-`ConfirmPick` writes `sales_order_items.picked_qty` and recomputes `sales_orders.per_picked`; `ShipBox` does the same for `delivered_qty` and `per_delivered`. This is P0 fix B1, implemented inside the engine rather than as a separate patch, because all three modes depend on it and F3's demand aggregation reads those columns.
+`ConfirmPick` writes `sales_order_items.picked_qty` and recomputes `sales_orders.per_picked`; `ShipBox` does the same for `delivered_qty` and `per_delivered`.
+
+This is P0 fix B1's logic **relocated** into the engine. B1 still ships in Phase 0 as a bridge fix to the existing scan handler, because today's system is wrong until it lands and B2's net-open demand arithmetic depends on it. When Phase 1 replaces that handler, the engine absorbs the responsibility and the bridge is deleted. The recompute SQL is written once in Phase 0 and moved, not written twice.
 
 ### 6.6 Legacy compatibility
 
@@ -415,7 +419,11 @@ In `navCatalog.ts`: counter sale and wave under the Outbound section; `/consolid
 
 Outbound currently has **zero tests**, so this establishes coverage rather than maintaining it. Effort concentrates on the engine, since all three modes inherit its correctness.
 
-- **Engine** — integration tests against real Postgres, following `api/modules/putaway/*_test.go` and `api/modules/grn/grn_test.go`. Assert the §6.2 invariants after every primitive. Two cases matter most: concurrent picks against one balance must not oversell, and cancel/restock must round-trip exactly.
+**There is no database test harness in this repo.** All 19 existing `*_test.go` files are pure unit tests over pure functions — including `putaway/velocity_integration_test.go`, which despite its name only asserts string mapping. Stock invariants cannot be verified without a real database, so building the harness is the first task of Phase 1, not an assumed capability.
+
+The harness takes the lightest form that fits this codebase: a `GOWMS_TEST_DSN` environment variable pointing at the compose Postgres, `t.Skip` when it is unset so `go test ./...` still passes on a bare checkout, and each test wrapped in a transaction that is rolled back on completion. No new dependencies, no Docker requirement in the default path.
+
+- **Engine** — integration tests against real Postgres using that harness. Assert the §6.2 invariants after every primitive. Two cases matter most: concurrent picks against one balance must not oversell, and cancel/restock must round-trip exactly.
 - **Handlers** — Fiber `httptest` per endpoint: happy path, boundary (±ε qty), conflict, and repeat request.
 - **RBAC** — extend the `api/modules/rbac/route_enforcement_test.go` table with the two new permissions.
 - **Attribution** — property test that `Σ wave_order_lines.required_qty` equals the wave's total allocated quantity per SKU, and that every shortfall unit appears in exactly one backorder.
@@ -447,7 +455,7 @@ The material risk is the stock-semantics change: consume-at-load becomes move-at
 
 | Phase | Scope | Rationale |
 |-------|-------|-----------|
-| **0** | P0 fixes B1–B6 (prerequisite doc) | All three modes read `picked_qty` and depend on honest allocation state |
+| **0** | P0 fixes B1–B6 (prerequisite doc) plus **B7**, discovered while planning | All three modes read `picked_qty` and depend on honest allocation state. B7 marks every pick list complete on the first scan and is the most severe of the set. |
 | **1** | Migrations 042–049 + the engine, no user-visible change | Everything else sits on it |
 | **2** | F2 single-order | The only mode that exists end-to-end today, so new behaviour can be diffed against known-good behaviour |
 | **3** | F1 counter sale + sales invoicing | High business value, no coupling to wave complexity, engine already proven |
