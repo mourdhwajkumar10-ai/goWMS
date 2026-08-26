@@ -589,6 +589,14 @@ func cancelPickList(db *pgxpool.Pool) fiber.Handler {
 		if err := shared.ReleasePickListReservations(c.Context(), tx, id); err != nil {
 			return shared.Err(c, fiber.StatusConflict, err.Error())
 		}
+		tag, err := tx.Exec(c.Context(),
+			`UPDATE pick_lists SET status='cancelled' WHERE id=$1`, id)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() == 0 {
+			return shared.Err(c, fiber.StatusNotFound, "pick list not found")
+		}
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
