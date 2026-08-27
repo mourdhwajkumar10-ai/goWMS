@@ -435,7 +435,7 @@ export default function PutawayWizard() {
   // ─── ZONE SELECT ───
   if (step === 'zone_select') {
     return (
-      <ScannerLayout title="Select Zone" onBack={() => setStep('mode_select')} flash={flash}>
+      <ScannerLayout title="Select Zone" hideHeader noBack flash={flash}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
           counted={0}
