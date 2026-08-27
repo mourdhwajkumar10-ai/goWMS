@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import CameraScanner from '../components/CameraScanner'
@@ -159,9 +159,19 @@ export default function PutawayWizard() {
     Promise.all([loadQueue(), loadZones()]).finally(() => setDataLoading(false))
   }, [loadQueue, loadZones])
 
+  const dedupedQueue = useMemo(() => {
+    const m = new Map<string, QueueRow>()
+    for (const q of queue) {
+      const key = `${q.item_code.toUpperCase()}|${q.location_id}|${(q.batch_no || '').toUpperCase()}`
+      const prev = m.get(key)
+      if (!prev || q.qty > prev.qty) m.set(key, q)
+    }
+    return Array.from(m.values())
+  }, [queue])
+
   const ensureSession = useCallback(async () => {
-    if (!session && queue.length > 0) {
-      const wid = queue[0].warehouse_id
+    if (!session && dedupedQueue.length > 0) {
+      const wid = dedupedQueue[0].warehouse_id
       const r = await api.post<SessionData>('/putaway/sessions', { warehouse_id: wid, zone: selectedZone || '' })
       if (r.ok && r.data) {
         setSession(r.data)
@@ -214,7 +224,7 @@ export default function PutawayWizard() {
   const onItemScan = useCallback(async (code: string): Promise<boolean> => {
     if (!code) return false
     const clean = code.trim().toLowerCase()
-    const zoneItems = selectedZone ? queue.filter(q => q.zone === selectedZone) : queue
+    const zoneItems = selectedZone ? dedupedQueue.filter(q => q.zone === selectedZone) : dedupedQueue
     const match = zoneItems.find(item => item.item_code.toLowerCase() === clean)
     if (!match) {
       setScanState('rejected')
@@ -266,7 +276,7 @@ export default function PutawayWizard() {
     setLastScanCode(match.item_code)
     setScanState('accepted')
     return true
-  }, [queue, selectedZone, toteItems, ensureSession, fb, toast, doFlash, haptic])
+  }, [dedupedQueue, selectedZone, toteItems, ensureSession, fb, toast, doFlash, haptic])
 
   const onLocationScan = useCallback(async (code: string): Promise<boolean> => {
     if (!code || !suggestion) return false
@@ -386,7 +396,7 @@ export default function PutawayWizard() {
             <div className="scan-select-card-title">By Zone</div>
             <div className="scan-select-card-sub">Batch putaway by HSN zone</div>
             <div className="scan-select-card-meta">
-              <span>{queue.length} pending</span>
+              <span>{dedupedQueue.length} pending</span>
               <span>{zones.length} zones</span>
               <span style={{ color: 'var(--primary)' }}>Open →</span>
             </div>
@@ -400,22 +410,22 @@ export default function PutawayWizard() {
             <div className="scan-select-card-title">By Item</div>
             <div className="scan-select-card-sub">Single item putaway</div>
             <div className="scan-select-card-meta">
-              <span>{queue.length} in queue</span>
+              <span>{dedupedQueue.length} in queue</span>
               <span style={{ color: 'var(--primary)' }}>Open →</span>
             </div>
           </button>
         </div>
-        {queue.length === 0 && !dataLoading && (
+        {dedupedQueue.length === 0 && !dataLoading && (
           <div className="scan-empty" style={{ marginTop: 8 }}>
             <div className="scan-empty-icon"><span style={{ fontSize: 40, opacity: 0.5 }}>⇨</span></div>
             <div className="scan-empty-title">All clear!</div>
             <div className="scan-empty-msg">No items waiting for putaway</div>
           </div>
         )}
-        {queue.length > 0 && (
+        {dedupedQueue.length > 0 && (
           <div style={{ marginTop: 8, padding: '0 16px' }}>
-            <div className="scan-section-title">Queue ({queue.length})</div>
-            {queue.slice(0, 10).map(q => (
+            <div className="scan-section-title">Queue ({dedupedQueue.length})</div>
+            {dedupedQueue.slice(0, 10).map(q => (
               <div key={q.id} className="scan-row">
                 <div className="scan-row-info">
                   <div className="scan-row-code">{q.item_code}</div>
@@ -495,7 +505,7 @@ export default function PutawayWizard() {
 
   // ─── SCAN ITEMS (build tote) ───
   if (step === 'scan_items') {
-    const zoneItems = selectedZone ? queue.filter(q => q.zone === selectedZone) : queue
+    const zoneItems = selectedZone ? dedupedQueue.filter(q => q.zone === selectedZone) : dedupedQueue
     const totePicked = toteItems.filter(i => i.status === 'picked')
     const totalItems = zoneItems.length
 
