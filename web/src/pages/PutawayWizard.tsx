@@ -522,13 +522,15 @@ export default function PutawayWizard() {
     const zoneItems = selectedZone ? dedupedQueue.filter(q => q.zone === selectedZone) : dedupedQueue
     const totePicked = toteItems.filter(i => i.status === 'picked')
     const totalItems = zoneItems.length
+    const totalPendingQty = zoneItems.reduce((s, q) => s + (Number(q.qty) || 0), 0)
+    const totalPickedQty = totePicked.reduce((s, i) => s + (Number(i.qty) || 0), 0)
 
     return (
       <ScannerLayout title="Scan Items" hideHeader noBack flash={scanState === 'rejected' || flash === 'err' ? 'err' : scanState === 'accepted' || flash === 'ok' ? 'ok' : null}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
-          counted={totePicked.length}
-          total={totalItems}
+          counted={totalPickedQty}
+          total={totalPendingQty}
           po="PUTAWAY"
           pl={selectedZone ? `Zone ${selectedZone}` : 'All'}
           grn={session?.id ? `#${session.id}` : '—'}
@@ -561,11 +563,11 @@ export default function PutawayWizard() {
         />
         <div style={{ padding: '0 16px 8px' }}>
           {toteItems.length > 0 && (
-            <div className="scan-section-title">Tote ({totePicked.length} of {totalItems})</div>
+            <div className="scan-section-title">Tote ({totalPickedQty} of {totalPendingQty})</div>
           )}
         </div>
         <div style={{ padding: '0 16px' }}>
-          <div className="scan-section-title">Available ({totalItems})</div>
+          <div className="scan-section-title">Available ({totalItems} items, {totalPendingQty} pcs)</div>
           {dataLoading ? (
             <SkeletonCards count={3} />
           ) : totalItems === 0 ? (
