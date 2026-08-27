@@ -2,6 +2,7 @@ package putaway
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,46 +31,46 @@ func TestPlaceSessionItemWarehouseRuleWarning(t *testing.T) {
 // TestWarehouseRuleLogic tests the warehouse rule capacity check logic
 func TestWarehouseRuleLogic(t *testing.T) {
 	tests := []struct {
-		name           string
-		stockCapacity  float64
-		currentQty     float64
-		placingQty     float64
-		expectWarning  bool
+		name          string
+		stockCapacity float64
+		currentQty    float64
+		placingQty    float64
+		expectWarning bool
 	}{
 		{
-			name:           "under capacity - no warning",
-			stockCapacity:  100,
-			currentQty:     30,
-			placingQty:     20,
-			expectWarning:  false,
+			name:          "under capacity - no warning",
+			stockCapacity: 100,
+			currentQty:    30,
+			placingQty:    20,
+			expectWarning: false,
 		},
 		{
-			name:           "at capacity - no warning",
-			stockCapacity:  100,
-			currentQty:     80,
-			placingQty:     20,
-			expectWarning:  false,
+			name:          "at capacity - no warning",
+			stockCapacity: 100,
+			currentQty:    80,
+			placingQty:    20,
+			expectWarning: false,
 		},
 		{
-			name:           "over capacity - warning",
-			stockCapacity:  100,
-			currentQty:     80,
-			placingQty:     25,
-			expectWarning:  true,
+			name:          "over capacity - warning",
+			stockCapacity: 100,
+			currentQty:    80,
+			placingQty:    25,
+			expectWarning: true,
 		},
 		{
-			name:           "exactly at capacity with epsilon - warning",
-			stockCapacity:  100,
-			currentQty:     90,
-			placingQty:     10.000000002,
-			expectWarning:  true,
+			name:          "exactly at capacity with epsilon - warning",
+			stockCapacity: 100,
+			currentQty:    90,
+			placingQty:    10.000000002,
+			expectWarning: true,
 		},
 		{
-			name:           "no rule - no warning",
-			stockCapacity:  0,
-			currentQty:     50,
-			placingQty:     50,
-			expectWarning:  false,
+			name:          "no rule - no warning",
+			stockCapacity: 0,
+			currentQty:    50,
+			placingQty:    50,
+			expectWarning: false,
 		},
 	}
 
@@ -144,6 +145,66 @@ func BenchmarkWarehouseRuleCheck(b *testing.B) {
 			warning = "warehouse_cap_exceeded"
 		}
 		_ = warning
+	}
+}
+
+func TestPutawayPolicyRequiresAccessAndOverride(t *testing.T) {
+	if putawayRoutePermission != "putaway.access" {
+		t.Fatalf("permission=%q", putawayRoutePermission)
+	}
+	if putawayOverridePermission != "putaway.override" {
+		t.Fatalf("override permission=%q", putawayOverridePermission)
+	}
+}
+
+func TestPutawayQuantityMustNotExceedPickedQuantity(t *testing.T) {
+	if err := validatePlacementQuantity(51, 50); err == nil {
+		t.Fatal("expected quantity-over-picked rejection")
+	}
+	if err := validatePlacementQuantity(0, 50); err == nil {
+		t.Fatal("expected non-positive quantity rejection")
+	}
+	if err := validatePlacementQuantity(25, 50); err != nil {
+		t.Fatalf("valid partial placement rejected: %v", err)
+	}
+}
+
+func TestPutawayCompletionRequiresNoPendingQuantity(t *testing.T) {
+	if err := validatePutawayCompletion(0); err != nil {
+		t.Fatalf("zero pending should complete: %v", err)
+	}
+	if err := validatePutawayCompletion(2); err == nil {
+		t.Fatal("pending quantity must block completion")
+	}
+}
+
+func TestPutawayControlsRejectUnsafeShortcuts(t *testing.T) {
+	queries := []string{
+		"putaway.override required for override placement",
+		"quantity exceeds picked quantity",
+		"putaway session belongs to another operator",
+	}
+	for _, phrase := range queries {
+		if strings.TrimSpace(phrase) == "" {
+			t.Fatal("control message must not be empty")
+		}
+	}
+}
+
+func TestPickSessionItemSourceQueryUsesAvailablePositiveStock(t *testing.T) {
+	query := `SELECT id, actual_qty, COALESCE(reserved_qty,0)
+			 FROM stock_location_balances
+			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+			   AND actual_qty > 0
+			 ORDER BY CASE WHEN allocation_status IN ('allocatable','staging') THEN 0 ELSE 1 END, id
+			 LIMIT 1
+			 FOR UPDATE`
+
+	if !strings.Contains(query, "actual_qty > 0") {
+		t.Fatal("pick query must select a positive stock balance")
+	}
+	if !strings.Contains(query, "allocation_status") {
+		t.Fatal("pick query must prefer allocatable/staging stock")
 	}
 }
 

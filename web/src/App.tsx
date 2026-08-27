@@ -136,7 +136,7 @@ export default function App() {
         <Route path="stock-reconciliations" element={<StockReconciliations />} />
         <Route path="dock-receiving" element={<DockReceiving />} />
         <Route path="item-verifier" element={<ItemVerifier />} />
-        <Route path="putaway-runner" element={<PutawayRunner />} />
+        <Route path="putaway-runner" element={<Navigate to="/putaway" replace />} />
         <Route path="stock-peek" element={<StockPeek />} />
         <Route path="quick-count" element={<QuickCount />} />
         <Route path="box-verification" element={<BoxVerification />} />

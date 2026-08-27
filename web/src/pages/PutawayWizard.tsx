@@ -402,7 +402,7 @@ export default function PutawayWizard() {
   const queueMore = useLoadMore(zoneItemsForPick, 10, `${selectedZone ?? ''}|${step}`)
 
   // RF / floor: always use scan-first runner (desk keeps this wizard at /putaway).
-  if (rf) return <Navigate to="/putaway-runner" replace />
+  if (rf) return <Navigate to="/putaway" replace />
 
   // ─── MODE SELECT ───
   if (step === 'mode_select') {

@@ -23,7 +23,8 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Post("/carton", scanCartonBody(db))
 	r.Post("/line", scanLineBody(db))
 	r.Post("/close", closeSessionBody(db))
-	r.Post("/putaway", putawayAlias(db))
+	// GRN-level direct movement is disabled; placement must use a putaway session.
+	r.Post("/putaway", deprecatedGRNPutaway)
 
 	// Path-param aliases
 	r.Post("/session/:id/cartons", scanCartonParam(db))
@@ -1146,6 +1147,10 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 }
 
 // putawayAlias lets the GRN page call POST /grn/putaway — delegates to location-aware putaway.
+func deprecatedGRNPutaway(c *fiber.Ctx) error {
+	return shared.Err(c, fiber.StatusGone, "direct putaway is disabled; use a putaway session")
+}
+
 func putawayAlias(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		var body struct {

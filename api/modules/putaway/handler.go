@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -26,9 +27,33 @@ var hsnZoneSQL = `COALESCE(
         ELSE 'G'
     END, 'G')`
 
+const (
+	putawayRoutePermission    = "putaway.access"
+	putawayOverridePermission = "putaway.override"
+)
+
+func validatePlacementQuantity(qty, picked float64) error {
+	if qty <= 0 {
+		return fmt.Errorf("quantity must be greater than zero")
+	}
+	if qty > picked+1e-9 {
+		return fmt.Errorf("quantity exceeds picked quantity")
+	}
+	return nil
+}
+
+func validatePutawayCompletion(pendingQty float64) error {
+	if pendingQty > 1e-9 {
+		return fmt.Errorf("putaway has pending quantities")
+	}
+	return nil
+}
+
 // Register wires the putaway routes.
 func Register(r fiber.Router, db *pgxpool.Pool) {
-	r.Post("/", createLog(db))
+	r.Use(rbac.RequirePermission(putawayRoutePermission))
+	// Direct placement is intentionally disabled: all stock movement must use a session.
+	r.Post("/", deprecatedDirectPlacement)
 	r.Post("/fit-exception", recordFitException(db))
 	r.Get("/logs", listLogs(db))
 	r.Get("/rules", listRules(db))
@@ -42,9 +67,14 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/sessions/:id", getSession(db))
 	r.Delete("/sessions/:id", cancelSession(db))
 	r.Post("/sessions/:id/heartbeat", sessionHeartbeat(db))
+	r.Post("/sessions/:id/complete", completeSession(db))
 	r.Post("/sessions/:id/pick", pickSessionItem(db))
 	r.Delete("/sessions/:id/items/:itemId", removeSessionItem(db))
 	r.Post("/sessions/:id/place/:itemId", placeSessionItem(db))
+}
+
+func deprecatedDirectPlacement(c *fiber.Ctx) error {
+	return shared.Err(c, fiber.StatusGone, "direct putaway is disabled; use a putaway session")
 }
 
 func listRules(db *pgxpool.Pool) fiber.Handler {
@@ -636,16 +666,16 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		  AND COALESCE(gs.stock_posted_at) IS NULL
 		  AND COALESCE(gl.scanned_qty,0) > 0`
 
-		query := incomingQuery + ` UNION ALL ` + unpostedGRNQuery
+		// The UNION must be filtered as a whole. Appending `AND` after the
+		// UNION filters only the second SELECT and produces invalid SQL when
+		// the first SELECT has already terminated its WHERE clause.
+		query := `SELECT * FROM (` + incomingQuery + ` UNION ALL ` + unpostedGRNQuery + `) pending`
 
 		args := []any{}
-		argIdx := 1
 		if zoneFilter != "" {
-			query += ` AND ` + hsnZoneSQL + ` = $` + strconv.Itoa(argIdx)
+			query += ` WHERE zone = $1`
 			args = append(args, strings.ToUpper(zoneFilter))
-			argIdx++
 		}
-
 		query += ` ORDER BY 2 ASC`
 
 		// Pending = incoming/hold balances not yet moved to storage.
@@ -699,9 +729,17 @@ func queueZones(db *pgxpool.Pool) fiber.Handler {
 				JOIN grn_sessions gs ON gs.id = gc.grn_session_id
 				JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
 				LEFT JOIN items i ON i.code = gl.item_code
-				WHERE gs.status IN ('putaway_pending','putaway_in_progress')
-				  AND COALESCE(gs.stock_posted_at) IS NULL
+				WHERE gs.status IN ('putaway_pending','putaway_in_progress','completed','closed')
 				  AND COALESCE(gl.scanned_qty,0) > 0
+				  AND (
+				    COALESCE(gs.stock_posted_at) IS NULL
+				    OR NOT EXISTS (
+				      SELECT 1 FROM stock_location_balances slb
+				      WHERE slb.item_code = gl.item_code
+				        AND slb.location_id = wl.id
+				        AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
+				    )
+				  )
 			) sub
 			GROUP BY zone
 			ORDER BY zone`)

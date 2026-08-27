@@ -822,6 +822,22 @@ func completePutaway(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
+		var status string
+		if err := db.QueryRow(c.Context(), `SELECT COALESCE(putaway_status,'pending') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&status); err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if status != "in_progress" && status != "completed" {
+			return shared.Err(c, fiber.StatusBadRequest, "putaway cannot be completed before physical placements are recorded")
+		}
+		var pending float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(GREATEST(COALESCE(gl.scanned_qty,0)-COALESCE(gl.damaged_qty,0),0)),0)
+			FROM grn_lines gl
+			WHERE gl.grn_session_id=$1
+			  AND COALESCE(gl.route_location,'') IN ('','INCOMING-01','HOLD-01','STAGING-01')`, sessionID).Scan(&pending)
+		if pending > 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "putaway has pending quantities; complete the physical placements first")
+		}
 		recordPutawayProgress(c, db, sessionID, "", 0, "", true)
 		return shared.OK(c, fiber.Map{"id": sessionID, "putaway_status": "completed"})
 	}

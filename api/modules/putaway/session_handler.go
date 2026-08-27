@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"time"
 
+	"goWMS/api/modules/rbac"
 	"goWMS/api/modules/shared"
 
 	"github.com/gofiber/fiber/v2"
@@ -171,6 +172,68 @@ func cancelSession(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+func completeSession(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessionID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
+		}
+		actorID := userID(c)
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var sessionUserID int
+		var status string
+		if err := tx.QueryRow(c.Context(), `
+			SELECT user_id, status FROM putaway_sessions WHERE id=$1 FOR UPDATE`, sessionID).
+			Scan(&sessionUserID, &status); err == pgx.ErrNoRows {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		} else if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if actorID > 0 && sessionUserID > 0 && actorID != sessionUserID && !rbac.HasPermission(c, putawayOverridePermission) {
+			return shared.Err(c, fiber.StatusForbidden, "putaway session belongs to another operator")
+		}
+		if status != "picking" {
+			return shared.Err(c, fiber.StatusBadRequest, "session is not active")
+		}
+
+		var pending float64
+		if err := tx.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(qty),0) FROM putaway_session_items
+			WHERE session_id=$1 AND status='picked'`, sessionID).Scan(&pending); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := validatePutawayCompletion(pending); err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
+		var reserved float64
+		_ = tx.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(slb.reserved_qty),0)
+			FROM stock_location_balances slb
+			JOIN putaway_session_items psi ON psi.source_location_id=slb.location_id
+			  AND UPPER(psi.item_code)=UPPER(slb.item_code)
+			WHERE psi.session_id=$1 AND psi.status='picked'`, sessionID).Scan(&reserved)
+		if reserved > 1e-9 {
+			return shared.Err(c, fiber.StatusBadRequest, "putaway still has reserved source quantity")
+		}
+
+		if _, err := tx.Exec(c.Context(), `
+			UPDATE putaway_sessions SET status='completed', completed_at=now(), updated_at=now()
+			WHERE id=$1 AND status='picking'`, sessionID); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := tx.Commit(c.Context()); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		return shared.OK(c, fiber.Map{"id": sessionID, "status": "completed"})
+	}
+}
+
 func sessionHeartbeat(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		sessionID, err := strconv.Atoi(c.Params("id"))
@@ -232,10 +295,13 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			`SELECT id, actual_qty, COALESCE(reserved_qty,0)
 			 FROM stock_location_balances
 			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+			   AND actual_qty > 0
+			 ORDER BY CASE WHEN allocation_status IN ('allocatable','staging') THEN 0 ELSE 1 END, id
+			 LIMIT 1
 			 FOR UPDATE`,
 			body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
 		if err == pgx.ErrNoRows {
-			return shared.Err(c, fiber.StatusBadRequest, "no stock at source location")
+			return shared.Err(c, fiber.StatusBadRequest, "no available stock at source location")
 		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -385,20 +451,29 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		var itemCode string
 		var sessionQty float64
 		var sourceLocationID int
+		var sessionUserID int
 		err = tx.QueryRow(c.Context(),
-			`SELECT item_code, qty, source_location_id FROM putaway_session_items
-			 WHERE id=$1 AND session_id=$2 AND status='picked' FOR UPDATE`,
-			itemID, sessionID).Scan(&itemCode, &sessionQty, &sourceLocationID)
+			`SELECT psi.item_code, psi.qty, psi.source_location_id, ps.user_id
+			 FROM putaway_session_items psi
+			 JOIN putaway_sessions ps ON ps.id = psi.session_id
+			 WHERE psi.id=$1 AND psi.session_id=$2 AND psi.status='picked' FOR UPDATE`,
+			itemID, sessionID).Scan(&itemCode, &sessionQty, &sourceLocationID, &sessionUserID)
 		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "item not found or already placed")
 		}
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		if actorID := userID(c); actorID > 0 && sessionUserID > 0 && actorID != sessionUserID && !rbac.HasPermission(c, "putaway.override") {
+			return shared.Err(c, fiber.StatusForbidden, "putaway session belongs to another operator")
+		}
 
 		qty := sessionQty
-		if body.Qty > 0 && body.Qty <= sessionQty {
+		if body.Qty > 0 {
 			qty = body.Qty
+		}
+		if err := validatePlacementQuantity(qty, sessionQty); err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
 		}
 
 		var locOK int
@@ -411,6 +486,12 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
+		if body.IsOverride && !rbac.HasPermission(c, putawayOverridePermission) {
+			return shared.Err(c, fiber.StatusForbidden, "putaway.override required for override placement")
+		}
+		if body.IsOverride && !rbac.HasPermission(c, putawayOverridePermission) {
+			return shared.Err(c, fiber.StatusForbidden, putawayOverridePermission+" required for override placement")
+		}
 		if err := shared.RejectMixedPutaway(c.Context(), tx, itemCode, body.TargetLocationID); err != nil {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 				"ok": false, "error": err.Error(), "error_type": "mixed_items",

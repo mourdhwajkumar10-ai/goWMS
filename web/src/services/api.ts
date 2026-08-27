@@ -322,6 +322,7 @@ export const api = {
   grnScanCarton: (data: any) => post<any>("/grn/carton", data),
   grnScanLine: (data: any) => post<any>("/grn/line", data),
   grnClose: (data: any) => post<any>("/grn/close", data),
+  /** @deprecated Direct GRN putaway is disabled; use a putaway session. */
   grnPutaway: (data: any) => post<any>("/grn/putaway", data),
   grnCompletePutaway: (id: number) => post<any>(`/grn/session/${id}/complete-putaway`, {}),
   grnCreateException: (id: number, data: any) => post<any>(`/grn/session/${id}/exceptions`, data),
@@ -418,6 +419,7 @@ export const api = {
 
   // Putaway
   putawayRules: () => get<any[]>("/putaway/rules"),
+  /** @deprecated Direct placement is disabled; use a putaway session. */
   putawayCreate: (data: any) => post<any>("/putaway/", data),
   putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number, preferred?: { aisle?: string; bay?: string; excludeLocationIds?: number[] }) => {
     let q = `/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}`
@@ -428,6 +430,7 @@ export const api = {
     return get<any>(q)
   },
   putawayQueue: () => get<any[]>("/putaway/queue"),
+  putawayCompleteSession: (id: number) => post<any>(`/putaway/sessions/${id}/complete`, {}),
   putawayFitException: (data: {
     item_code: string
     rejected_location?: string

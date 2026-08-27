@@ -37,6 +37,10 @@ export default function PutawayRunner() {
   const [qtyOverride, setQtyOverride] = useState<number | null>(null)
   const [doneToday, setDoneToday] = useState(0)
   const [showZoneFilterInItem, setShowZoneFilterInItem] = useState(false)
+  const [session, setSession] = useState<{ id: number; warehouse_id: number } | null>(null)
+  const [pickedItemId, setPickedItemId] = useState<number | null>(null)
+  const [scanStep, setScanStep] = useState<'item' | 'location' | 'item_confirm'>('item')
+  const [scannedLocation, setScannedLocation] = useState<{ id: number; code: string } | null>(null)
 
   const totalPending = zones.reduce((sum, z) => sum + z.count, 0)
 
@@ -71,6 +75,9 @@ export default function PutawayRunner() {
     setSelected(null)
     setSuggestion(null)
     setQtyOverride(null)
+    setPickedItemId(null)
+    setScannedLocation(null)
+    setScanStep('item')
   }
 
   const pickMode = (next: RunnerMode) => {
@@ -91,19 +98,90 @@ export default function PutawayRunner() {
   const selectItem = useCallback(async (item: QueueItem) => {
     setSelected(item)
     setQtyOverride(null)
+    setScanStep('item')
     fb.ok()
     toast(`Found: ${item.item_code}`, 'ok')
+  }, [fb, toast])
+
+  const ensureSession = useCallback(async (warehouseId: number) => {
+    if (session) return session.id
+    const r: any = await api.post('/putaway/sessions', { warehouse_id: warehouseId, zone })
+    if (!r.ok || !r.data?.id) {
+      toast(r.error ?? 'Could not start putaway session', 'err')
+      return null
+    }
+    setSession({ id: r.data.id, warehouse_id: warehouseId })
+    return r.data.id as number
+  }, [session, zone, toast])
+
+  const pickSelected = useCallback(async () => {
+    if (!selected) return
+    const sid = await ensureSession(selected.warehouse_id)
+    if (!sid) return
+    const r: any = await api.post(`/putaway/sessions/${sid}/pick`, {
+      item_code: selected.item_code,
+      source_location_id: selected.location_id,
+      qty: qtyOverride ?? selected.qty,
+    })
+    if (!r.ok || !r.data?.id) {
+      fb.err()
+      toast(r.error ?? 'Pick failed', 'err')
+      return
+    }
+    setPickedItemId(r.data.id)
     const s: any = await api.get(
-      `/putaway/suggest?item_code=${encodeURIComponent(item.item_code)}&qty=${item.qty}&warehouse_id=${item.warehouse_id}`,
+      `/putaway/suggest?item_code=${encodeURIComponent(selected.item_code)}&qty=${qtyOverride ?? selected.qty}&warehouse_id=${selected.warehouse_id}`,
     )
     if (s.ok) setSuggestion(s.data as SuggestResult)
-    else setSuggestion(null)
-  }, [fb, toast])
+    setScanStep('location')
+    fb.ok()
+    toast(`Picked ${selected.item_code}. Scan the destination bin.`, 'ok')
+  }, [selected, qtyOverride, ensureSession, fb, toast])
 
   const handleScan = useCallback(async (code: string) => {
     const clean = code.trim()
     if (!clean) return
     setScanCode('')
+    if (scanStep === 'location' && selected && pickedItemId) {
+      const r: any = await api.get('/masterdata/locations')
+      const location = r.ok && Array.isArray(r.data)
+        ? r.data.find((l: any) => String(l.code ?? '').toUpperCase() === clean.toUpperCase())
+        : null
+      if (!location) {
+        fb.warn()
+        toast(`Location not found: ${clean}`, 'warn')
+        return
+      }
+      setScannedLocation({ id: location.id, code: location.code })
+      setScanStep('item_confirm')
+      fb.ok()
+      toast(`Bin ${location.code} scanned. Scan the item again to confirm.`, 'ok')
+      return
+    }
+    if (scanStep === 'item_confirm' && selected && pickedItemId) {
+      if (clean.toUpperCase() !== selected.item_code.toUpperCase()) {
+        fb.warn()
+        toast(`Scan ${selected.item_code} to confirm placement`, 'warn')
+        return
+      }
+      const sid = session?.id
+      if (!sid || !scannedLocation) return
+      const r: any = await api.post(`/putaway/sessions/${sid}/place/${pickedItemId}`, {
+        target_location_id: scannedLocation.id,
+        qty: qtyOverride ?? selected.qty,
+      })
+      if (!r.ok) {
+        fb.err()
+        toast(r.error ?? 'Putaway failed', 'err')
+        return
+      }
+      fb.ok()
+      toast(`Placed ${selected.item_code} at ${scannedLocation.code}`, 'ok')
+      setDoneToday(d => d + 1)
+      clearSelection()
+      await Promise.all([refreshQueue(), refreshZones()])
+      return
+    }
     // Prefer exact queue row match (id-stable); first by code if scanning
     const match = queue.find(q => q.item_code.toUpperCase() === clean.toUpperCase())
     if (match) {
@@ -120,28 +198,12 @@ export default function PutawayRunner() {
     }
     fb.warn()
     toast(`Not in queue: ${clean}`, 'warn')
-  }, [queue, selectItem, fb, toast])
+  }, [queue, selectItem, scanStep, selected, pickedItemId, session, scannedLocation, qtyOverride, fb, toast, refreshQueue, refreshZones])
 
   const confirmPutaway = useCallback(async () => {
     if (!selected || !suggestion) return
-    const r = await api.post('/putaway/', {
-      item_code: selected.item_code,
-      quantity: qtyOverride ?? selected.qty,
-      source_location_id: selected.location_id,
-      target_location_id: suggestion.location_id,
-      warehouse_id: selected.warehouse_id,
-    })
-    if (r.ok) {
-      fb.ok()
-      toast(`→ ${suggestion.location_code}`, 'ok')
-      setDoneToday(d => d + 1)
-      clearSelection()
-      await Promise.all([refreshQueue(), refreshZones()])
-    } else {
-      fb.err()
-      toast(r.error ?? 'Putaway failed', 'err')
-    }
-  }, [selected, suggestion, qtyOverride, fb, toast, refreshQueue, refreshZones])
+    await pickSelected()
+  }, [selected, suggestion, pickSelected])
 
   const queueMore = useLoadMore(queue, 10, `${mode ?? ''}|${zone}|${showZoneFilterInItem}`)
 
@@ -285,7 +347,7 @@ export default function PutawayRunner() {
             value={scanCode}
             onChange={e => setScanCode(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleScan(scanCode) } }}
-            placeholder={mode === 'item' ? 'Scan or type item code…' : 'Scan item in this zone…'}
+            placeholder={scanStep === 'location' ? 'Scan destination bin…' : scanStep === 'item_confirm' ? 'Scan item again to confirm…' : mode === 'item' ? 'Scan or type item code…' : 'Scan item in this zone…'}
             autoFocus
             autoComplete="off"
           />
@@ -313,7 +375,7 @@ export default function PutawayRunner() {
 
       {suggestion && selected && (
         <>
-          <div className="scan-section-title">Suggested location</div>
+          <div className="scan-section-title">{scanStep === 'location' ? 'Scan destination location' : scanStep === 'item_confirm' ? 'Confirm item at destination' : 'Suggested location'}</div>
           <div className="suggest-card best">
             <div className="suggest-card-loc">{suggestion.location_code}</div>
             <div className="suggest-card-reason">
@@ -342,9 +404,17 @@ export default function PutawayRunner() {
             <span style={{ fontSize: 11, color: 'var(--sm-muted-fg)' }}>/{selected.qty}</span>
           </div>
 
-          <button className="scan-btn scan-btn-success" onClick={() => void confirmPutaway()}>
-            Place in {suggestion.location_code}
-          </button>
+          {scanStep === 'item' && (
+            <button className="scan-btn scan-btn-success" onClick={() => void confirmPutaway()}>
+              Pick to tote
+            </button>
+          )}
+          {scanStep === 'location' && (
+            <div className="scan-card-detail">Scan the physical destination bin shown above.</div>
+          )}
+          {scanStep === 'item_confirm' && scannedLocation && (
+            <div className="scan-card-detail">Destination {scannedLocation.code} verified. Scan {selected.item_code} again to place.</div>
+          )}
           {suggestion.candidates?.length > 1 && (
             <button
               className="scan-btn scan-btn-outline scan-btn-sm"
