@@ -125,10 +125,14 @@ func getSession(db *pgxpool.Pool) fiber.Handler {
 		items := []item{}
 		for rows.Next() {
 			var i item
-			if err := rows.Scan(&i.ID, &i.ItemCode, &i.ItemName, &i.Qty, &i.Status, &i.Source); err != nil {
+			if err := rows.Scan(&i.ID, &i.ItemCode, &i.Qty, &i.Status, &i.Source, &i.ItemName); err != nil {
+				log.Printf("getSession scan error: %v", err)
 				continue
 			}
 			items = append(items, i)
+		}
+		if err := rows.Err(); err != nil {
+			log.Printf("getSession rows error: %v", err)
 		}
 
 		return shared.OK(c, fiber.Map{
@@ -374,11 +378,26 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			picker = uid
 		}
 		var id int
+		// If same item already picked in this session from same source, aggregate qty instead of creating duplicate rows
+		var existingID int
+		var existingQty float64
 		err = tx.QueryRow(c.Context(),
-			`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status, picked_by_user_id)
-			 VALUES ($1, $2, $3, $4, 'picked', $5) RETURNING id`,
-			sessionID, body.ItemCode, body.SourceLocationID, body.Qty, picker).Scan(&id)
-		if err != nil {
+			`SELECT id, qty FROM putaway_session_items WHERE session_id=$1 AND UPPER(item_code)=UPPER($2) AND source_location_id=$3 AND status='picked' FOR UPDATE`,
+			sessionID, body.ItemCode, body.SourceLocationID).Scan(&existingID, &existingQty)
+		if err == nil {
+			if _, err = tx.Exec(c.Context(), `UPDATE putaway_session_items SET qty = qty + $1 WHERE id=$2`, body.Qty, existingID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			id = existingID
+		} else if err == pgx.ErrNoRows {
+			err = tx.QueryRow(c.Context(),
+				`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status, picked_by_user_id)
+				 VALUES ($1, $2, $3, $4, 'picked', $5) RETURNING id`,
+				sessionID, body.ItemCode, body.SourceLocationID, body.Qty, picker).Scan(&id)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+		} else {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 

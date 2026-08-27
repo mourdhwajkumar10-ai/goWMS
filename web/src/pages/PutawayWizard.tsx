@@ -233,12 +233,13 @@ export default function PutawayWizard() {
       toast(`Not in queue: ${code}`, 'warn')
       return false
     }
-    const already = toteItems.some(t => t.item_code.toLowerCase() === clean && t.status === 'picked')
-    if (already) {
+    const existing = toteItems.find(t => t.item_code.toLowerCase() === clean && t.status === 'picked')
+    const currentQty = existing ? existing.qty : 0
+    if (currentQty + 1 > match.qty) {
       setScanState('rejected')
-      setScanReason('Already in tote')
+      setScanReason(`Already picked max ${match.qty}`)
       fb.warn()
-      toast('Already in tote', 'warn')
+      toast(`Already picked max ${match.qty}`, 'warn')
       return false
     }
 
@@ -246,16 +247,13 @@ export default function PutawayWizard() {
     fb.ok()
     doFlash('ok')
     haptic(20)
-    const totePicked = toteItems.filter(i => i.status === 'picked')
-    const totalItems = zoneItems.length
-    toast(`✓ ${match.item_code} added to tote (${totePicked.length + 1}/${totalItems})`, 'ok')
 
     const sid = await ensureSession()
     if (!sid) return false
     const r = await api.post<{ id: number }>(`/putaway/sessions/${sid}/pick`, {
       item_code: match.item_code,
       source_location_id: match.location_id,
-      qty: match.qty
+      qty: 1
     })
     if (!r.ok || !r.data?.id) {
       fb.err()
@@ -263,16 +261,25 @@ export default function PutawayWizard() {
       return false
     }
 
-    const newItem: ToteItem = {
-      id: r.data.id,
-      item_code: match.item_code,
-      item_name: match.item_name,
-      qty: match.qty,
-      status: 'picked',
-      source: match.location_code,
-      source_location_id: match.location_id
+    if (existing) {
+      setToteItems(prev => prev.map(t => t.item_code.toLowerCase() === clean && t.status === 'picked' ? { ...t, qty: t.qty + 1, id: r.data!.id } : t))
+      const totalPickedQty = toteItems.filter(i => i.status === 'picked').reduce((s, i) => s + i.qty, 0) + 1
+      toast(`✓ ${match.item_code} ${existing.qty + 1}/${match.qty} (tote ${totalPickedQty})`, 'ok')
+    } else {
+      const newItem: ToteItem = {
+        id: r.data.id,
+        item_code: match.item_code,
+        item_name: match.item_name,
+        qty: 1,
+        status: 'picked',
+        source: match.location_code,
+        source_location_id: match.location_id
+      }
+      setToteItems(prev => [...prev, newItem])
+      const totePicked = toteItems.filter(i => i.status === 'picked')
+      const totalItems = zoneItems.length
+      toast(`✓ ${match.item_code} added to tote (${totePicked.length + 1}/${totalItems}) qty 1/${match.qty}`, 'ok')
     }
-    setToteItems(prev => [...prev, newItem])
     setLastScanCode(match.item_code)
     setScanState('accepted')
     return true
@@ -346,9 +353,8 @@ export default function PutawayWizard() {
     const remaining = resp?.remaining ?? 0
 
     if (remaining > 0) {
-      // Backend updated qty to remaining; reflect in tote
+      // Backend updated qty to remaining; reflect in tote — keep same bin candidate (do not exclude, suggest will skip if full)
       setToteItems(prev => prev.map(it => it.id === cti.id ? { ...it, qty: remaining } : it))
-      setUsedLocationIds(prev => [...prev, scannedLocation.id])
       setSuggestion(null)
       setScannedLocation(null)
       setPlacedAtBin(0)
