@@ -169,7 +169,7 @@ export default function PutawayRunner() {
     if (!clean) return
     setScanCode('')
 
-    // STEP: scan_items — scan item barcodes
+    // STEP: scan_items — scan item barcodes → immediately suggest location
     if (step === 'scan_items') {
       const match = dedupedQueue.find(q => q.item_code.toUpperCase() === clean)
       if (!match) {
@@ -183,26 +183,22 @@ export default function PutawayRunner() {
       setScannedItems(newScanned)
       toast(`✓ ${match.item_code} scanned (${newScanned.length}/${dedupedQueue.length})`, 'success')
 
-      // Auto-advance to suggest_location when all items scanned (for by-item mode, advance after 1)
-      if (mode === 'item' || newScanned.length >= dedupedQueue.length) {
-        // Pick first unplaced item and get suggestion
-        const firstItem = newScanned[0]
-        setCurrentItem(firstItem)
-        setTotalToPlace(firstItem.qty)
-        setPlaceQty(0)
-        const sid = await ensureSession(firstItem.warehouse_id)
-        if (sid) {
-          const r: any = await api.post(`/putaway/sessions/${sid}/pick`, {
-            item_code: firstItem.item_code, source_location_id: firstItem.location_id, qty: firstItem.qty,
-          })
-          if (r.ok && r.data?.id) {
-            setPickedItemId(r.data.id)
-            const s: any = await api.get(`/putaway/suggest?item_code=${encodeURIComponent(firstItem.item_code)}&qty=${firstItem.qty}&warehouse_id=${firstItem.warehouse_id}`)
-            if (s.ok) setSuggestion(s.data as SuggestResult)
-            setStep('suggest_location')
-          } else {
-            toast(r.error ?? 'Pick failed', 'error')
-          }
+      // Immediately pick this item and get suggestion
+      setCurrentItem(match)
+      setTotalToPlace(match.qty)
+      setPlaceQty(0)
+      const sid = await ensureSession(match.warehouse_id)
+      if (sid) {
+        const r: any = await api.post(`/putaway/sessions/${sid}/pick`, {
+          item_code: match.item_code, source_location_id: match.location_id, qty: match.qty,
+        })
+        if (r.ok && r.data?.id) {
+          setPickedItemId(r.data.id)
+          const s: any = await api.get(`/putaway/suggest?item_code=${encodeURIComponent(match.item_code)}&qty=${match.qty}&warehouse_id=${match.warehouse_id}`)
+          if (s.ok) setSuggestion(s.data as SuggestResult)
+          setStep('suggest_location')
+        } else {
+          toast(r.error ?? 'Pick failed', 'error')
         }
       }
       return
@@ -235,19 +231,16 @@ export default function PutawayRunner() {
       toast(`✓ ${currentItem.item_code} placed (${newPlaced}/${totalToPlace})`, 'success')
 
       if (newPlaced >= totalToPlace) {
-        // This item done — check for next item
-        const nextItem = scannedItems.find(s => !scannedItems.indexOf(s) || s.item_code !== currentItem!.item_code)
-        const remaining = scannedItems.filter(s => s.item_code !== currentItem!.item_code)
+        // This item done — check for next unscanned items
+        const remaining = dedupedQueue.filter(q => !scannedItems.some(s => s.item_code.toUpperCase() === q.item_code.toUpperCase() && s.location_id === q.location_id) || q.item_code.toUpperCase() !== currentItem!.item_code.toUpperCase())
         if (remaining.length > 0) {
-          // TODO: pick next item
-          setScannedItems(remaining)
-          setCurrentItem(remaining[0])
-          setTotalToPlace(remaining[0].qty)
-          setPlaceQty(0)
-          setScannedLocation(null)
+          // Go back to scan step for next item
+          setCurrentItem(null)
           setPickedItemId(null)
+          setScannedLocation(null)
           setSuggestion(null)
-          setStep('suggest_location')
+          setPlaceQty(0)
+          setStep('scan_items')
         } else {
           setStep('complete')
         }
