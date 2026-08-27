@@ -663,8 +663,14 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		LEFT JOIN items i ON i.code = gl.item_code
 		LEFT JOIN warehouses w ON w.id = COALESCE(gs.warehouse_id, 1)
 		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
+		  AND COALESCE(gl.scanned_qty,0) > 0
 		  AND COALESCE(gs.stock_posted_at) IS NULL
-		  AND COALESCE(gl.scanned_qty,0) > 0`
+		  AND NOT EXISTS (
+		    SELECT 1 FROM stock_location_balances slb
+		    WHERE slb.item_code = gl.item_code
+		        AND slb.location_id = wl.id
+		        AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
+		  )`
 
 		// The UNION must be filtered as a whole. Appending `AND` after the
 		// UNION filters only the second SELECT and produces invalid SQL when
@@ -729,16 +735,14 @@ func queueZones(db *pgxpool.Pool) fiber.Handler {
 				JOIN grn_sessions gs ON gs.id = gc.grn_session_id
 				JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
 				LEFT JOIN items i ON i.code = gl.item_code
-				WHERE gs.status IN ('putaway_pending','putaway_in_progress','completed','closed')
+				WHERE gs.status IN ('putaway_pending','putaway_in_progress')
 				  AND COALESCE(gl.scanned_qty,0) > 0
-				  AND (
-				    COALESCE(gs.stock_posted_at) IS NULL
-				    OR NOT EXISTS (
-				      SELECT 1 FROM stock_location_balances slb
-				      WHERE slb.item_code = gl.item_code
+				  AND COALESCE(gs.stock_posted_at) IS NULL
+				  AND NOT EXISTS (
+				    SELECT 1 FROM stock_location_balances slb
+				    WHERE slb.item_code = gl.item_code
 				        AND slb.location_id = wl.id
 				        AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
-				    )
 				  )
 			) sub
 			GROUP BY zone

@@ -375,11 +375,19 @@ export default function PutawayWizard() {
         setUsedLocationIds(prev => [...prev, scannedLocation.id])
         setScannedLocation(null)
         setPlacedAtBin(0)
+        // Close session server-side so queue refresh hides ghost GRN rows
+        if (session) {
+          void api.post(`/putaway/sessions/${session.id}/complete`, {}).then(r => {
+            if (!r.ok) toast(r.error || 'Complete failed', 'warn')
+            void loadQueue()
+            void loadZones()
+          })
+        }
         setStep('complete')
       }
     }
     return true
-  }, [toteItems, scannedLocation, session, placedAtBin, usedLocationIds, fb, doFlash, toast, haptic])
+  }, [toteItems, scannedLocation, session, placedAtBin, usedLocationIds, fb, doFlash, toast, haptic, loadQueue, loadZones])
 
   // ─── MODE SELECT ───
   if (step === 'mode_select') {
@@ -785,6 +793,8 @@ export default function PutawayWizard() {
                 setPlacedAtBin(0)
                 setSession(null)
                 setStep('mode_select')
+                void loadQueue()
+                void loadZones()
               }}
             >
               New Putaway
