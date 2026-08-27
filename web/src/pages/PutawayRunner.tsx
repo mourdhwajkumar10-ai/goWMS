@@ -24,18 +24,20 @@ type PutawayStep = 'mode_select' | 'scan_items' | 'suggest_location' | 'place_it
 type RunnerMode = 'zone' | 'item'
 
 /* ── Receiving-style progress header ── */
-function ProgressHeader({ counted, total, label, step, zone }: {
-  counted: number; total: number; label: string; step: PutawayStep; zone?: string
+function ProgressHeader({ counted, total, label, step, zone, title, onBack }: {
+  counted: number; total: number; label: string; step: PutawayStep; zone?: string; title?: string; onBack?: () => void
 }) {
   const pct = total > 0 ? Math.round((counted / total) * 100) : 0
   return (
     <div style={{ position: 'sticky', top: 0, zIndex: 20, display: 'flex', flexDirection: 'column', gap: 10, borderBottom: '1px solid var(--border)', background: 'var(--background)', padding: '16px 16px 12px', margin: '-20px -16px 0' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <button type="button" onClick={onBack || (() => {})} style={{ width: 36, height: 36, display: 'grid', placeItems: 'center', borderRadius: 9999, background: 'var(--card)', border: '1px solid var(--border)', color: 'var(--muted-foreground)', flexShrink: 0 }}>
+            <ArrowLeft size={16} />
+          </button>
           <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            Putaway
+            {title || 'Putaway'}
           </h1>
-          {zone && <span style={{ padding: '3px 10px', borderRadius: 9999, background: 'var(--accent-light, #dbeafe)', color: 'var(--accent, #2563eb)', fontSize: 11, fontWeight: 600 }}>Zone {zone}</span>}
         </div>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexShrink: 0 }}>
           <span style={{ fontSize: 36, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums' }}>{counted}</span>
@@ -44,6 +46,23 @@ function ProgressHeader({ counted, total, label, step, zone }: {
       </div>
       <div className="scan-progress-bar" role="img" aria-label={`${counted} of ${total} ${label}, ${pct} percent`}>
         <div className="scan-progress-fill" style={{ width: `${Math.max(pct, 1.5)}%` }} />
+      </div>
+      {/* Document chips */}
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+        <div className="scan-doc-chip" data-kind="zone">
+          <span className="scan-doc-chip-label">ZONE</span>
+          <span className="scan-doc-chip-value">{zone || 'All'}</span>
+        </div>
+        <span style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>→</span>
+        <div className="scan-doc-chip" data-kind="pl">
+          <span className="scan-doc-chip-label">SESSION</span>
+          <span className="scan-doc-chip-value">{label}</span>
+        </div>
+        <span style={{ color: 'var(--muted-foreground)', fontSize: 12 }}>→</span>
+        <div className="scan-doc-chip" data-kind="grn">
+          <span className="scan-doc-chip-label">STATUS</span>
+          <span className="scan-doc-chip-value">{step === 'complete' ? 'Done' : step === 'scan_items' ? 'Scanning' : step === 'suggest_location' ? 'Location' : 'Placing'}</span>
+        </div>
       </div>
       {/* Step dots */}
       <div style={{ display: 'flex', gap: 6 }}>
@@ -334,6 +353,33 @@ export default function PutawayRunner() {
             {scannedItems.map((item, i) => (
               <ScannedItemCard key={`${item.item_code}-${item.location_id}`} item={item} index={i + 1} total={dedupedQueue.length} />
             ))}
+          </div>
+        )}
+
+        {/* Queue list with status */}
+        {dedupedQueue.length > 0 && (
+          <div style={{ padding: '0 16px', marginTop: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                NEXT ITEMS {dedupedQueue.length}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>{scannedItems.length} scanned</span>
+              </div>
+            </div>
+            {dedupedQueue.map(q => {
+              const isScanned = scannedItems.some(s => s.item_code.toUpperCase() === q.item_code.toUpperCase() && s.location_id === q.location_id)
+              return (
+                <div key={`${q.item_code}-${q.location_id}`} className="rw-box-row" data-status={isScanned ? 'verified' : 'expected'} style={{ cursor: 'default' }}>
+                  <div className="rw-box-row-dot" />
+                  <div className="rw-box-row-info">
+                    <div className="rw-box-row-num">{q.item_code}</div>
+                    <div className="rw-box-row-meta">{q.item_name || '—'} · {q.qty} @ {q.location_code}</div>
+                  </div>
+                  <div className="rw-box-row-badge">{isScanned ? 'Scanned' : 'Pending'}</div>
+                </div>
+              )
+            })}
           </div>
         )}
 
