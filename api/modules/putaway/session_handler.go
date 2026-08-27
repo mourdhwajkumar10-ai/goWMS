@@ -331,6 +331,11 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			if postErr != nil {
 				log.Printf("PUTAWAY AUTO-POST: failed to insert stock for %s at location %d: %v", body.ItemCode, body.SourceLocationID, postErr)
 			}
+			// Mark GRN as stock_posted_at so queue won't show this item twice.
+			_, _ = tx.Exec(c.Context(),
+				`UPDATE grn_sessions SET stock_posted_at=now()
+				 WHERE status IN ('putaway_pending','putaway_in_progress','completed','closed')
+				   AND COALESCE(stock_posted_at) IS NULL`)
 			// Now re-query the balance we just created.
 			err = tx.QueryRow(c.Context(),
 				`SELECT id, actual_qty, COALESCE(reserved_qty,0)
