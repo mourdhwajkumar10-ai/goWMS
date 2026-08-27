@@ -516,6 +516,33 @@ export default function PutawayRunner() {
                     {q.qty} pcs
                   </span>
                   <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      if (!isActive) {
+                        setSelected(q)
+                        setQtyOverride(null)
+                        setScanStep('item')
+                        // Auto-pick immediately
+                        void (async () => {
+                          const sid = await ensureSession(q.warehouse_id)
+                          if (!sid) return
+                          const r: any = await api.post(`/putaway/sessions/${sid}/pick`, {
+                            item_code: q.item_code,
+                            source_location_id: q.location_id,
+                            qty: q.qty,
+                          })
+                          if (!r.ok || !r.data?.id) { fb.err(); toast(r.error ?? 'Pick failed', 'err'); return }
+                          setPickedItemId(r.data.id)
+                          const s: any = await api.get(
+                            `/putaway/suggest?item_code=${encodeURIComponent(q.item_code)}&qty=${q.qty}&warehouse_id=${q.warehouse_id}`,
+                          )
+                          if (s.ok) setSuggestion(s.data as SuggestResult)
+                          setScanStep('location')
+                          fb.ok()
+                          toast(`Picked ${q.item_code}. Scan destination bin.`, 'ok')
+                        })()
+                      }
+                    }}
                     style={{
                       padding: '6px 14px', borderRadius: 8, border: '1px solid #2563eb',
                       background: isActive ? '#2563eb' : '#fff',
