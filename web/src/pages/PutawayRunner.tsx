@@ -302,7 +302,7 @@ export default function PutawayRunner() {
         <div style={{ padding: '8px 16px' }}>
           <div style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180, background: '#111' }}>
             <CameraScanner
-              open embedded minimal continuous onClose={() => {}}
+              open embedded continuous onClose={() => {}}
               onScan={(scanned) => { const clean = String(scanned || '').trim(); if (clean) void handleScan(clean) }}
             />
           </div>
@@ -395,7 +395,7 @@ export default function PutawayRunner() {
         <div style={{ padding: '8px 16px' }}>
           <div style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180, background: '#111' }}>
             <CameraScanner
-              open embedded minimal continuous onClose={() => {}}
+              open embedded continuous onClose={() => {}}
               onScan={(scanned) => { const clean = String(scanned || '').trim(); if (clean) void handleScan(clean) }}
             />
           </div>
@@ -455,7 +455,7 @@ export default function PutawayRunner() {
         <div style={{ padding: '8px 16px' }}>
           <div style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180, background: '#111' }}>
             <CameraScanner
-              open embedded minimal continuous onClose={() => {}}
+              open embedded continuous onClose={() => {}}
               onScan={(scanned) => { const clean = String(scanned || '').trim(); if (clean) void handleScan(clean) }}
             />
           </div>

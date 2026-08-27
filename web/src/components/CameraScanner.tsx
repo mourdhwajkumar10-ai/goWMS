@@ -140,17 +140,25 @@ function ScanViewport({
         }} />
       )}
 
-      {/* Floating action buttons */}
+      {/* Single camera control button — click=on/off, double-click=flip */}
       {!minimal && (
         <div style={{ position: 'absolute', top: 10, left: 10, right: 10, display: 'flex', justifyContent: 'space-between', zIndex: 6 }}>
-          <button onClick={onToggleCamera} style={floatBtn(cameraOn ? '#ef4444' : '#64748b')} title={cameraOn ? 'Turn camera off' : 'Turn camera on'}>
+          <button
+            onClick={onToggleCamera}
+            onDoubleClick={(e) => { e.preventDefault(); onFlipCamera() }}
+            style={floatBtn(cameraOn ? '#ef4444' : '#64748b')}
+            title="Click: on/off · Double-click: flip camera"
+          >
             {cameraOn ? <CameraOff size={16} /> : <Camera size={16} />}
           </button>
-          <button onClick={onToggleTorch} disabled={!cameraOn || !!error} style={{ ...floatBtn(torchOn ? '#f59e0b' : '#64748b'), opacity: (!cameraOn || !!error) ? 0.4 : 1 }} title={torchOn ? 'Flash on' : 'Flash off'}>
+          <button
+            onClick={onToggleTorch}
+            onDoubleClick={(e) => { e.preventDefault(); onFlipCamera() }}
+            disabled={!cameraOn || !!error}
+            style={{ ...floatBtn(torchOn ? '#f59e0b' : '#64748b'), opacity: (!cameraOn || !!error) ? 0.4 : 1 }}
+            title="Click: flash · Double-click: flip camera"
+          >
             {torchOn ? <Flashlight size={16} /> : <FlashlightOff size={16} />}
-          </button>
-          <button onClick={onFlipCamera} style={floatBtn('#64748b')} title="Flip camera">
-            <RotateCcw size={16} />
           </button>
         </div>
       )}
