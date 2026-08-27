@@ -1,5 +1,5 @@
-import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { ArrowLeft, Check, ChevronRight, Scan, MapPin, Package, CheckCircle2 } from 'lucide-react'
+import { useState, useCallback, useEffect, useMemo } from 'react'
+import { ArrowLeft, Check, ChevronRight, Scan, MapPin, Package } from 'lucide-react'
 import api from '../services/api'
 import CameraScanner from '../components/CameraScanner'
 import { useScanFeedback } from '../hooks/useScanFeedback'
@@ -110,7 +110,6 @@ export default function PutawayRunner() {
   const [currentItem, setCurrentItem] = useState<QueueItem | null>(null)
   const [suggestion, setSuggestion] = useState<SuggestResult | null>(null)
   const [scannedLocation, setScannedLocation] = useState<{ id: number; code: string } | null>(null)
-  const [placedCount, setPlacedCount] = useState(0)
   const [totalToPlace, setTotalToPlace] = useState(0)
   const [zone, setZone] = useState('')
   const [zones, setZones] = useState<{ zone: string; count: number }[]>([])
@@ -520,7 +519,7 @@ export default function PutawayRunner() {
             <button className="rw-btn rw-btn-primary" onClick={() => {
               setMode(null); setStep('mode_select'); setScannedItems([]); setQueue([])
               setCurrentItem(null); setSuggestion(null); setScannedLocation(null)
-              setPlacedCount(0); setPlaceQty(0); setPickedItemId(null); setZone('')
+              setPlaceQty(0); setPickedItemId(null); setZone('')
             }}>
               New putaway
             </button>
