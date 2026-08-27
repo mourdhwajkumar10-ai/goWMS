@@ -1,0 +1,5 @@
+- generic "gWgoWMSWarehouse DeskHome⌂Dashboard▦Analytics◔NotificationsInward⇩GRN⚠Exceptions↻Follow-Up Receipts⇨" [ref=e1] clickable [onclick]
+  - link "⚠ Exceptions" [ref=e28]
+  - columnheader "Items" [ref=e262]
+  - button "Exceptions" [ref=e20]
+  - button "Putaway (Move to Storage) Move received items to warehouse locations ▶" [ref=e23]

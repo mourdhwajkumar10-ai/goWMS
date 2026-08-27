@@ -1,0 +1,1 @@
+  'closed' is NOT in spec. Could mean COMPLETED or cancelled

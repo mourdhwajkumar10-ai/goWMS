@@ -1,0 +1,1 @@
+  - textbox "Scan badge" [ref=e5]: BOX-005

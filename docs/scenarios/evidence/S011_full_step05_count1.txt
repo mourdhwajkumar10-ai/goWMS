@@ -1,0 +1,5 @@
+- generic "gWgoWMSWarehouse DeskHome⌂Dashboard▦Analytics◔NotificationsInward⇩GRN⚠Exceptions↻Follow-Up Receipts⇨" [ref=e1] clickable [onclick]
+  - link "⇨ Putaway" [ref=e31]
+  - link "↻ Cycle Count" [ref=e35]
+  - link "№ Serial No" [ref=e41]
+  - link "◉ Customer" [ref=e51]

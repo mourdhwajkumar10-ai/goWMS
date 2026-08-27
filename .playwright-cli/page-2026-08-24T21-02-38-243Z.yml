@@ -1,0 +1,167 @@
+- generic [ref=f4e3]:
+  - complementary [ref=f4e4]:
+    - generic [ref=f4e5]:
+      - generic [ref=f4e6]: gW
+      - generic [ref=f4e7]:
+        - strong [ref=f4e8]: goWMS
+        - text: Warehouse Desk
+    - navigation [ref=f4e9]:
+      - generic [ref=f4e10]:
+        - generic [ref=f4e11]: Home
+        - link "Dashboard" [ref=f4e12] [cursor=pointer]:
+          - /url: /
+        - link "Analytics" [ref=f4e17] [cursor=pointer]:
+          - /url: /analytics
+      - generic [ref=f4e21]:
+        - generic [ref=f4e22]: Inward
+        - link "Receiving" [ref=f4e23] [cursor=pointer]:
+          - /url: /receiving-management
+        - link "RF Scanner" [ref=f4e29] [cursor=pointer]:
+          - /url: /receiving
+        - link "Exceptions" [ref=f4e34] [cursor=pointer]:
+          - /url: /exceptions
+        - link "Follow-Up Receipts" [ref=f4e38] [cursor=pointer]:
+          - /url: /follow-up
+        - link "Random Audit" [ref=f4e45] [cursor=pointer]:
+          - /url: /grn-audit
+        - link "Putaway" [ref=f4e48] [cursor=pointer]:
+          - /url: /putaway
+        - link "Putaway Logs" [ref=f4e52] [cursor=pointer]:
+          - /url: /putaway/logs
+      - generic [ref=f4e57]:
+        - generic [ref=f4e58]: Stock
+        - link "Picking" [ref=f4e59] [cursor=pointer]:
+          - /url: /pick
+        - link "Packing" [ref=f4e64] [cursor=pointer]:
+          - /url: /pack
+        - link "Dispatch" [ref=f4e68] [cursor=pointer]:
+          - /url: /dispatch
+        - link "Cycle Count" [ref=f4e75] [cursor=pointer]:
+          - /url: /cycle-count
+        - link "Stock Scan" [ref=f4e82] [cursor=pointer]:
+          - /url: /stock-scan
+        - link "Inventory Health" [ref=f4e85] [cursor=pointer]:
+          - /url: /inventory-health
+        - link "Transfers" [ref=f4e90] [cursor=pointer]:
+          - /url: /transfers
+        - link "Stock Entry" [ref=f4e95] [cursor=pointer]:
+          - /url: /stock-entries
+        - link "Stock Reconciliation" [ref=f4e100] [cursor=pointer]:
+          - /url: /stock-reconciliations
+        - link "Serial No" [ref=f4e105] [cursor=pointer]:
+          - /url: /serial
+        - link "Batch" [ref=f4e110] [cursor=pointer]:
+          - /url: /batches
+        - link "Quality Inspection" [ref=f4e122] [cursor=pointer]:
+          - /url: /qi
+      - generic [ref=f4e125]:
+        - generic [ref=f4e126]: Buying
+        - link "Purchase Order" [ref=f4e127] [cursor=pointer]:
+          - /url: /po
+        - link "Purchase Invoice" [ref=f4e132] [cursor=pointer]:
+          - /url: /purchase-invoices
+        - link "Supplier" [ref=f4e137] [cursor=pointer]:
+          - /url: /suppliers
+      - generic [ref=f4e144]:
+        - generic [ref=f4e145]: Selling
+        - link "Sales Order" [ref=f4e146] [cursor=pointer]:
+          - /url: /sales-orders
+        - link "Delivery Note" [ref=f4e152] [cursor=pointer]:
+          - /url: /delivery-notes
+        - link "Backorders" [ref=f4e157] [cursor=pointer]:
+          - /url: /backorders
+        - link "Returns" [ref=f4e164] [cursor=pointer]:
+          - /url: /returns
+        - link "Customer" [ref=f4e169] [cursor=pointer]:
+          - /url: /customers
+      - generic [ref=f4e176]:
+        - generic [ref=f4e177]: Masters
+        - link "Item" [ref=f4e178] [cursor=pointer]:
+          - /url: /items
+        - link "Warehouse" [ref=f4e183] [cursor=pointer]:
+          - /url: /warehouses
+        - link "Locations" [ref=f4e189] [cursor=pointer]:
+          - /url: /locations
+        - link "Transport" [ref=f4e194] [cursor=pointer]:
+          - /url: /transports
+        - link "Employees" [ref=f4e201] [cursor=pointer]:
+          - /url: /employees
+        - link "Roles" [ref=f4e208] [cursor=pointer]:
+          - /url: /roles
+        - link "Workflow" [ref=f4e212] [cursor=pointer]:
+          - /url: /workflow
+        - link "Reports" [ref=f4e218] [cursor=pointer]:
+          - /url: /reports
+        - link "Transaction Logs" [ref=f4e222] [cursor=pointer]:
+          - /url: /audit-logs
+  - generic [ref=f4e227]:
+    - banner [ref=f4e228]:
+      - button "Toggle menu" [ref=f4e229] [cursor=pointer]
+      - generic [ref=f4e231]:
+        - textbox "Search" [ref=f4e235]:
+          - /placeholder: Search pages…
+        - generic [ref=f4e236]: ⌘K
+      - generic [ref=f4e237]:
+        - button "Notifications" [ref=f4e238] [cursor=pointer]
+        - button "Account menu" [ref=f4e243] [cursor=pointer]:
+          - generic [ref=f4e244]: A
+    - main [ref=f4e247]:
+      - generic [ref=f4e248]:
+        - generic [ref=f4e250]:
+          - generic [ref=f4e251]: Overview
+          - heading "Home" [level=1] [ref=f4e252]
+          - paragraph [ref=f4e253]: Warehouse operations overview
+        - generic [ref=f4e254]:
+          - heading "Number cards" [level=2] [ref=f4e255]
+          - generic [ref=f4e256]:
+            - generic [ref=f4e257]:
+              - generic [ref=f4e258]: "21096"
+              - generic [ref=f4e259]: Total Items
+            - generic [ref=f4e260]:
+              - generic [ref=f4e261]: "0"
+              - generic [ref=f4e262]: Total Stock Qty
+            - generic [ref=f4e263]:
+              - generic [ref=f4e264]: "0"
+              - generic [ref=f4e265]: Pending GRN
+            - generic [ref=f4e266]:
+              - generic [ref=f4e267]: "1"
+              - generic [ref=f4e268]: Open Pick Lists
+            - generic [ref=f4e269]:
+              - generic [ref=f4e270]: "0"
+              - generic [ref=f4e271]: Pending Backorders
+            - generic [ref=f4e272]:
+              - generic [ref=f4e273]: "0"
+              - generic [ref=f4e274]: Due Cycle Counts
+        - generic [ref=f4e275]:
+          - heading "Shortcuts" [level=2] [ref=f4e276]
+          - generic [ref=f4e277]:
+            - link "Receive (GRN) Goods receipt against PO" [ref=f4e278] [cursor=pointer]:
+              - /url: /grn
+              - generic [ref=f4e284]:
+                - generic [ref=f4e285]: Receive (GRN)
+                - generic [ref=f4e286]: Goods receipt against PO
+            - link "Purchase Order Create / submit buying docs" [ref=f4e287] [cursor=pointer]:
+              - /url: /po
+              - generic [ref=f4e292]:
+                - generic [ref=f4e293]: Purchase Order
+                - generic [ref=f4e294]: Create / submit buying docs
+            - link "Pick List Pick against sales orders" [ref=f4e295] [cursor=pointer]:
+              - /url: /pick
+              - generic [ref=f4e300]:
+                - generic [ref=f4e301]: Pick List
+                - generic [ref=f4e302]: Pick against sales orders
+            - link "Packing Pack picked items" [ref=f4e303] [cursor=pointer]:
+              - /url: /pack
+              - generic [ref=f4e310]:
+                - generic [ref=f4e311]: Packing
+                - generic [ref=f4e312]: Pack picked items
+            - link "Dispatch Load and ship trips" [ref=f4e313] [cursor=pointer]:
+              - /url: /dispatch
+              - generic [ref=f4e320]:
+                - generic [ref=f4e321]: Dispatch
+                - generic [ref=f4e322]: Load and ship trips
+            - link "Item Item master" [ref=f4e323] [cursor=pointer]:
+              - /url: /items
+              - generic [ref=f4e328]:
+                - generic [ref=f4e329]: Item
+                - generic [ref=f4e330]: Item master

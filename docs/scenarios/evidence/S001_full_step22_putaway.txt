@@ -1,0 +1,5 @@
+  - link "⇨ Putaway" [ref=e30]
+  - cell "Putaway Test" [ref=e134]
+  - cell "putaway_pending" [ref=e202]
+  - button "Putaway (Move to Storage) Move received items to warehouse locations ▶" [ref=e23]
+    - heading "Putaway (Move to Storage)" [level=2, ref=e60]

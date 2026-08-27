@@ -1,0 +1,4 @@
+  - link "↻ Cycle Count" [ref=e34]
+  - columnheader "Total" [ref=e263]
+  - button "In progress" [ref=e18]
+  - button "Putaway (Move to Storage) Move received items to warehouse locations ▶" [ref=e23]

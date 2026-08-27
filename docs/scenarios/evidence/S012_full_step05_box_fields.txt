@@ -1,0 +1,3 @@
+  - textbox "Scan badge" [ref=e5]: BOX-002
+  - textbox [ref=e6]
+  - textbox [required, ref=e7]

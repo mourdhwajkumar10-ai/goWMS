@@ -1,0 +1,8 @@
+- generic "gWLogin to goWMSWarehouse Management Desk — password or floor PINPasswordPINBadge Codeor Employee Nu" [ref=e1] clickable [onclick]
+  - heading "Login to goWMS" [level=1, ref=e2]
+  - button "Password" [ref=e3]
+  - button "PIN" [ref=e4]
+  - textbox "Scan badge" [ref=e5]: BOX-DAMAGED-001
+  - textbox [ref=e6]
+  - textbox [required, ref=e7]
+  - button "Login" [ref=e8]

@@ -1,0 +1,10 @@
+  - link "⌖ Stock Scan" [ref=e35]
+  - link "◱ Item" [ref=e51]
+  - combobox [expanded=false, ref=e4]
+  - button "Scan" [ref=e5]
+  - combobox [expanded=false, ref=e8]: No — invoice only
+  - combobox [expanded=false, ref=e9]: Invoice only
+  - textbox "MH-12-AB-1234" [ref=e10]
+  - textbox [ref=e11]
+  - textbox [ref=e12]
+  - textbox "INV-001, INV-002" [ref=e14]

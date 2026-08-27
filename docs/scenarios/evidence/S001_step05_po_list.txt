@@ -1,0 +1,3 @@
+  - cell "Start Receiving" [ref=e78]
+    - button "Start Receiving" [ref=e265]
+  - cell "Start Receiving" [ref=e84]

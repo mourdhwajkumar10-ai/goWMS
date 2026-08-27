@@ -1,0 +1,15 @@
+  - combobox [expanded=false, ref=e4]: DGH
+    - option "DGH" [selected, ref=e61]
+    - option "WH-HYPHEN-01" [ref=e62]
+    - option "WH-MODE-01" [ref=e63]
+    - option "WH-MUM-01" [ref=e64]
+    - option "WH WITH SPACES" [ref=e65]
+    - option "WH-TEST-01" [ref=e66]
+    - option "WH_UNDER_01" [ref=e67]
+    - option "MAIN-021" [ref=e68]
+  - combobox [expanded=false, ref=e8]: Yes — packing list
+    - option "Yes — packing list" [selected, ref=e69]
+    - option "No — invoice only" [ref=e70]
+  - combobox [expanded=false, ref=e9]: Packing list
+    - option "Packing list" [selected, ref=e71]
+    - option "Invoice only" [ref=e72]

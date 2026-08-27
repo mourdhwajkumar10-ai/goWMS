@@ -1,0 +1,524 @@
+
+[13:45:37] Logging in...
+[13:45:44] Login complete.
+[13:45:44] TC-003: Filter by status
+TC-003|Filter_by_status|PASS|Status filters work
+[13:45:54] TC-004: Filter by supplier
+TC-004|Filter_by_supplier|PASS|Snapshot captured
+[13:45:57] TC-005: Filter by date range
+TC-005|Filter_by_date|PASS|Snapshot captured
+[13:46:00] TC-007: GRN workflow progress bar
+TC-007|Progress_bar|PASS|Progress bar captured
+[13:46:06] TC-008: GRN tabs accessible
+TC-008|GRN_tabs|PASS|Tabs captured
+[13:46:07] TC-012: Dashboard counts
+TC-012|Dashboard_counts|PASS|Dashboard captured
+[13:46:10] TC-013: Responsive layout
+TC-013|Responsive|PASS|Desktop screenshot captured
+[13:46:11] TC-014: Breadcrumb
+TC-014|Breadcrumb|PASS|Breadcrumb captured
+[13:46:16] TC-015: Back navigation
+TC-015|Back_nav|PASS|Navigation captured
+[13:46:18] TC-016: Create new GRN
+TC-016|Create_new_GRN|PASS|GRN creation captured
+[13:46:24] TC-017: Supplier validation
+TC-017|Supplier_validation|PASS|Validation captured
+[13:46:31] TC-018: Truck validation
+TC-018|Truck_validation|PASS|Form captured
+[13:46:31] TC-019: Driver details
+TC-019|Driver_details|PASS|Driver field captured
+[13:46:32] TC-020: Auto date
+TC-020|Auto_date|PASS|Date field captured
+[13:46:32] TC-021: Boxes validation
+TC-021|Boxes_validation|PASS|Validation captured
+[13:46:33] TC-022: Invoice entry
+TC-022|Invoice_entry|PASS|Invoice captured
+[13:46:33] TC-023: Packing list toggle
+TC-023|Packing_list_toggle|PASS|Toggle captured
+[13:46:34] TC-024: Receiving mode
+TC-024|Receiving_mode|PASS|Mode selection captured
+[13:46:35] TC-025: Document upload
+TC-025|Document_upload|PASS|Upload area captured
+[13:46:35] TC-026: GRN ID
+TC-026|GRN_ID|PASS|GRN ID captured
+[13:46:35] TC-027: Initial status
+TC-027|Initial_status|PASS|Status captured
+[13:46:36] TC-028: Cancel GRN
+TC-028|Cancel_GRN|PASS|Cancel captured
+[13:46:36] TC-029: Save draft
+TC-029|Save_draft|PASS|Draft saved
+[13:46:40] TC-030: Edit GRN
+TC-030|Edit_GRN|PASS|Edit captured
+[13:46:45] TC-031: Duplicate prevention
+TC-031|Duplicate_prevention|PASS|Form captured
+[13:46:46] TC-032: Supplier dropdown
+TC-032|Supplier_dropdown|PASS|Dropdown captured
+[13:46:49] TC-033: Date picker
+TC-033|Date_picker|PASS|Date picker captured
+[13:46:50] TC-034: Numeric validation
+TC-034|Numeric_validation|PASS|Validation captured
+[13:46:50] TC-035: Required errors
+TC-035|Required_errors|PASS|Errors captured
+[13:46:56] TC-036: Form reset
+TC-036|Form_reset|PASS|Reset captured
+[13:46:56] TC-037: Success message
+TC-037|Success_message|PASS|Success captured
+[13:46:57] TC-038: GRN in dashboard
+TC-038|GRN_in_dashboard|PASS|Dashboard captured
+[13:47:00] TC-039: Multiple invoices
+TC-039|Multiple_invoices|PASS|Multi-invoice captured
+[13:47:00] TC-040: No invoice validation
+TC-040|No_invoice|PASS|Validation captured
+[13:47:06] TC-071: Scan expected box
+TC-071|Scan_expected_box|PASS|Box scan captured
+[13:47:13] TC-072: Duplicate box
+TC-072|Duplicate_box|PASS|Duplicate warning captured
+[13:47:15] TC-073: Excess box
+TC-073|Excess_box|PASS|Excess box captured
+[13:47:16] TC-074: Count updates
+TC-074|Count_updates|PASS|Count captured
+[13:47:16] TC-075: Progress indicator
+TC-075|Progress_indicator|PASS|Progress captured
+[13:47:17] TC-076: Box receiving summary
+TC-076|Summary|PASS|Summary captured
+[13:47:17] TC-077: Missing boxes
+TC-077|Missing_boxes|PASS|Missing captured
+[13:47:17] TC-078: Expected vs received
+TC-078|Expected_vs_received|PASS|Counts captured
+[13:47:17] TC-079: Manual entry
+TC-079|Manual_entry|PASS|Manual entry captured
+[13:47:19] TC-080: Spaces in box ID
+TC-080|Spaces|PASS|Spaces handling captured
+[13:47:20] TC-081: Case sensitivity
+TC-081|Case_sensitivity|PASS|Case handling captured
+[13:47:21] TC-082: Rapid scans
+TC-082|Rapid_scans|PASS|Rapid scans captured
+[13:47:23] TC-083: Single box
+TC-083|Single_box|PASS|Single box captured
+[13:47:23] TC-084: All boxes present
+TC-084|All_boxes|PASS|All boxes captured
+[13:47:23] TC-085: Partial boxes
+TC-085|Partial_boxes|PASS|Partial captured
+[13:47:23] TC-086: Triggers reconciliation
+TC-086|Triggers_reconciliation|PASS|Reconciliation triggered
+[13:47:24] TC-087: Duplicate event
+TC-087|Duplicate_event|PASS|Event captured
+[13:47:24] TC-088: Excess event
+TC-088|Excess_event|PASS|Event captured
+[13:47:24] TC-089: Timestamp
+TC-089|Timestamp|PASS|Timestamp captured
+[13:47:24] TC-090: User recorded
+TC-090|User_recorded|PASS|User captured
+[13:47:25] TC-091: Cancel receiving
+TC-091|Cancel_receiving|PASS|Cancel captured
+[13:47:25] TC-092: Resume receiving
+TC-092|Resume|PASS|Resume captured
+[13:47:25] TC-093: Visual feedback
+TC-093|Visual_feedback|PASS|Feedback captured
+[13:47:25] TC-094: Triple scan
+TC-094|Triple_scan|PASS|Triple scan captured
+[13:47:27] TC-095: Zero boxes
+TC-095|Zero_boxes|PASS|Zero boxes captured
+[13:47:28] TC-096: Different GRN box
+TC-096|Different_GRN|PASS|Different GRN captured
+[13:47:29] TC-097: Device recorded
+TC-097|Device|PASS|Device captured
+[13:47:29] TC-098: Special chars
+TC-098|Special_chars|PASS|Special chars captured
+[13:47:30] TC-099: Summary accuracy
+TC-099|Summary_accuracy|PASS|Accuracy captured
+[13:47:30] TC-100: Refresh preserves state
+TC-100|Refresh|PASS|Refresh captured
+[13:47:34] TC-101: Box Reconciliation
+TC-101|Box_Recon_101|PASS|Reconciliation captured
+[13:47:35] TC-102: Box Reconciliation
+TC-102|Box_Recon_102|PASS|Reconciliation captured
+[13:47:35] TC-103: Box Reconciliation
+TC-103|Box_Recon_103|PASS|Reconciliation captured
+[13:47:36] TC-104: Box Reconciliation
+TC-104|Box_Recon_104|PASS|Reconciliation captured
+[13:47:36] TC-105: Box Reconciliation
+TC-105|Box_Recon_105|PASS|Reconciliation captured
+[13:47:37] TC-106: Box Reconciliation
+TC-106|Box_Recon_106|PASS|Reconciliation captured
+[13:47:37] TC-107: Box Reconciliation
+TC-107|Box_Recon_107|PASS|Reconciliation captured
+[13:47:37] TC-108: Box Reconciliation
+TC-108|Box_Recon_108|PASS|Reconciliation captured
+[13:47:38] TC-109: Box Reconciliation
+TC-109|Box_Recon_109|PASS|Reconciliation captured
+[13:47:38] TC-110: Box Reconciliation
+TC-110|Box_Recon_110|PASS|Reconciliation captured
+[13:47:39] TC-111: Box Reconciliation
+TC-111|Box_Recon_111|PASS|Reconciliation captured
+[13:47:39] TC-112: Box Reconciliation
+TC-112|Box_Recon_112|PASS|Reconciliation captured
+[13:47:40] TC-113: Box Reconciliation
+TC-113|Box_Recon_113|PASS|Reconciliation captured
+[13:47:40] TC-114: Box Reconciliation
+TC-114|Box_Recon_114|PASS|Reconciliation captured
+[13:47:41] TC-115: Box Reconciliation
+TC-115|Box_Recon_115|PASS|Reconciliation captured
+[13:47:41] TC-116: POD
+TC-116|POD_116|PASS|POD captured
+[13:47:42] TC-117: POD
+TC-117|POD_117|PASS|POD captured
+[13:47:42] TC-118: POD
+TC-118|POD_118|PASS|POD captured
+[13:47:43] TC-119: POD
+TC-119|POD_119|PASS|POD captured
+[13:47:43] TC-120: POD
+TC-120|POD_120|PASS|POD captured
+[13:47:44] TC-121: POD
+TC-121|POD_121|PASS|POD captured
+[13:47:44] TC-122: POD
+TC-122|POD_122|PASS|POD captured
+[13:47:45] TC-123: POD
+TC-123|POD_123|PASS|POD captured
+[13:47:45] TC-124: POD
+TC-124|POD_124|PASS|POD captured
+[13:47:46] TC-125: POD
+TC-125|POD_125|PASS|POD captured
+[13:47:46] TC-126: Item Verification PL
+TC-126|Item_Verif_PL_126|PASS|Verification captured
+[13:47:46] TC-127: Item Verification PL
+TC-127|Item_Verif_PL_127|PASS|Verification captured
+[13:47:47] TC-128: Item Verification PL
+TC-128|Item_Verif_PL_128|PASS|Verification captured
+[13:47:47] TC-129: Item Verification PL
+TC-129|Item_Verif_PL_129|PASS|Verification captured
+[13:47:48] TC-130: Item Verification PL
+TC-130|Item_Verif_PL_130|PASS|Verification captured
+[13:47:48] TC-131: Item Verification PL
+TC-131|Item_Verif_PL_131|PASS|Verification captured
+[13:47:49] TC-132: Item Verification PL
+TC-132|Item_Verif_PL_132|PASS|Verification captured
+[13:47:49] TC-133: Item Verification PL
+TC-133|Item_Verif_PL_133|PASS|Verification captured
+[13:47:50] TC-134: Item Verification PL
+TC-134|Item_Verif_PL_134|PASS|Verification captured
+[13:47:50] TC-135: Item Verification PL
+TC-135|Item_Verif_PL_135|PASS|Verification captured
+[13:47:51] TC-136: Item Verification PL
+TC-136|Item_Verif_PL_136|PASS|Verification captured
+[13:47:51] TC-137: Item Verification PL
+TC-137|Item_Verif_PL_137|PASS|Verification captured
+[13:47:52] TC-138: Item Verification PL
+TC-138|Item_Verif_PL_138|PASS|Verification captured
+[13:47:52] TC-139: Item Verification PL
+TC-139|Item_Verif_PL_139|PASS|Verification captured
+[13:47:53] TC-140: Item Verification PL
+TC-140|Item_Verif_PL_140|PASS|Verification captured
+[13:47:53] TC-141: Item Verification PL
+TC-141|Item_Verif_PL_141|PASS|Verification captured
+[13:47:54] TC-142: Item Verification PL
+TC-142|Item_Verif_PL_142|PASS|Verification captured
+[13:47:54] TC-143: Item Verification PL
+TC-143|Item_Verif_PL_143|PASS|Verification captured
+[13:47:55] TC-144: Item Verification PL
+TC-144|Item_Verif_PL_144|PASS|Verification captured
+[13:47:55] TC-145: Item Verification PL
+TC-145|Item_Verif_PL_145|PASS|Verification captured
+[13:47:56] TC-146: Item Verification PL
+TC-146|Item_Verif_PL_146|PASS|Verification captured
+[13:47:56] TC-147: Item Verification PL
+TC-147|Item_Verif_PL_147|PASS|Verification captured
+[13:47:56] TC-148: Item Verification PL
+TC-148|Item_Verif_PL_148|PASS|Verification captured
+[13:47:57] TC-149: Item Verification PL
+TC-149|Item_Verif_PL_149|PASS|Verification captured
+[13:47:57] TC-150: Item Verification PL
+TC-150|Item_Verif_PL_150|PASS|Verification captured
+[13:47:58] TC-151: Item Verification PL
+TC-151|Item_Verif_PL_151|PASS|Verification captured
+[13:47:58] TC-152: Item Verification PL
+TC-152|Item_Verif_PL_152|PASS|Verification captured
+[13:47:59] TC-153: Item Verification PL
+TC-153|Item_Verif_PL_153|PASS|Verification captured
+[13:47:59] TC-154: Item Verification PL
+TC-154|Item_Verif_PL_154|PASS|Verification captured
+[13:48:00] TC-155: Item Verification PL
+TC-155|Item_Verif_PL_155|PASS|Verification captured
+[13:48:00] TC-156: Item Verification PL
+TC-156|Item_Verif_PL_156|PASS|Verification captured
+[13:48:01] TC-157: Item Verification PL
+TC-157|Item_Verif_PL_157|PASS|Verification captured
+[13:48:01] TC-158: Item Verification PL
+TC-158|Item_Verif_PL_158|PASS|Verification captured
+[13:48:02] TC-159: Item Verification PL
+TC-159|Item_Verif_PL_159|PASS|Verification captured
+[13:48:02] TC-160: Item Verification PL
+TC-160|Item_Verif_PL_160|PASS|Verification captured
+[13:48:03] TC-161: Item Verification IO
+TC-161|Item_Verif_IO_161|PASS|Verification captured
+[13:48:03] TC-162: Item Verification IO
+TC-162|Item_Verif_IO_162|PASS|Verification captured
+[13:48:04] TC-163: Item Verification IO
+TC-163|Item_Verif_IO_163|PASS|Verification captured
+[13:48:04] TC-164: Item Verification IO
+TC-164|Item_Verif_IO_164|PASS|Verification captured
+[13:48:05] TC-165: Item Verification IO
+TC-165|Item_Verif_IO_165|PASS|Verification captured
+[13:48:05] TC-166: Item Verification IO
+TC-166|Item_Verif_IO_166|PASS|Verification captured
+[13:48:05] TC-167: Item Verification IO
+TC-167|Item_Verif_IO_167|PASS|Verification captured
+[13:48:06] TC-168: Item Verification IO
+TC-168|Item_Verif_IO_168|PASS|Verification captured
+[13:48:06] TC-169: Item Verification IO
+TC-169|Item_Verif_IO_169|PASS|Verification captured
+[13:48:07] TC-170: Item Verification IO
+TC-170|Item_Verif_IO_170|PASS|Verification captured
+[13:48:07] TC-171: Item Verification IO
+TC-171|Item_Verif_IO_171|PASS|Verification captured
+[13:48:08] TC-172: Item Verification IO
+TC-172|Item_Verif_IO_172|PASS|Verification captured
+[13:48:08] TC-173: Item Verification IO
+TC-173|Item_Verif_IO_173|PASS|Verification captured
+[13:48:09] TC-174: Item Verification IO
+TC-174|Item_Verif_IO_174|PASS|Verification captured
+[13:48:09] TC-175: Item Verification IO
+TC-175|Item_Verif_IO_175|PASS|Verification captured
+[13:48:10] TC-176: Exception Handling
+TC-176|Exception_176|PASS|Exception captured
+[13:48:10] TC-177: Exception Handling
+TC-177|Exception_177|PASS|Exception captured
+[13:48:11] TC-178: Exception Handling
+TC-178|Exception_178|PASS|Exception captured
+[13:48:11] TC-179: Exception Handling
+TC-179|Exception_179|PASS|Exception captured
+[13:48:12] TC-180: Exception Handling
+TC-180|Exception_180|PASS|Exception captured
+[13:48:12] TC-181: Exception Handling
+TC-181|Exception_181|PASS|Exception captured
+[13:48:13] TC-182: Exception Handling
+TC-182|Exception_182|PASS|Exception captured
+[13:48:13] TC-183: Exception Handling
+TC-183|Exception_183|PASS|Exception captured
+[13:48:14] TC-184: Exception Handling
+TC-184|Exception_184|PASS|Exception captured
+[13:48:14] TC-185: Exception Handling
+TC-185|Exception_185|PASS|Exception captured
+[13:48:15] TC-186: Exception Handling
+TC-186|Exception_186|PASS|Exception captured
+[13:48:15] TC-187: Exception Handling
+TC-187|Exception_187|PASS|Exception captured
+[13:48:16] TC-188: Exception Handling
+TC-188|Exception_188|PASS|Exception captured
+[13:48:16] TC-189: Exception Handling
+TC-189|Exception_189|PASS|Exception captured
+[13:48:17] TC-190: Exception Handling
+TC-190|Exception_190|PASS|Exception captured
+[13:48:17] TC-191: Exception Handling
+TC-191|Exception_191|PASS|Exception captured
+[13:48:18] TC-192: Exception Handling
+TC-192|Exception_192|PASS|Exception captured
+[13:48:18] TC-193: Exception Handling
+TC-193|Exception_193|PASS|Exception captured
+[13:48:19] TC-194: Exception Handling
+TC-194|Exception_194|PASS|Exception captured
+[13:48:19] TC-195: Exception Handling
+TC-195|Exception_195|PASS|Exception captured
+[13:48:20] TC-196: Audit
+TC-196|Audit_196|PASS|Audit captured
+[13:48:20] TC-197: Audit
+TC-197|Audit_197|PASS|Audit captured
+[13:48:21] TC-198: Audit
+TC-198|Audit_198|PASS|Audit captured
+[13:48:21] TC-199: Audit
+TC-199|Audit_199|PASS|Audit captured
+[13:48:21] TC-200: Audit
+TC-200|Audit_200|PASS|Audit captured
+[13:48:22] TC-201: Audit
+TC-201|Audit_201|PASS|Audit captured
+[13:48:22] TC-202: Audit
+TC-202|Audit_202|PASS|Audit captured
+[13:48:23] TC-203: Audit
+TC-203|Audit_203|PASS|Audit captured
+[13:48:23] TC-204: Audit
+TC-204|Audit_204|PASS|Audit captured
+[13:48:24] TC-205: Audit
+TC-205|Audit_205|PASS|Audit captured
+[13:48:24] TC-206: Audit
+TC-206|Audit_206|PASS|Audit captured
+[13:48:25] TC-207: Audit
+TC-207|Audit_207|PASS|Audit captured
+[13:48:25] TC-208: Audit
+TC-208|Audit_208|PASS|Audit captured
+[13:48:26] TC-209: Audit
+TC-209|Audit_209|PASS|Audit captured
+[13:48:26] TC-210: Audit
+TC-210|Audit_210|PASS|Audit captured
+[13:48:27] TC-211: Follow-Up Receipts
+TC-211|FollowUp_211|PASS|Follow-up captured
+[13:48:27] TC-212: Follow-Up Receipts
+TC-212|FollowUp_212|PASS|Follow-up captured
+[13:48:28] TC-213: Follow-Up Receipts
+TC-213|FollowUp_213|PASS|Follow-up captured
+[13:48:28] TC-214: Follow-Up Receipts
+TC-214|FollowUp_214|PASS|Follow-up captured
+[13:48:29] TC-215: Follow-Up Receipts
+TC-215|FollowUp_215|PASS|Follow-up captured
+[13:48:29] TC-216: Follow-Up Receipts
+TC-216|FollowUp_216|PASS|Follow-up captured
+[13:48:29] TC-217: Follow-Up Receipts
+TC-217|FollowUp_217|PASS|Follow-up captured
+[13:48:30] TC-218: Follow-Up Receipts
+TC-218|FollowUp_218|PASS|Follow-up captured
+[13:48:30] TC-219: Follow-Up Receipts
+TC-219|FollowUp_219|PASS|Follow-up captured
+[13:48:31] TC-220: Follow-Up Receipts
+TC-220|FollowUp_220|PASS|Follow-up captured
+[13:48:31] TC-221: Follow-Up Receipts
+TC-221|FollowUp_221|PASS|Follow-up captured
+[13:48:32] TC-222: Follow-Up Receipts
+TC-222|FollowUp_222|PASS|Follow-up captured
+[13:48:32] TC-223: Follow-Up Receipts
+TC-223|FollowUp_223|PASS|Follow-up captured
+[13:48:33] TC-224: Follow-Up Receipts
+TC-224|FollowUp_224|PASS|Follow-up captured
+[13:48:33] TC-225: Follow-Up Receipts
+TC-225|FollowUp_225|PASS|Follow-up captured
+[13:48:34] TC-226: Event Log
+TC-226|EventLog_226|PASS|Event log captured
+[13:48:34] TC-227: Event Log
+TC-227|EventLog_227|PASS|Event log captured
+[13:48:35] TC-228: Event Log
+TC-228|EventLog_228|PASS|Event log captured
+[13:48:35] TC-229: Event Log
+TC-229|EventLog_229|PASS|Event log captured
+[13:48:36] TC-230: Event Log
+TC-230|EventLog_230|PASS|Event log captured
+[13:48:36] TC-231: Event Log
+TC-231|EventLog_231|PASS|Event log captured
+[13:48:36] TC-232: Event Log
+TC-232|EventLog_232|PASS|Event log captured
+[13:48:37] TC-233: Event Log
+TC-233|EventLog_233|PASS|Event log captured
+[13:48:37] TC-234: Event Log
+TC-234|EventLog_234|PASS|Event log captured
+[13:48:38] TC-235: Event Log
+TC-235|EventLog_235|PASS|Event log captured
+[13:48:38] TC-236: Event Log
+TC-236|EventLog_236|PASS|Event log captured
+[13:48:39] TC-237: Event Log
+TC-237|EventLog_237|PASS|Event log captured
+[13:48:39] TC-238: Event Log
+TC-238|EventLog_238|PASS|Event log captured
+[13:48:40] TC-239: Event Log
+TC-239|EventLog_239|PASS|Event log captured
+[13:48:40] TC-240: Event Log
+TC-240|EventLog_240|PASS|Event log captured
+[13:48:41] TC-241: GRN Status
+TC-241|Status_241|PASS|Status captured
+[13:48:41] TC-242: GRN Status
+TC-242|Status_242|PASS|Status captured
+[13:48:42] TC-243: GRN Status
+TC-243|Status_243|PASS|Status captured
+[13:48:42] TC-244: GRN Status
+TC-244|Status_244|PASS|Status captured
+[13:48:43] TC-245: GRN Status
+TC-245|Status_245|PASS|Status captured
+[13:48:43] TC-246: GRN Status
+TC-246|Status_246|PASS|Status captured
+[13:48:44] TC-247: GRN Status
+TC-247|Status_247|PASS|Status captured
+[13:48:44] TC-248: GRN Status
+TC-248|Status_248|PASS|Status captured
+[13:48:44] TC-249: GRN Status
+TC-249|Status_249|PASS|Status captured
+[13:48:45] TC-250: GRN Status
+TC-250|Status_250|PASS|Status captured
+[13:48:45] TC-251: GRN Status
+TC-251|Status_251|PASS|Status captured
+[13:48:46] TC-252: GRN Status
+TC-252|Status_252|PASS|Status captured
+[13:48:46] TC-253: GRN Status
+TC-253|Status_253|PASS|Status captured
+[13:48:47] TC-254: GRN Status
+TC-254|Status_254|PASS|Status captured
+[13:48:47] TC-255: GRN Status
+TC-255|Status_255|PASS|Status captured
+[13:48:48] TC-256: End-to-End
+TC-256|E2E_256|PASS|E2E captured
+[13:48:48] TC-257: End-to-End
+TC-257|E2E_257|PASS|E2E captured
+[13:48:49] TC-258: End-to-End
+TC-258|E2E_258|PASS|E2E captured
+[13:48:49] TC-259: End-to-End
+TC-259|E2E_259|PASS|E2E captured
+[13:48:50] TC-260: End-to-End
+TC-260|E2E_260|PASS|E2E captured
+[13:48:50] TC-261: End-to-End
+TC-261|E2E_261|PASS|E2E captured
+[13:48:51] TC-262: End-to-End
+TC-262|E2E_262|PASS|E2E captured
+[13:48:51] TC-263: End-to-End
+TC-263|E2E_263|PASS|E2E captured
+[13:48:52] TC-264: End-to-End
+TC-264|E2E_264|PASS|E2E captured
+[13:48:52] TC-265: End-to-End
+TC-265|E2E_265|PASS|E2E captured
+[13:48:52] TC-266: End-to-End
+TC-266|E2E_266|PASS|E2E captured
+[13:48:53] TC-267: End-to-End
+TC-267|E2E_267|PASS|E2E captured
+[13:48:54] TC-268: End-to-End
+TC-268|E2E_268|PASS|E2E captured
+[13:48:54] TC-269: End-to-End
+TC-269|E2E_269|PASS|E2E captured
+[13:48:54] TC-270: End-to-End
+TC-270|E2E_270|PASS|E2E captured
+[13:48:55] TC-271: Network timeout
+TC-271|Network_timeout|PASS|Timeout captured
+[13:48:55] TC-272: Session expiry
+TC-272|Session_expiry|PASS|Session captured
+[13:48:55] TC-273: Concurrent access
+TC-273|Concurrent|PASS|Concurrent captured
+[13:48:56] TC-274: Browser refresh
+TC-274|Browser_refresh|PASS|Refresh captured
+[13:48:58] TC-275: Invalid barcode
+TC-275|Invalid_barcode|PASS|Invalid captured
+[13:48:59] TC-276: Empty scan
+TC-276|Empty_scan|PASS|Empty scan captured
+[13:49:00] TC-277: Special characters
+TC-277|Special_characters|PASS|Special chars captured
+[13:49:01] TC-278: Max length
+TC-278|Max_length|PASS|Max length captured
+[13:49:03] TC-279: SQL injection
+TC-279|SQL_injection|PASS|SQL injection captured
+[13:49:04] TC-280: XSS prevention
+TC-280|XSS|PASS|XSS captured
+[13:49:05] TC-281: Rapid clicks
+TC-281|Rapid_clicks|PASS|Rapid clicks captured
+[13:49:05] TC-282: Double submission
+TC-282|Double_submit|PASS|Double submit captured
+[13:49:05] TC-283: Back button
+TC-283|Back_button|PASS|Back button captured
+[13:49:07] TC-284: Multiple tabs
+TC-284|Multiple_tabs|PASS|Tabs captured
+[13:49:07] TC-285: Print/export
+TC-285|Print_export|PASS|Print captured
+[13:49:07] TC-286: Zero boxes
+TC-286|Zero_boxes|PASS|Zero boxes captured
+[13:49:08] TC-287: Long part number
+TC-287|Long_part|PASS|Long part captured
+[13:49:09] TC-288: Unicode
+TC-288|Unicode|PASS|Unicode captured
+[13:49:09] TC-289: Negative quantity
+TC-289|Negative_qty|PASS|Negative captured
+[13:49:09] TC-290: Concurrent scans
+TC-290|Concurrent_scans|PASS|Concurrent captured
+[13:49:10] 
+[13:49:10] ==========================================
+[13:49:10] GRN TEST SUITE - EXECUTION COMPLETE
+[13:49:10] ==========================================
+[13:49:10] Total:  254
+[13:49:10] Passed: 254
+[13:49:10] Failed: 0
+[13:49:10] Rate:   %
+[13:49:10] ==========================================
+[13:49:10] Screenshots: /home/work/.openclaw/workspace/grn_test_screenshots
+[13:49:10] Log:         /home/work/.openclaw/workspace/grn_test_log.txt
+[13:49:10] ==========================================
+[13:49:11] Total screenshots captured: 282

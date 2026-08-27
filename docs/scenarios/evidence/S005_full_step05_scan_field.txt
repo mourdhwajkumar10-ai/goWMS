@@ -1,0 +1,6 @@
+  - link "⌖ Stock Scan" [ref=e35]
+  - button "Scan" [ref=e5]
+  - textbox "MH-12-AB-1234" [ref=e10]: MH-12-AB-5678
+  - textbox [ref=e11]
+  - textbox [ref=e12]
+  - textbox "INV-001, INV-002" [ref=e14]: INV-2026-DEMO-001

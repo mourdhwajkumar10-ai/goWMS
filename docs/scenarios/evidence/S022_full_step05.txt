@@ -1,0 +1,7 @@
+- generic "gWLogin to goWMSWarehouse Management Desk — password or floor PINPasswordPINEmail / UsernamePassword" [ref=e1] clickable [onclick]
+  - heading "Login to goWMS" [level=1, ref=e2]
+  - button "Password" [ref=e3]
+  - button "PIN" [ref=e4]
+  - textbox [required, ref=e5]: PART-022
+  - textbox [required, ref=e6]
+  - button "Login" [ref=e7]

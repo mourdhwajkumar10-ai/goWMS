@@ -1,0 +1,7 @@
+  - spinbutton "Month" [ref=e253]: 0
+  - spinbutton "Day" [ref=e254]: 0
+  - spinbutton "Year" [ref=e255]: 0
+  - spinbutton "Hours" [ref=e256]: 0
+  - spinbutton "Minutes" [ref=e257]: 0
+  - spinbutton "AM/PM" [ref=e258]: 0
+  - spinbutton [ref=e13]

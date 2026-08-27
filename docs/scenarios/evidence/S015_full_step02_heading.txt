@@ -1,0 +1,3 @@
+  - heading "GRN (Inward)" [level=1, ref=e3]
+  - heading "Select PO to Receive" [level=2, ref=e15]
+  - heading "Existing GRN Sessions" [level=2, ref=e16]

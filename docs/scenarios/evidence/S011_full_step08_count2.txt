@@ -1,0 +1,5 @@
+  - link "⌂ Dashboard" [ref=e24]
+  - link "▦ Analytics" [ref=e25]
+  - link "◔ Notifications" [ref=e26]
+  - link "⇩ GRN" [ref=e27]
+  - link "⚠ Exceptions" [ref=e28]

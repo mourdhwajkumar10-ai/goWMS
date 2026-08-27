@@ -1,0 +1,5 @@
+  - button "Save draft" [ref=e6]
+  - columnheader "Status" [ref=e261]
+  - cell "draft" [ref=e75]
+  - cell "Start Receiving" [ref=e78]
+    - button "Start Receiving" [ref=e265]

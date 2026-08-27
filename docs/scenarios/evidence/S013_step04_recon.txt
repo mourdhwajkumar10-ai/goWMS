@@ -1,0 +1,2 @@
+  - link "≋ Stock Reconciliation" [ref=e39]
+  - columnheader "Total" [ref=e263]

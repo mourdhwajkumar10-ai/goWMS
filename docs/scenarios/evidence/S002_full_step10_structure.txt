@@ -1,0 +1,4 @@
+  - heading "Login to goWMS" [level=1, ref=e2]
+  - button "Password" [ref=e3]
+  - button "PIN" [ref=e4]
+  - button "Login" [ref=e8]

@@ -1,0 +1,2 @@
+  - link "☰ Transaction Logs" [ref=e58]
+  - button "Log out" [ref=e2]

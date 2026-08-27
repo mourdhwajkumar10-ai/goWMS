@@ -1,0 +1,6 @@
+  - button "All" [ref=e17]
+  - button "In progress" [ref=e18]
+  - button "Awaiting verify" [ref=e19]
+  - button "Exceptions" [ref=e20]
+  - button "Follow-ups" [ref=e21]
+  - button "Completed" [ref=e22]

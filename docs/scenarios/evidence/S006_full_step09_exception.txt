@@ -1,0 +1,3 @@
+- generic "gWgoWMSWarehouse DeskHome⌂Dashboard▦Analytics◔NotificationsInward⇩GRN⚠Exceptions↻Follow-Up Receipts⇨" [ref=e1] clickable [onclick]
+  - link "⚠ Exceptions" [ref=e28]
+  - button "Exceptions" [ref=e20]

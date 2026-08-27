@@ -1,0 +1,10 @@
+- generic "gWgoWMSWarehouse DeskHome⌂Dashboard▦Analytics◔NotificationsInward⇩GRN⚠Exceptions↻Follow-Up Receipts⇨" [ref=e1] clickable [onclick]
+  - link "↻ Follow-Up Receipts" [ref=e29]
+  - button "Log out" [ref=e2]
+  - heading "GRN (Inward)" [level=1, ref=e3]
+  - button "Scan" [ref=e5]
+  - button "Save draft" [ref=e6]
+  - button "+ Blank Session" [ref=e7]
+  - spinbutton "Month" [ref=e253]: 0
+  - spinbutton "Day" [ref=e254]: 0
+  - spinbutton "Year" [ref=e255]: 0

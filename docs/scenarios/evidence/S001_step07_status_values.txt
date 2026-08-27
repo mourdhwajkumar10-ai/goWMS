@@ -1,0 +1,6 @@
+     13 cell "open"
+      6 cell "closed"
+      5 cell "draft"
+      3 cell "completed"
+      1 cell "receiving"
+      1 cell "putaway_pending"

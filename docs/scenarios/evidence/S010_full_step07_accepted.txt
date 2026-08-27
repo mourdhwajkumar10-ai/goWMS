@@ -1,0 +1,2 @@
+  - link "↻ Cycle Count" [ref=e34]
+  - button "Putaway (Move to Storage) Move received items to warehouse locations ▶" [ref=e23]

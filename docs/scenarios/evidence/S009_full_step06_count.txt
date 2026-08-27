@@ -1,0 +1,2 @@
+  - heading "Login to goWMS" [level=1, ref=e2]
+  - textbox "Scan badge" [ref=e5]: BOX-002

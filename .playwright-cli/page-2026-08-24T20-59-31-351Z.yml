@@ -1,0 +1,18 @@
+- generic [ref=f2e4]:
+  - generic [ref=f2e5]:
+    - generic [ref=f2e6]: gW
+    - heading "Login to goWMS" [level=1] [ref=f2e8]
+  - paragraph [ref=f2e9]: Sign in with password or floor PIN
+  - generic [ref=f2e10]:
+    - button "Password" [ref=f2e11] [cursor=pointer]
+    - button "PIN" [ref=f2e12] [cursor=pointer]
+  - generic [ref=f2e22]: Login failed
+  - generic [ref=f2e13]:
+    - generic [ref=f2e14]: Email / Username
+    - textbox [ref=f2e15]: admin
+  - generic [ref=f2e16]:
+    - generic [ref=f2e17]: Password
+    - generic [ref=f2e18]:
+      - textbox [ref=f2e19]: admin
+      - button "Show password" [ref=f2e20] [cursor=pointer]: 👁️
+  - button "Login" [ref=f2e21] [cursor=pointer]

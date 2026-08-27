@@ -1,0 +1,1 @@
+  'open' is NOT in spec. Could mean DRAFT or RECEIVING or ITEM_VERIFICATION_COMPLETE
