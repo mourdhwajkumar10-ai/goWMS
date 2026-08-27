@@ -289,9 +289,9 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session is not in picking status")
 		}
 
-		var balID int
-		var actual, reserved float64
-		err = tx.QueryRow(c.Context(),
+	var balID int
+	var actual, reserved float64
+	err = tx.QueryRow(c.Context(),
 			`SELECT id, actual_qty, COALESCE(reserved_qty,0)
 			 FROM stock_location_balances
 			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
@@ -300,12 +300,64 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			 LIMIT 1
 			 FOR UPDATE`,
 			body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
-		if err == pgx.ErrNoRows {
-			return shared.Err(c, fiber.StatusBadRequest, "no available stock at source location")
+	if err == pgx.ErrNoRows {
+		// Stock not in stock_location_balances — check for unposted GRN items.
+		// This happens when GRN reached putaway_pending but stock was never auto-posted.
+		var grnQty float64
+		var grnWarehouseID int
+		err = tx.QueryRow(c.Context(),
+			`SELECT COALESCE(gl.scanned_qty,0), COALESCE(gs.warehouse_id,1)
+			 FROM grn_lines gl
+			 JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+			 JOIN grn_sessions gs ON gs.id = gc.grn_session_id
+			 WHERE UPPER(gl.item_code) = UPPER($1)
+			   AND COALESCE(gl.scanned_qty,0) > 0
+			   AND gs.status IN ('putaway_pending','putaway_in_progress','completed','closed')
+			   AND COALESCE(gs.stock_posted_at) IS NULL
+			 LIMIT 1`, body.ItemCode).Scan(&grnQty, &grnWarehouseID)
+		if err == nil && grnQty > 0 {
+			// Auto-post stock from GRN to stock_location_balances so pick can proceed.
+			var locCode string
+			_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.SourceLocationID).Scan(&locCode)
+			if grnWarehouseID < 1 {
+				grnWarehouseID = 1
+			}
+			var existingID int
+			err = tx.QueryRow(c.Context(),
+				`SELECT id FROM stock_location_balances
+				 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+				 FOR UPDATE`, body.SourceLocationID, body.ItemCode).Scan(&existingID)
+			if err == pgx.ErrNoRows {
+				_, _ = tx.Exec(c.Context(),
+					`INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, actual_qty, reserved_qty, allocation_status)
+					 VALUES ($1,$2,$3,$4,0,'staging')`,
+					body.ItemCode, grnWarehouseID, body.SourceLocationID, grnQty)
+			} else if err == nil {
+				_, _ = tx.Exec(c.Context(),
+					`UPDATE stock_location_balances SET actual_qty = $1, allocation_status='staging', updated_at=now()
+					 WHERE id=$2`, grnQty, existingID)
+			}
+			// Mark GRN as stock_posted_at so we don't double-post.
+			_, _ = tx.Exec(c.Context(),
+				`UPDATE grn_sessions SET stock_posted_at=now()
+				 WHERE status IN ('putaway_pending','putaway_in_progress','completed','closed')
+				   AND COALESCE(stock_posted_at) IS NULL`)
+			// Now re-query the balance we just created.
+		err = tx.QueryRow(c.Context(),
+				`SELECT id, actual_qty, COALESCE(reserved_qty,0)
+				 FROM stock_location_balances
+				 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+				   AND actual_qty > 0
+				 ORDER BY id LIMIT 1 FOR UPDATE`,
+				body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
 		}
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
+	}
+	if err == pgx.ErrNoRows {
+		return shared.Err(c, fiber.StatusBadRequest, "no available stock at source location")
+	}
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
 		avail := actual - reserved
 		if avail+1e-9 < body.Qty {
 			return shared.Err(c, fiber.StatusBadRequest,
