@@ -528,7 +528,6 @@ export default function PutawayWizard() {
                 key={cameraKey}
                 open={true}
                 embedded
-                minimal
                 continuous
                 onClose={restartScanner}
                 onScan={onItemScan}
@@ -646,7 +645,6 @@ export default function PutawayWizard() {
                     key={cameraKey}
                     open={true}
                     embedded
-                    minimal
                     continuous
                     onClose={restartScanner}
                     onScan={onLocationScan}
@@ -713,7 +711,6 @@ export default function PutawayWizard() {
                 key={cameraKey}
                 open={true}
                 embedded
-                minimal
                 continuous
                 onClose={restartScanner}
                 onScan={onItemConfirm}
