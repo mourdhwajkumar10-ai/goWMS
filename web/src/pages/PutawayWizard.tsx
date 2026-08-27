@@ -412,7 +412,7 @@ export default function PutawayWizard() {
           <h1>Putaway</h1>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
           <button type="button" className="scan-select-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
             <div className="scan-select-card-title">By Zone</div>
             <div className="scan-select-card-sub">Batch putaway by HSN zone</div>
@@ -471,7 +471,7 @@ export default function PutawayWizard() {
           <SkeletonCards count={4} />
         ) : (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
               {zones.map(z => (
                 <button
                   key={z.zone}
