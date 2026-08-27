@@ -665,12 +665,13 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
 		  AND COALESCE(gl.scanned_qty,0) > 0
 		  AND COALESCE(gs.stock_posted_at) IS NULL
-		  AND NOT EXISTS (
-		    SELECT 1 FROM stock_location_balances slb
-		    WHERE slb.item_code = gl.item_code
-		        AND slb.location_id = wl.id
-		        AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
-		  )`
+		  AND COALESCE(gl.scanned_qty,0) - COALESCE((
+		        SELECT SUM(GREATEST(actual_qty - reserved_qty, 0))
+		        FROM stock_location_balances slb
+		        WHERE slb.item_code = gl.item_code
+		          AND slb.location_id = wl.id
+		          AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
+		      ), 0) > 1e-9`
 
 		// The UNION must be filtered as a whole. Appending `AND` after the
 		// UNION filters only the second SELECT and produces invalid SQL when
@@ -738,12 +739,13 @@ func queueZones(db *pgxpool.Pool) fiber.Handler {
 				WHERE gs.status IN ('putaway_pending','putaway_in_progress')
 				  AND COALESCE(gl.scanned_qty,0) > 0
 				  AND COALESCE(gs.stock_posted_at) IS NULL
-				  AND NOT EXISTS (
-				    SELECT 1 FROM stock_location_balances slb
-				    WHERE slb.item_code = gl.item_code
-				        AND slb.location_id = wl.id
-				        AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
-				  )
+				  AND COALESCE(gl.scanned_qty,0) - COALESCE((
+				        SELECT SUM(GREATEST(actual_qty - reserved_qty, 0))
+				        FROM stock_location_balances slb
+				        WHERE slb.item_code = gl.item_code
+				          AND slb.location_id = wl.id
+				          AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
+				      ), 0) > 1e-9
 			) sub
 			GROUP BY zone
 			ORDER BY zone`)

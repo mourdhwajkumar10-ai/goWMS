@@ -308,9 +308,9 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 		// Stock not in stock_location_balances — check for unposted GRN items.
 		// This happens when GRN reached putaway_pending but stock was never auto-posted.
 		var grnQty float64
-		var grnWarehouseID int
+		var grnWarehouseID, grnSessionID int
 		err = tx.QueryRow(c.Context(),
-			`SELECT COALESCE(gl.scanned_qty,0), COALESCE(gs.warehouse_id,1)
+			`SELECT COALESCE(gl.scanned_qty,0), COALESCE(gs.warehouse_id,1), COALESCE(gl.grn_session_id, gc.grn_session_id)
 			 FROM grn_lines gl
 			 JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
 			 JOIN grn_sessions gs ON gs.id = gc.grn_session_id
@@ -318,7 +318,11 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			   AND COALESCE(gl.scanned_qty,0) > 0
 			   AND gs.status IN ('putaway_pending','putaway_in_progress','completed','closed')
 			   AND COALESCE(gs.stock_posted_at) IS NULL
-			 LIMIT 1`, body.ItemCode).Scan(&grnQty, &grnWarehouseID)
+			   AND (
+			     UPPER(COALESCE(gl.route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01')
+			   )
+			 ORDER BY gl.id ASC
+			 LIMIT 1`, body.ItemCode).Scan(&grnQty, &grnWarehouseID, &grnSessionID)
 		if err == nil && grnQty > 0 {
 			// Auto-post stock from GRN to stock_location_balances so pick can proceed.
 			if grnWarehouseID < 1 {
@@ -326,8 +330,8 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			}
 			// Use INSERT ... ON CONFLICT to handle both new and existing rows.
 			_, postErr := tx.Exec(c.Context(),
-				`INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, actual_qty, reserved_qty, allocation_status)
-				 VALUES ($1,$2,$3,$4,0,'staging')
+				`INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty, allocation_status)
+				 VALUES ($1,$2,$3,NULL,$4,0,'staging')
 				 ON CONFLICT (item_code, location_id, COALESCE(batch_no,''))
 				 DO UPDATE SET actual_qty = stock_location_balances.actual_qty + $4,
 				               allocation_status='staging', updated_at=now()`,
@@ -335,11 +339,26 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			if postErr != nil {
 				log.Printf("PUTAWAY AUTO-POST: failed to insert stock for %s at location %d: %v", body.ItemCode, body.SourceLocationID, postErr)
 			}
-			// Mark GRN as stock_posted_at so queue won't show this item twice.
-			_, _ = tx.Exec(c.Context(),
-				`UPDATE grn_sessions SET stock_posted_at=now()
-				 WHERE status IN ('putaway_pending','putaway_in_progress','completed','closed')
-				   AND COALESCE(stock_posted_at) IS NULL`)
+			// Mark this specific GRN line as stock-posted via a per-line flag
+			// (grn_sessions.stock_posted_at stays NULL so additional lines still show).
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_lines SET route_location = COALESCE(NULLIF(route_location,''),'INCOMING-01')
+				WHERE grn_session_id=$1
+				  AND item_code=$2
+				  AND COALESCE(scanned_qty,0) > 0
+				  AND (UPPER(COALESCE(route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01'))`,
+				grnSessionID, body.ItemCode)
+			// If every GRN line in this session is now non-staging, mark the session posted.
+			var stillStaging int
+			_ = tx.QueryRow(c.Context(), `
+				SELECT COUNT(*) FROM grn_lines
+				WHERE grn_session_id=$1
+				  AND COALESCE(scanned_qty,0) > 0
+				  AND (UPPER(COALESCE(route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01'))`, grnSessionID).Scan(&stillStaging)
+			if stillStaging == 0 {
+				_, _ = tx.Exec(c.Context(),
+					`UPDATE grn_sessions SET stock_posted_at=now() WHERE id=$1 AND COALESCE(stock_posted_at) IS NULL`, grnSessionID)
+			}
 			// Now re-query the balance we just created.
 			err = tx.QueryRow(c.Context(),
 				`SELECT id, actual_qty, COALESCE(reserved_qty,0)
@@ -377,6 +396,27 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 		if uid := userID(c); uid > 0 {
 			picker = uid
 		}
+		// Resolve GRN line / session once for this pick so the later place() can
+		// update grn_lines.route_location and grn_sessions.putaway_status deterministically.
+		// Pick the most-recently-updated GRN line still in incoming/hold/staging.
+		var grnLineID, grnSessionID *int
+		{
+			var lid, sid int
+			if err := tx.QueryRow(c.Context(), `
+				SELECT gl.id, COALESCE(gl.grn_session_id, gc.grn_session_id)
+				FROM grn_lines gl
+				JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+				WHERE UPPER(gl.item_code) = UPPER($1)
+				  AND gl.scanned_qty > 0
+				  AND (
+				    UPPER(COALESCE(gl.route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01')
+				  )
+				ORDER BY gl.id DESC
+				LIMIT 1`, body.ItemCode).Scan(&lid, &sid); err == nil {
+				grnLineID = &lid
+				grnSessionID = &sid
+			}
+		}
 		var id int
 		// If same item already picked in this session from same source, aggregate qty instead of creating duplicate rows
 		var existingID int
@@ -391,9 +431,9 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			id = existingID
 		} else if err == pgx.ErrNoRows {
 			err = tx.QueryRow(c.Context(),
-				`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status, picked_by_user_id)
-				 VALUES ($1, $2, $3, $4, 'picked', $5) RETURNING id`,
-				sessionID, body.ItemCode, body.SourceLocationID, body.Qty, picker).Scan(&id)
+				`INSERT INTO putaway_session_items (session_id, item_code, source_location_id, qty, status, picked_by_user_id, grn_line_id, grn_session_id)
+				 VALUES ($1, $2, $3, $4, 'picked', $5, $6, $7) RETURNING id`,
+				sessionID, body.ItemCode, body.SourceLocationID, body.Qty, picker, grnLineID, grnSessionID).Scan(&id)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
@@ -517,12 +557,13 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		var sessionQty float64
 		var sourceLocationID int
 		var sessionUserID int
+		var grnLineID, grnSessionID *int
 		err = tx.QueryRow(c.Context(),
-			`SELECT psi.item_code, psi.qty, psi.source_location_id, ps.user_id
+			`SELECT psi.item_code, psi.qty, psi.source_location_id, ps.user_id, psi.grn_line_id, psi.grn_session_id
 			 FROM putaway_session_items psi
 			 JOIN putaway_sessions ps ON ps.id = psi.session_id
 			 WHERE psi.id=$1 AND psi.session_id=$2 AND psi.status='picked' FOR UPDATE`,
-			itemID, sessionID).Scan(&itemCode, &sessionQty, &sourceLocationID, &sessionUserID)
+			itemID, sessionID).Scan(&itemCode, &sessionQty, &sourceLocationID, &sessionUserID, &grnLineID, &grnSessionID)
 		if err == pgx.ErrNoRows {
 			return shared.Err(c, fiber.StatusNotFound, "item not found or already placed")
 		}
@@ -653,21 +694,36 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.TargetLocationID).Scan(&targetCode)
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, sourceLocationID).Scan(&sourceCode)
 		if targetCode != "" {
-			_, _ = tx.Exec(c.Context(), `
-				UPDATE grn_lines gl SET route_location=$2
-				WHERE UPPER(gl.item_code)=UPPER($1)
-				  AND COALESCE(gl.scanned_qty,0) > 0
-				  AND (
-				    NULLIF(BTRIM(gl.route_location),'') IS NULL
-				    OR UPPER(gl.route_location) LIKE 'INCOMING%'
-				    OR UPPER(gl.route_location) LIKE 'HOLD%'
-				    OR UPPER(gl.route_location) LIKE 'STAGING%'
-				  )
-				  AND EXISTS (
-				    SELECT 1 FROM grn_sessions gs
-				    WHERE gs.id = gl.grn_session_id
-				      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
-				  )`, itemCode, targetCode)
+			// Prefer the GRN line linked at pick time so we update the exact row the
+			// operator is working on. Fall back to the legacy fuzzy match for old
+			// sessions that pre-date the grn_line_id column.
+			if grnLineID != nil {
+				_, _ = tx.Exec(c.Context(), `
+					UPDATE grn_lines SET route_location=$2
+					WHERE id=$1
+					  AND (
+					    NULLIF(BTRIM(route_location),'') IS NULL
+					    OR UPPER(route_location) LIKE 'INCOMING%'
+					    OR UPPER(route_location) LIKE 'HOLD%'
+					    OR UPPER(route_location) LIKE 'STAGING%'
+					  )`, *grnLineID, targetCode)
+			} else {
+				_, _ = tx.Exec(c.Context(), `
+					UPDATE grn_lines gl SET route_location=$2
+					WHERE UPPER(gl.item_code)=UPPER($1)
+					  AND COALESCE(gl.scanned_qty,0) > 0
+					  AND (
+					    NULLIF(BTRIM(gl.route_location),'') IS NULL
+					    OR UPPER(gl.route_location) LIKE 'INCOMING%'
+					    OR UPPER(gl.route_location) LIKE 'HOLD%'
+					    OR UPPER(gl.route_location) LIKE 'STAGING%'
+					  )
+					  AND EXISTS (
+					    SELECT 1 FROM grn_sessions gs
+					    WHERE gs.id = gl.grn_session_id
+					      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
+					  )`, itemCode, targetCode)
+			}
 		}
 
 		var logID int
@@ -723,6 +779,42 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 				sourceLocationID)
 		}
 		_, _ = tx.Exec(c.Context(), `UPDATE putaway_sessions SET updated_at=now() WHERE id=$1`, sessionID)
+
+		// Mirror the legacy /grn/putaway handler: progress the linked GRN session
+		// from putaway_pending → putaway_in_progress on first place, and to
+		// putaway_status='completed' once every line in the session has a real
+		// (non-INCOMING/HOLD/STAGING) route_location.
+		if grnSessionID != nil {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_sessions
+				SET putaway_status='in_progress',
+				    status = CASE WHEN status IN ('putaway_pending','item_verification_complete')
+				                  THEN 'putaway_in_progress' ELSE status END,
+				    updated_at = now()
+				WHERE id=$1
+				  AND status NOT IN ('closed','completed')`, *grnSessionID)
+			var remainingGRN float64
+			_ = tx.QueryRow(c.Context(), `
+				SELECT COUNT(*) FROM grn_lines
+				WHERE grn_session_id=$1
+				  AND COALESCE(scanned_qty,0) > 0
+				  AND (
+				    NULLIF(BTRIM(COALESCE(route_location,'')),'') IS NULL
+				    OR UPPER(COALESCE(route_location,'')) LIKE 'INCOMING%'
+				    OR UPPER(COALESCE(route_location,'')) LIKE 'HOLD%'
+				    OR UPPER(COALESCE(route_location,'')) LIKE 'STAGING%'
+				  )`, *grnSessionID).Scan(&remainingGRN)
+			if remainingGRN == 0 {
+				_, _ = tx.Exec(c.Context(), `
+					UPDATE grn_sessions
+					SET putaway_status='completed',
+					    status = CASE WHEN status='putaway_in_progress'
+					                  THEN 'completed' ELSE status END,
+					    updated_at = now()
+					WHERE id=$1
+					  AND status NOT IN ('closed')`, *grnSessionID)
+			}
+		}
 
 		if err = tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())

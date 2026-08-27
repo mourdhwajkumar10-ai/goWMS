@@ -337,7 +337,20 @@ export default function PutawayWizard() {
     if (!r.ok) {
       fb.err()
       doFlash('err')
-      toast(r.error || 'Place failed', 'err')
+      const errType = (r as any).error_type
+      if (errType === 'bin_full') {
+        toast(r.error || 'Bin full', 'warn')
+        setUsedLocationIds(prev => (prev.includes(scannedLocation.id) ? prev : [...prev, scannedLocation.id]))
+        setSuggestion(null)
+        setScannedLocation(null)
+        setPlacedAtBin(0)
+        setScanState('idle')
+        setScanReason(undefined)
+        setLastScanCode('')
+        setStep('suggest_location')
+      } else {
+        toast(r.error || 'Place failed', 'err')
+      }
       return false
     }
 
@@ -345,24 +358,36 @@ export default function PutawayWizard() {
     doFlash('ok')
     haptic(30)
     const newPlaced = placedAtBin + 1
+    const originalTotal = placedAtBin + cti.qty // cti.qty is remaining before this place, so placed+remaining = original
     setPlacedAtBin(newPlaced)
     setLastScanCode(cti.item_code)
-    toast(`✓ ${cti.item_code} placed (${newPlaced}/${cti.qty})`, 'ok')
+    toast(`✓ ${cti.item_code} placed (${newPlaced}/${originalTotal})`, 'ok')
 
     const resp = r.data as any
     const remaining = resp?.remaining ?? 0
 
     if (remaining > 0) {
-      // Backend updated qty to remaining; reflect in tote — keep same bin candidate (do not exclude, suggest will skip if full)
+      // Keep same bin — scan location once, then scan items one-by-one with x of N
+      // Only go to next bin when current bin is full (max_fit reached) — backend will reject with bin_full if overfilled
+      const maxFit = suggestion?.max_fit_qty != null ? Math.floor(suggestion.max_fit_qty + 1e-9) : originalTotal
       setToteItems(prev => prev.map(it => it.id === cti.id ? { ...it, qty: remaining } : it))
-      setSuggestion(null)
-      setScannedLocation(null)
-      setPlacedAtBin(0)
-      setScanState('idle')
-      setScanReason(undefined)
-      setLastScanCode('')
-      setStep('suggest_location')
-      toast(`Remaining ${remaining} → next bin`, 'ok')
+      if (newPlaced >= maxFit) {
+        // Bin full, need next suggestion
+        setSuggestion(null)
+        setScannedLocation(null)
+        setPlacedAtBin(0)
+        setScanState('idle')
+        setScanReason(undefined)
+        setLastScanCode('')
+        setStep('suggest_location')
+        toast(`Bin full, ${remaining} remaining → next bin`, 'ok')
+      } else {
+        // Stay at same bin — no re-scan of location
+        setScanState('accepted')
+        setScanReason(undefined)
+        setLastScanCode(cti.item_code)
+        // stay in item_confirm
+      }
     } else {
       // Mark this item placed
       setToteItems(prev => prev.map(it => it.id === cti.id ? { ...it, status: 'placed', target_location_code: scannedLocation.code } : it))
@@ -708,12 +733,13 @@ export default function PutawayWizard() {
       )
     }
 
+    const displayTotal = placedAtBin + cti.qty
     return (
       <ScannerLayout title={`Place ${cti.item_code} at ${scannedLocation.code}`} hideHeader noBack flash={scanState === 'rejected' ? 'err' : scanState === 'accepted' ? 'ok' : flash === 'err' ? 'err' : flash === 'ok' ? 'ok' : null}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
           counted={placedAtBin}
-          total={cti.qty}
+          total={displayTotal}
           po="PUTAWAY"
           pl={scannedLocation.code}
           grn={session?.id ? `#${session.id}` : '—'}
@@ -745,9 +771,9 @@ export default function PutawayWizard() {
           }
         />
         <div className="scan-progress-bar" style={{ marginTop: 8 }}>
-          <div className="scan-progress-fill" style={{ width: `${cti.qty > 0 ? (placedAtBin / cti.qty) * 100 : 0}%` }} />
+          <div className="scan-progress-fill" style={{ width: `${displayTotal > 0 ? (placedAtBin / displayTotal) * 100 : 0}%` }} />
         </div>
-        <div className="scan-badge ok" style={{ alignSelf: 'center' }}>{placedAtBin} of {cti.qty} at {scannedLocation.code}</div>
+        <div className="scan-badge ok" style={{ alignSelf: 'center' }}>{placedAtBin} of {displayTotal} at {scannedLocation.code}</div>
       </ScannerLayout>
     )
   }
