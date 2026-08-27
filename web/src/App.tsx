@@ -127,7 +127,8 @@ export default function App() {
         <Route path="notifications" element={<Notifications />} />
         <Route path="qi" element={<Qi />} />
         <Route path="serial" element={<Serial />} />
-        <Route path="putaway" element={<PutawayWizard />} />
+        <Route path="putaway" element={<PutawayRunner />} />
+        <Route path="putaway-desk" element={<PutawayWizard />} />
         <Route path="putaway/logs" element={<PutawayLogs />} />
         <Route path="batches" element={<Batches />} />
         <Route path="delivery-notes" element={<DeliveryNotes />} />
