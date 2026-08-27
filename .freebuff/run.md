@@ -15,17 +15,21 @@
 
 ## How to Run the Server
 
-Port 8080 is the primary preview target. The Go binary serves both the API and the built SPA (`web/dist/`).
+**Vite dev server (port 5173)** — hot-reload, best for development:
+```bash
+cd /Users/yudhistherkumar/Downloads/goWMS/web
+nohup npx vite --port 5173 --host > ../.freebuff/preview-0390e66f-dae3-4e9a-b874-851668b2695f.log 2>&1 < /dev/null & echo "pid=$!"; disown
+```
 
+**Go API server (port 8080)** — serves built SPA + API:
 ```bash
 cd /Users/yudhistherkumar/Downloads/goWMS
 PORT=8080 nohup go run ./cmd/server > .freebuff/preview.log 2>&1 &
 ```
 
-The Go server on 8080 serves the frontend from `web/dist/`. Run `cd web && npm run build` after any frontend source change to update the served UI.
-
 ## Current State
 
-- Go API server running on **port 8080** (PID 33575)
-- Frontend: built from `web/src/` → served via `web/dist/`
+- **Vite dev server** running on **port 5173** (PID 82136) — hot-reload active
+- **Go API server** running on **port 8080** — serves built frontend + API
+- Frontend: source from `web/src/` via Vite; built via `web/dist/` for Go server
 - Login: admin / admin123

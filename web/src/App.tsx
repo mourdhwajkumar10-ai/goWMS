@@ -48,7 +48,6 @@ import ShortageReview from "./pages/ShortageReview";
 import AuditLogs from "./pages/AuditLogs";
 import DockReceiving from "./pages/DockReceiving";
 import ItemVerifier from "./pages/ItemVerifier";
-import PutawayRunner from "./pages/PutawayRunner";
 import StockPeek from "./pages/StockPeek";
 import QuickCount from "./pages/QuickCount";
 import BoxVerification from "./pages/BoxVerification";

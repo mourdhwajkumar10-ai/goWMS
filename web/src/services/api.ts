@@ -321,13 +321,6 @@ export const api = {
   grnListPresence: (id: number) => get<any>(`/grn/session/${id}/presence`),
   grnScanCarton: (data: any) => post<any>("/grn/carton", data),
   grnScanLine: (data: any) => post<any>("/grn/line", data),
-  grnClose: (data: any) => post<any>("/grn/close", data),
-  /** @deprecated Direct GRN putaway is disabled; use a putaway session. */
-  grnPutaway: (data: any) => post<any>("/grn/putaway", data),
-  grnCompletePutaway: (id: number) => post<any>(`/grn/session/${id}/complete-putaway`, {}),
-  grnCreateException: (id: number, data: any) => post<any>(`/grn/session/${id}/exceptions`, data),
-  grnSupportingDoc: (id: number, attachmentId: number) =>
-    post<any>(`/grn/session/${id}/supporting-doc`, { attachment_id: attachmentId }),
   grnImportPackingList: async (sessionId: number, file: File) => {
     const fd = new FormData()
     fd.append('file', file)
@@ -418,9 +411,6 @@ export const api = {
   serialList: (itemCode?: string) => get<any[]>(`/serial/list${itemCode ? `?item_code=${encodeURIComponent(itemCode)}` : ''}`),
 
   // Putaway
-  putawayRules: () => get<any[]>("/putaway/rules"),
-  /** @deprecated Direct placement is disabled; use a putaway session. */
-  putawayCreate: (data: any) => post<any>("/putaway/", data),
   putawaySuggest: (itemCode: string, qty?: number, warehouseId?: number, preferred?: { aisle?: string; bay?: string; excludeLocationIds?: number[] }) => {
     let q = `/putaway/suggest?item_code=${encodeURIComponent(itemCode)}&qty=${qty ?? 1}`
     if (warehouseId) q += `&warehouse_id=${warehouseId}`
