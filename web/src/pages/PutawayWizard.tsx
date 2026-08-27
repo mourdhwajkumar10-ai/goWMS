@@ -41,9 +41,9 @@ function EmptyState({ icon, title, message }: { icon: string; title: string; mes
 type WizardStep =
   | 'mode_select'
   | 'zone_select'
-  | 'item_pick'
-  | 'putaway'
-  | 'fit_exception'
+  | 'scan_items'
+  | 'suggest_location'
+  | 'item_confirm'
   | 'complete'
 
 interface QueueRow {
@@ -92,6 +92,7 @@ interface ToteItem {
   status: string
   source: string
   source_location_id?: number
+  target_location_code?: string
 }
 
 interface SessionData {
@@ -124,54 +125,31 @@ const ZONE_COLORS: Record<string, string> = {
 
 export default function PutawayWizard() {
   const rf = useRfUi()
+  const { toasts, toast } = useScannerToasts()
+  const fb = useScanFeedback()
+  const haptic = useHaptic()
+
   const [step, setStep] = useState<WizardStep>('mode_select')
-  const [transitionDir, setTransitionDir] = useState<'forward' | 'backward'>('forward')
   const [mode, setMode] = useState<'zone' | 'item' | null>(null)
   const [queue, setQueue] = useState<QueueRow[]>([])
   const [zones, setZones] = useState<ZoneInfo[]>([])
   const [selectedZone, setSelectedZone] = useState<string | null>(null)
-  const [selectedItem, setSelectedItem] = useState<QueueRow | null>(null)
   const [suggestion, setSuggestion] = useState<Suggestion | null>(null)
   const [session, setSession] = useState<SessionData | null>(null)
   const [toteItems, setToteItems] = useState<ToteItem[]>([])
   const [loading, setLoading] = useState(false)
   const [dataLoading, setDataLoading] = useState(true)
-  const [fitReason, setFitReason] = useState<'too_small' | 'too_large'>('too_small')
-  const [fitQty, setFitQty] = useState('')
-  const [fitOverride, setFitOverride] = useState('')
-  const [fitOverrideId, setFitOverrideId] = useState<number | null>(null)
-  const [pickingItemId, setPickingItemId] = useState<number | null>(null)
-  const [putawayError, setPutawayError] = useState<{ type: string; message: string; data?: any } | null>(null)
-  const [locationScanInput, setLocationScanInput] = useState('')
-  const [showLocationSuggestions, setShowLocationSuggestions] = useState(false)
   const [usedLocationIds, setUsedLocationIds] = useState<number[]>([])
-  const [placeQty, setPlaceQty] = useState<number | null>(null)
-  const [confirmPlace, setConfirmPlace] = useState<{ targetId: number; targetCode: string; qty: number; isOverride: boolean } | null>(null)
   const [selectedToteItemId, setSelectedToteItemId] = useState<number | null>(null)
+  const [scannedLocation, setScannedLocation] = useState<{ id: number; code: string } | null>(null)
+  const [placedAtBin, setPlacedAtBin] = useState(0)
+  const [scanState, setScanState] = useState<'idle' | 'accepted' | 'rejected'>('idle')
+  const [scanReason, setScanReason] = useState<string | undefined>()
+  const [lastScanCode, setLastScanCode] = useState('')
+  const [cameraKey, setCameraKey] = useState(0)
+  const [flash, setFlash] = useState<'ok' | 'err' | null>(null)
 
-  const haptic = useHaptic()
-
-  const animClass = transitionDir === 'forward' ? 'pw-animate-in' : 'pw-animate-out'
-
-  const navigate = useCallback((next: WizardStep, dir: 'forward' | 'backward' = 'forward') => {
-    setTransitionDir(dir)
-    setStep(next)
-  }, [])
-
-  const handleCancelSession = useCallback(async () => {
-    if (!session) return
-    const r = await api.del(`/putaway/sessions/${session.id}`)
-    if (r.ok) {
-      notify({ type: 'info', title: 'Session cancelled', message: 'Session items preserved for resume' })
-      setSession(null)
-      setToteItems([])
-      setUsedLocationIds([])
-      setSuggestion(null)
-      navigate('mode_select', 'backward')
-    } else {
-      notify({ type: 'error', title: 'Cancel failed', message: r.error || 'Could not cancel session' })
-    }
-  }, [session, navigate])
+  const doFlash = useCallback((t: 'ok' | 'err') => { setFlash(t); setTimeout(() => setFlash(null), 300) }, [])
 
   const loadQueue = useCallback(async () => {
     const r = await api.putawayQueue()
@@ -188,45 +166,6 @@ export default function PutawayWizard() {
     Promise.all([loadQueue(), loadZones()]).finally(() => setDataLoading(false))
   }, [loadQueue, loadZones])
 
-  useEffect(() => {
-    if (step === 'putaway' && toteItems.length > 0) {
-      const currentToteItem = toteItems.find(i => i.status === 'picked')
-      if (currentToteItem) {
-        void (async () => {
-          setLoading(true)
-          const r = await api.putawaySuggest(
-            currentToteItem.item_code,
-            currentToteItem.qty,
-            session?.warehouse_id,
-            usedLocationIds.length > 0 ? { excludeLocationIds: usedLocationIds } : undefined
-          )
-          if (r.ok && r.data) {
-            setSuggestion(r.data)
-          } else {
-            notify({ type: 'error', title: 'No location found', message: r.error || 'No bins available for this item' })
-          }
-          setLoading(false)
-        })()
-      }
-    }
-  }, [step, toteItems, session, usedLocationIds])
-
-  const loadSession = useCallback(async (sessionId: number) => {
-    const r = await api.get<{ session: SessionData; items: ToteItem[] }>(`/putaway/sessions/${sessionId}`)
-    if (r.ok && r.data) {
-      setSession(r.data.session)
-      setToteItems(r.data.items ?? [])
-    }
-  }, [])
-
-  useEffect(() => {
-    if (locationScanInput.trim().length === 0) {
-      setShowLocationSuggestions(false)
-      return
-    }
-    setShowLocationSuggestions(true)
-  }, [locationScanInput])
-
   const ensureSession = useCallback(async () => {
     if (!session && queue.length > 0) {
       const wid = queue[0].warehouse_id
@@ -241,75 +180,12 @@ export default function PutawayWizard() {
     return session?.id ?? null
   }, [session, queue, selectedZone])
 
-  const handlePick = useCallback(async (q: QueueRow): Promise<boolean> => {
-    setPickingItemId(q.id)
-    try {
-      const sid = await ensureSession()
-      if (!sid) {
-        notify({ type: 'error', title: 'Error', message: 'Failed to create session. Try again.' })
-        return false
-      }
-      const r = await api.post(`/putaway/sessions/${sid}/pick`, {
-        item_code: q.item_code,
-        source_location_id: q.location_id,
-        qty: q.qty
-      })
-      if (r.ok && r.data) {
-        const newItem: ToteItem = {
-          id: (r.data as any).id,
-          item_code: q.item_code,
-          item_name: q.item_name,
-          qty: q.qty,
-          status: 'picked',
-          source: q.location_code,
-          source_location_id: q.location_id
-        }
-        setToteItems(prev => [...prev, newItem])
-        setQueue(prev => prev.filter(item => item.id !== q.id))
-        setZones(prev => prev.map(z => z.zone === q.zone ? { ...z, count: z.count - 1 } : z).filter(z => z.count > 0))
-        haptic(20)
-        notify({ type: 'success', title: 'Picked', message: `${q.item_code} × ${q.qty} added to tote` })
-        return true
-      }
-      notify({ type: 'error', title: 'Pick failed', message: r.error || 'Could not pick this item' })
-      return false
-    } catch {
-      notify({ type: 'error', title: 'Network error', message: 'Check your connection and try again' })
-      return false
-    } finally {
-      setPickingItemId(null)
-    }
-  }, [ensureSession, haptic])
-
-  const handleScanPick = useCallback(async (code: string): Promise<boolean> => {
-    if (!code) return false
-    const q = code.trim().toLowerCase()
-    const inTote = toteItems.find(t => t.item_code.toLowerCase() === q && t.status === 'picked')
-    if (inTote) {
-      setSelectedToteItemId(inTote.id)
-      haptic(20)
-      navigate('putaway', 'forward')
-      return true
-    }
-    const match = queue.find(item => item.item_code.toLowerCase() === q)
-    if (match) {
-      return handlePick(match)
-    }
-    notify({ type: 'warning', title: 'Not found', message: `"${code}" is not in the staging queue` })
-    return false
-  }, [queue, toteItems, handlePick, haptic, navigate])
-
-  const handleToteScan = useCallback((code: string) => {
-    if (!code) return
-    const match = toteItems.find(t => t.item_code.toLowerCase() === code.toLowerCase() && t.status === 'picked')
-    if (match) {
-      setSelectedToteItemId(match.id)
-      haptic(20)
-      navigate('putaway', 'forward')
-    } else {
-      notify({ type: 'warning', title: 'Not in tote', message: `"${code}" is not in your tote or already placed` })
-    }
-  }, [toteItems, haptic, navigate])
+  const restartScanner = useCallback(() => {
+    setScanState('idle')
+    setScanReason(undefined)
+    setLastScanCode('')
+    setCameraKey(k => k + 1)
+  }, [])
 
   function currentToteItem() {
     if (selectedToteItemId != null) {
@@ -319,104 +195,172 @@ export default function PutawayWizard() {
     return toteItems.find(i => i.status === 'picked') || null
   }
 
-  const doPlace = useCallback(async (targetId: number, isOverride = false, placeQty?: number, targetCode?: string): Promise<boolean> => {
-    const item = currentToteItem()
-    if (!item) return false
-    const code = targetCode || ''
-    const body: any = { target_location_id: targetId, is_override: isOverride }
-    if (placeQty && placeQty > 0) body.qty = placeQty
-    const r = await api.post(`/putaway/sessions/${session?.id}/place/${item.id}`, body)
-    if (r.ok) {
-      haptic(30)
-      const newUsedIds = [...usedLocationIds, targetId]
-      setUsedLocationIds(newUsedIds)
-      const resp = r.data as any
-      const remaining = resp?.remaining ?? 0
-      setToteItems(toteItems.map(i => i.id === item.id ? { ...i, status: remaining > 0 ? 'picked' : 'placed', qty: remaining > 0 ? remaining : i.qty } : i))
-      notify({ type: 'success', title: 'Placed', message: `${item.item_code} × ${placeQty || item.qty} placed at ${code}${remaining > 0 ? ` · ${remaining} remaining` : ''}` })
-      setLocationScanInput('')
-      setPutawayError(null)
-      if (remaining > 0) {
-        setLoading(true)
-        const sr = await api.putawaySuggest(item.item_code, remaining, session?.warehouse_id, {
-          excludeLocationIds: newUsedIds
-        })
-        if (sr.ok && sr.data) {
-          setSuggestion(sr.data)
-          notify({ type: 'info', title: 'Next bin suggested', message: `Remaining ${remaining} → ${sr.data.location_code}` })
-        }
-        setLoading(false)
-      } else if (toteItems.filter(i => i.status === 'picked').length <= 1) {
-        navigate('complete', 'forward')
-      }
-      return true
+  // ─── SCAN HANDLERS (top-level hooks) ───
+  const onItemScan = useCallback(async (code: string): Promise<boolean> => {
+    if (!code) return false
+    const clean = code.trim().toLowerCase()
+    const zoneItems = selectedZone ? queue.filter(q => q.zone === selectedZone) : queue
+    const match = zoneItems.find(item => item.item_code.toLowerCase() === clean)
+    if (!match) {
+      setScanState('rejected')
+      setScanReason(`"${code}" not in this zone`)
+      fb.warn()
+      toast(`Not in queue: ${code}`, 'warn')
+      return false
     }
-    const errType = r.errorType || (r.data as any)?.error_type || 'unknown'
-    setPutawayError({ type: errType, message: r.error || 'Could not place item', data: r.data as any })
-    setShowLocationSuggestions(false)
-    notify({ type: 'error', title: 'Place failed', message: r.error || 'Could not place item' })
-    return false
-  }, [session, usedLocationIds, toteItems, selectedToteItemId, haptic, navigate])
+    const already = toteItems.some(t => t.item_code.toLowerCase() === clean && t.status === 'picked')
+    if (already) {
+      setScanState('rejected')
+      setScanReason('Already in tote')
+      fb.warn()
+      toast('Already in tote', 'warn')
+      return false
+    }
 
-  async function placeFromScan(code: string, locationId?: number): Promise<boolean> {
-    const item = currentToteItem()
-    if (!item) return false
-    const qty = suggestion?.max_fit_qty != null && suggestion.max_fit_qty < (item?.qty || 0)
-      ? (placeQty ?? suggestion.max_fit_qty)
-      : (item?.qty || 0)
-    const codeU = (code || '').toUpperCase()
+    setScanState('accepted')
+    fb.ok()
+    doFlash('ok')
+    haptic(20)
+    const totePicked = toteItems.filter(i => i.status === 'picked')
+    const totalItems = zoneItems.length
+    toast(`✓ ${match.item_code} added to tote (${totePicked.length + 1}/${totalItems})`, 'ok')
 
-    if (suggestion && (codeU === (suggestion.location_code || '').toUpperCase() || locationId === suggestion.location_id)) {
-      return doPlace(suggestion.location_id, false, qty, suggestion.location_code)
+    const sid = await ensureSession()
+    if (!sid) return false
+    const r = await api.post<{ id: number }>(`/putaway/sessions/${sid}/pick`, {
+      item_code: match.item_code,
+      source_location_id: match.location_id,
+      qty: match.qty
+    })
+    if (!r.ok || !r.data?.id) {
+      fb.err()
+      toast(r.error || 'Pick failed', 'err')
+      return false
     }
-    const candidate = suggestion?.candidates?.find((c: any) =>
-      (c.location_code || '').toUpperCase() === codeU || c.location_id === locationId)
-    if (candidate) {
-      return doPlace(candidate.location_id, true, item?.qty || 0, candidate.location_code)
+
+    const newItem: ToteItem = {
+      id: r.data.id,
+      item_code: match.item_code,
+      item_name: match.item_name,
+      qty: match.qty,
+      status: 'picked',
+      source: match.location_code,
+      source_location_id: match.location_id
     }
-    let locId = locationId
-    let locCode = code
-    if (!locId) {
-      const r = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
-      if (!r.ok || !r.data) {
-        notify({ type: 'error', title: 'Location lookup failed', message: 'Could not search locations' })
+    setToteItems(prev => [...prev, newItem])
+    setLastScanCode(match.item_code)
+    setScanState('accepted')
+    return true
+  }, [queue, selectedZone, toteItems, ensureSession, fb, toast, doFlash, haptic])
+
+  const onLocationScan = useCallback(async (code: string): Promise<boolean> => {
+    if (!code || !suggestion) return false
+    const clean = code.trim().toUpperCase()
+    const targetCode = suggestion.location_code.toUpperCase()
+
+    if (clean !== targetCode) {
+      const cand = suggestion.candidates?.find((c: any) => c.location_code.toUpperCase() === clean)
+      if (!cand) {
+        setScanState('rejected')
+        setScanReason(`Must scan ${suggestion.location_code}`)
+        fb.warn()
+        doFlash('err')
+        toast(`Must scan ${suggestion.location_code}`, 'err')
         return false
       }
-      const loc = r.data.find((l: any) => l.code?.toUpperCase() === codeU)
-      if (!loc) {
-        notify({ type: 'error', title: 'Location not found', message: `No location matching "${code}"` })
-        return false
-      }
-      locId = loc.id
-      locCode = loc.code
+      setScannedLocation({ id: cand.location_id, code: cand.location_code })
+    } else {
+      setScannedLocation({ id: suggestion.location_id, code: suggestion.location_code })
     }
-    return doPlace(locId, true, item?.qty || 0, locCode)
-  }
 
-  const allCandidates = suggestion?.candidates || []
-  const placedCount = toteItems.filter(i => i.status === 'placed').length
-  const pickedCount = toteItems.filter(i => i.status === 'picked').length
-  const totalCount = toteItems.length
-  const progressPct = totalCount > 0 ? (placedCount / totalCount) * 100 : 0
+    setScanState('accepted')
+    fb.ok()
+    doFlash('ok')
+    setLastScanCode(suggestion.location_code)
+    setPlacedAtBin(0)
+    toast(`✓ Bin ${suggestion.location_code} confirmed`, 'ok')
+    setStep('item_confirm')
+    return true
+  }, [suggestion, fb, doFlash, toast])
 
-  const zoneItemsForPick = selectedZone
-    ? queue.filter(q => q.zone === selectedZone)
-    : queue
-  const queueMore = useLoadMore(zoneItemsForPick, 10, `${selectedZone ?? ''}|${step}`)
+  const onItemConfirm = useCallback(async (code: string): Promise<boolean> => {
+    if (!code) return false
+    const cti = currentToteItem()
+    if (!cti || !scannedLocation || !session) return false
+    const clean = code.trim().toUpperCase()
 
-  // RF / floor: always use scan-first runner (desk keeps this wizard at /putaway).
-  if (rf) return <Navigate to="/putaway" replace />
+    if (clean !== cti.item_code.toUpperCase()) {
+      setScanState('rejected')
+      setScanReason(`Scan ${cti.item_code} to place`)
+      fb.warn()
+      doFlash('err')
+      toast(`Scan ${cti.item_code} to place`, 'err')
+      return false
+    }
+
+    const r = await api.post(`/putaway/sessions/${session.id}/place/${cti.id}`, {
+      target_location_id: scannedLocation.id,
+      qty: 1
+    })
+    if (!r.ok) {
+      fb.err()
+      doFlash('err')
+      toast(r.error || 'Place failed', 'err')
+      return false
+    }
+
+    fb.ok()
+    doFlash('ok')
+    haptic(30)
+    const newPlaced = placedAtBin + 1
+    setPlacedAtBin(newPlaced)
+    setLastScanCode(cti.item_code)
+    toast(`✓ ${cti.item_code} placed (${newPlaced}/${cti.qty})`, 'ok')
+
+    const resp = r.data as any
+    const remaining = resp?.remaining ?? 0
+
+    if (remaining > 0) {
+      setUsedLocationIds(prev => [...prev, scannedLocation.id])
+      setLoading(true)
+      const sr = await api.putawaySuggest(cti.item_code, remaining, session.warehouse_id, {
+        excludeLocationIds: [...usedLocationIds, scannedLocation.id]
+      })
+      if (sr.ok && sr.data) {
+        setSuggestion(sr.data)
+        setScannedLocation(null)
+        setPlacedAtBin(0)
+        setStep('suggest_location')
+        notify({ type: 'info', title: 'Next bin', message: `Remaining ${remaining} → ${sr.data.location_code}` })
+      }
+      setLoading(false)
+    } else {
+      const nextItem = toteItems.find(i => i.id !== cti.id && i.status === 'picked')
+      if (nextItem) {
+        setSelectedToteItemId(nextItem.id)
+        setUsedLocationIds(prev => [...prev, scannedLocation.id])
+        setStep('suggest_location')
+        setScannedLocation(null)
+        setPlacedAtBin(0)
+      } else {
+        setStep('complete')
+      }
+    }
+    return true
+  }, [toteItems, scannedLocation, session, placedAtBin, usedLocationIds, fb, doFlash, toast, haptic])
 
   // ─── MODE SELECT ───
   if (step === 'mode_select') {
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <h1>Putaway</h1>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-          <button type="button" className="scan-select-card" onClick={() => { setMode('zone'); navigate('zone_select', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
+      <ScannerLayout title="Putaway" noBack flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <div className="scan-select-list" style={{ padding: 16 }}>
+          <button
+            type="button"
+            className="scan-select-card"
+            onClick={() => { setMode('zone'); setStep('zone_select') }}
+            style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+          >
             <div className="scan-select-card-title">By Zone</div>
             <div className="scan-select-card-sub">Batch putaway by HSN zone</div>
             <div className="scan-select-card-meta">
@@ -425,7 +369,12 @@ export default function PutawayWizard() {
               <span style={{ color: 'var(--primary)' }}>Open →</span>
             </div>
           </button>
-          <button type="button" className="scan-select-card" onClick={() => { setMode('item'); navigate('item_pick', 'forward') }} style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}>
+          <button
+            type="button"
+            className="scan-select-card"
+            onClick={() => { setMode('item'); setStep('scan_items') }}
+            style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
+          >
             <div className="scan-select-card-title">By Item</div>
             <div className="scan-select-card-sub">Single item putaway</div>
             <div className="scan-select-card-meta">
@@ -434,7 +383,6 @@ export default function PutawayWizard() {
             </div>
           </button>
         </div>
-
         {queue.length === 0 && !dataLoading && (
           <div className="scan-empty" style={{ marginTop: 8 }}>
             <div className="scan-empty-icon"><span style={{ fontSize: 40, opacity: 0.5 }}>⇨</span></div>
@@ -443,7 +391,7 @@ export default function PutawayWizard() {
           </div>
         )}
         {queue.length > 0 && (
-          <div style={{ marginTop: 8 }}>
+          <div style={{ marginTop: 8, padding: '0 16px' }}>
             <div className="scan-section-title">Queue ({queue.length})</div>
             {queue.slice(0, 10).map(q => (
               <div key={q.id} className="scan-row">
@@ -458,29 +406,37 @@ export default function PutawayWizard() {
             ))}
           </div>
         )}
-      </div>
+      </ScannerLayout>
     )
   }
 
   // ─── ZONE SELECT ───
   if (step === 'zone_select') {
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <button onClick={() => navigate('mode_select', 'backward')} className="erpnext-btn-secondary">← Back</button>
-          <h1>Select Zone</h1>
-        </div>
+      <ScannerLayout title="Select Zone" onBack={() => setStep('mode_select')} flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <VerificationHeader
+          counted={0}
+          total={0}
+          po="PUTAWAY"
+          pl="—"
+          grn="—"
+          tab="boxes"
+          onTabChange={() => {}}
+          onBack={() => setStep('mode_select')}
+          title="Select Zone"
+        />
         {dataLoading ? (
           <SkeletonCards count={4} />
         ) : (
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+            <div className="scan-select-list" style={{ padding: 16 }}>
               {zones.map(z => (
                 <button
                   key={z.zone}
                   type="button"
                   className="scan-select-card"
-                  onClick={() => { setSelectedZone(z.zone); navigate('item_pick', 'forward') }}
+                  onClick={() => { setSelectedZone(z.zone); setStep('scan_items') }}
                   style={{ textAlign: 'left', width: '100%', cursor: 'pointer' }}
                 >
                   <div className="scan-select-card-title" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -503,7 +459,7 @@ export default function PutawayWizard() {
               ))}
             </div>
             {zones.length === 0 && (
-              <div className="scan-empty" style={{ marginTop: 8 }}>
+              <div className="scan-empty" style={{ marginTop: 8, padding: 16 }}>
                 <div className="scan-empty-icon"><span style={{ fontSize: 40, opacity: 0.5 }}>⇨</span></div>
                 <div className="scan-empty-title">No zones ready</div>
                 <div className="scan-empty-msg">No items are staged for putaway</div>
@@ -511,651 +467,315 @@ export default function PutawayWizard() {
             )}
           </>
         )}
-      </div>
+      </ScannerLayout>
     )
   }
 
-  // ─── ITEM PICK ───
-  if (step === 'item_pick') {
-    const zoneItems = zoneItemsForPick
+  // ─── SCAN ITEMS (build tote) ───
+  if (step === 'scan_items') {
+    const zoneItems = selectedZone ? queue.filter(q => q.zone === selectedZone) : queue
     const totePicked = toteItems.filter(i => i.status === 'picked')
+    const totalItems = zoneItems.length
 
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <button onClick={() => navigate(mode === 'zone' ? 'zone_select' : 'mode_select', 'backward')} className="erpnext-btn-secondary">← Back</button>
-          <h1>{selectedZone ? `Zone ${selectedZone} · ${ZONE_LABELS[selectedZone] || ''}` : 'Select Items'}</h1>
+      <ScannerLayout title="Scan Items" onBack={() => setStep(mode === 'zone' ? 'zone_select' : 'mode_select')} flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <VerificationHeader
+          counted={totePicked.length}
+          total={totalItems}
+          po="PUTAWAY"
+          pl={selectedZone ? `Zone ${selectedZone}` : 'All'}
+          grn={session?.id ? `#${session.id}` : '—'}
+          tab="boxes"
+          onTabChange={() => {}}
+          onBack={() => setStep(mode === 'zone' ? 'zone_select' : 'mode_select')}
+          title="Scan Items"
+        />
+        <ScanCard
+          state={scanState}
+          code={lastScanCode}
+          reason={scanReason}
+          onMarkDamaged={() => {}}
+          canMarkDamaged={false}
+          onRestart={restartScanner}
+          onManualEntry={onItemScan}
+          placeholder="Scan item barcode..."
+          viewport={
+            <CameraScanner
+              key={cameraKey}
+              open={true}
+              embedded
+              minimal
+              continuous
+              onClose={restartScanner}
+              onScan={onItemScan}
+            />
+          }
+        />
+        <div style={{ padding: '0 16px 8px' }}>
+          {toteItems.length > 0 && (
+            <div className="scan-section-title">Tote ({totePicked.length} of {totalItems})</div>
+          )}
         </div>
-
-        {toteItems.length > 0 && (
-          <div className="pw-tote-section">
-            <div className="pw-tote-header">
-              <div className="pw-tote-title">
-                ⇨ Tote
-                <span className="pw-tote-count-badge">{totePicked.length} of {totalCount}</span>
-              </div>
-              {totePicked.length > 0 && (
-                <ButtonPress
-                  className="erpnext-btn-primary pw-start-putaway-btn"
-                  onClick={() => navigate('putaway', 'forward')}
-                >
-                  Start Putaway →
-                </ButtonPress>
-              )}
-            </div>
-
-            <div className="pw-scan-section" style={{ padding: 0, background: 'transparent', border: 'none', marginBottom: 12 }}>
-              <ScannerInput
-                onScan={handleToteScan}
-                placeholder="Scan item to jump to putaway..."
-                suggestions={toteItems.map(t => ({ code: t.item_code, name: t.item_name || '', qty: t.qty }))}
-                showTorch={false}
-                autoFocus={false}
-              />
-            </div>
-
-            {toteItems.map(item => (
-              <div key={item.id} className="pw-tote-item">
-                <div className="pw-tote-item-info">
-                  <div className="pw-tote-item-top">
-                    <span style={{ fontWeight: 600 }}>{item.item_code}</span>
-                    {item.status === 'placed'
-                      ? <span className="pw-status-badge pw-placed">✓ Placed</span>
-                      : <span className="pw-status-badge pw-picked">Ready</span>
-                    }
-                  </div>
-                  <div className="pw-tote-item-bottom">
-                    <span>{item.item_name || ''}</span>
-                    <span>·</span>
-                    <span>From {item.source}</span>
-                    <span>·</span>
-                    <span style={{ fontWeight: 600 }}>{item.qty} pcs</span>
-                  </div>
-                </div>
-                <div className="pw-tote-item-actions">
-                  <ButtonPress
-                    className="erpnext-btn-secondary btn-sm"
-                    onClick={() => {
-                      void api.del(`/putaway/sessions/${session?.id}/items/${item.id}`)
-                      setToteItems(toteItems.filter(i => i.id !== item.id))
-                      notify({ type: 'success', title: 'Removed', message: `${item.item_code} removed from tote` })
-                    }}
-                  >✕</ButtonPress>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="pw-scan-section">
-          <div className="pw-scan-section-title">⇩ Scan or Pick Items from Staging</div>
-          <CameraScanner
-            embedded
-            open={true}
-            onClose={() => {}}
-            title="QR Code Scanner"
-            onScan={handleScanPick}
-          />
-          <ScannerInput
-            onScan={(code) => { void handleScanPick(code) }}
-            placeholder="Paste or type item code, then Enter"
-            suggestions={queue.map(q => ({ code: q.item_code, name: q.item_name || '', qty: q.qty }))}
-            showTorch={false}
-            showCamera={false}
-            autoFocus={false}
-          />
-        </div>
-
-        <div className="pw-available-section">
-          <div className="pw-available-header">
-            Available Items <span className="pw-available-count">({zoneItems.length})</span>
-          </div>
+        <div style={{ padding: '0 16px' }}>
+          <div className="scan-section-title">Available ({totalItems})</div>
           {dataLoading ? (
             <SkeletonCards count={3} />
-          ) : zoneItems.length === 0 ? (
+          ) : totalItems === 0 ? (
             <EmptyState
               icon="📦"
               title={selectedZone ? `No items in Zone ${selectedZone}` : "No items staged"}
               message="Pick items from staging to start putaway"
             />
           ) : (
-            <>
-              {queueMore.visible.map(q => (
-                <div key={q.id} className="pw-item-row">
-                  <div className="pw-item-row-info">
-                    <div className="pw-item-row-code">{q.item_code}</div>
-                    <div className="pw-item-row-name">{q.item_name || ''}</div>
-                    <div className="pw-item-row-meta">
-                      <span>From {q.location_code}</span>
-                      {q.batch_no && <span>· Batch {q.batch_no}</span>}
-                    </div>
-                    {q.suggested_location_code && (
-                      <div className="text-dim text-xs" style={{ marginTop: 4 }}>
-                        Suggested: <span style={{ color: 'var(--accent)' }}>{q.suggested_location_code}</span>
-                      </div>
-                    )}
+            zoneItems.map(q => {
+              const inTote = toteItems.some(t => t.item_code === q.item_code && t.status === 'picked')
+              return (
+                <div key={q.id} className={`scan-row ${inTote ? 'ring-accent' : ''}`}>
+                  <div className="scan-row-info">
+                    <div className="scan-row-code">{q.item_code}</div>
+                    <div className="scan-row-desc">{q.item_name || ''} · {q.location_code}</div>
                   </div>
-                  <div className="pw-item-row-actions">
-                    <span className="pw-qty-badge">{q.qty} pcs</span>
-                    <ButtonPress
-                      className={`erpnext-btn-secondary ${pickingItemId === q.id ? 'pw-picking' : ''}`}
-                      disabled={pickingItemId === q.id}
-                      onClick={() => void handlePick(q)}
-                    >
-                      {pickingItemId === q.id ? 'Picking...' : 'Pick'}
-                    </ButtonPress>
+                  <div className="scan-row-meta">
+                    <div className="scan-row-qty">{q.qty}</div>
+                    <div className="scan-row-label">{inTote ? 'Scanned' : 'Pending'}</div>
                   </div>
                 </div>
-              ))}
-              {queueMore.hasMore && (
-                <div style={{ marginTop: 8 }}>
-                  <ButtonPress
-                    className="erpnext-btn-secondary w-full"
-                    onClick={queueMore.loadMore}
-                  >
-                    Load more ({queueMore.remaining} left)
-                  </ButtonPress>
-                </div>
-              )}
-            </>
+              )
+            })
           )}
         </div>
-      </div>
+        <div style={{ padding: '12px 16px', marginTop: 'auto' }}>
+          <div style={{ width: '100%', minHeight: 52 }}>
+            <ButtonPress
+              className="erpnext-btn-primary"
+              disabled={totePicked.length === 0}
+              onClick={() => setStep('suggest_location')}
+            >
+              Start Putaway →
+            </ButtonPress>
+          </div>
+        </div>
+      </ScannerLayout>
     )
   }
 
-  // ─── PUTAWAY STEP ───
-  if (step === 'putaway') {
+  // ─── SUGGEST LOCATION ───
+  if (step === 'suggest_location') {
     const cti = currentToteItem()
 
+    useEffect(() => {
+      if (cti && session) {
+        setLoading(true)
+        void (async () => {
+          const r = await api.putawaySuggest(
+            cti.item_code,
+            cti.qty,
+            session.warehouse_id,
+            usedLocationIds.length > 0 ? { excludeLocationIds: usedLocationIds } : undefined
+          )
+          if (r.ok && r.data) {
+            setSuggestion(r.data)
+          } else {
+            notify({ type: 'error', title: 'No location found', message: r.error || 'No bins available for this item' })
+          }
+          setLoading(false)
+        })()
+      }
+    }, [cti, session, usedLocationIds])
+
+    if (!cti) {
+      return (
+        <ScannerLayout title="Putaway" onBack={() => setStep('scan_items')} flash={flash}>
+          <ScannerToastBar toasts={toasts} />
+          <VerificationHeader counted={0} total={0} po="PUTAWAY" pl="" grn="" tab="boxes" onTabChange={() => {}} onBack={() => setStep('scan_items')} title="Putaway" />
+          <EmptyState icon="⇨" title="Tote is empty" message="Go back and pick items first" />
+        </ScannerLayout>
+      )
+    }
+
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <button onClick={() => navigate('item_pick', 'backward')} className="erpnext-btn-secondary">← Back</button>
-          <h1>Putaway</h1>
-          {session && (
-            <ButtonPress className="erpnext-btn-secondary pw-cancel-btn" onClick={handleCancelSession}>
-              ✕ Cancel
-            </ButtonPress>
-          )}
-        </div>
-
-        <div className="pw-putaway-progress">
-          <span className="pw-progress-text">Placing item {placedCount + 1} of {totalCount}</span>
-          <div className="pw-progress-bar">
-            <div className="pw-progress-fill" style={{ width: `${progressPct}%` }} />
+      <ScannerLayout title={`Place ${cti.item_code}`} onBack={() => setStep('scan_items')} flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <VerificationHeader
+          counted={toteItems.filter(i => i.status === 'placed').length}
+          total={toteItems.length}
+          po="PUTAWAY"
+          pl={suggestion?.location_code || ''}
+          grn={session?.id ? `#${session.id}` : '—'}
+          tab="boxes"
+          onTabChange={() => {}}
+          onBack={() => setStep('scan_items')}
+          title={`Place ${cti.item_code}`}
+        />
+        {loading ? (
+          <div className="pw-loading-card" style={{ padding: 16, textAlign: 'center' }}>
+            <div className="pw-spinner" style={{ margin: '0 auto 8px' }} />
+            <p className="text-dim">Finding best location...</p>
           </div>
-          <span className="pw-progress-text">{pickedCount} remaining</span>
-        </div>
-
-        {cti ? (
+        ) : suggestion ? (
           <>
-            <div className="pw-current-item-card">
-              <div className="pw-current-item-header">
-                <div>
-                  <div className="pw-current-item-code">{cti.item_code}</div>
-                  <div className="pw-current-item-name">{cti.item_name || ''}</div>
-                </div>
-                <span className="pw-qty-badge pw-qty-badge-lg">{cti.qty} pcs</span>
-              </div>
-
-              <div className="pw-current-item-flow">
-                <div className="pw-flow-from">
-                  <span className="pw-flow-label">From</span>
-                  <span className="pw-flow-code">{cti.source}</span>
-                </div>
-                <span className="pw-flow-arrow">→</span>
-                <div className="pw-flow-to">
-                  <span className="pw-flow-label">To</span>
-                  <span className="pw-flow-code" style={{ color: suggestion ? 'var(--accent)' : 'var(--text-dim)' }}>
-                    {suggestion ? suggestion.location_code : '...'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {loading ? (
-              <div className="pw-loading-card">
-                <div className="pw-spinner"></div>
-                <p className="text-dim">Finding best location...</p>
-              </div>
-            ) : suggestion ? (
-              <div className="pw-suggestion-card">
-                <div className="pw-suggestion-label">⇨ Suggested Location</div>
-                <div className="pw-location-code">{suggestion.location_code}</div>
-                <div className="pw-suggestion-meta">
-                  <span className="pw-suggestion-tag"><strong>Reason:</strong> {suggestion.reason}</span>
-                  <span className="pw-suggestion-tag"><strong>Velocity:</strong> {suggestion.velocity_tier}</span>
-                  <span className="pw-suggestion-tag"><strong>Shelf:</strong> {suggestion.shelf_band}</span>
-                  {suggestion.free_capacity != null && (
-                    <span className="pw-suggestion-tag"><strong>Free:</strong> {suggestion.free_capacity} pcs</span>
-                  )}
-                  {(suggestion as any).last_picked_by && (
-                    <span className="pw-suggestion-tag pw-last-picked">👤 Last picked by {(suggestion as any).last_picked_by}</span>
-                  )}
-                </div>
-                {suggestion.max_fit_qty != null && suggestion.max_fit_qty < (cti?.qty || 0) && (
-                  <div className="pw-split-indicator">
-                    <span className="pw-split-badge">⚠ Split required</span>
-                    <span className="pw-split-detail">
-                      {suggestion.max_fit_qty > 0
-                        ? <>Bin fits <strong>{suggestion.max_fit_qty}</strong> of {cti?.qty} · {suggestion.remaining_after_fit ?? (cti?.qty ?? 0) - suggestion.max_fit_qty} will need another bin</>
-                        : <>Bin is full ({suggestion.free_capacity ?? 0} free) — find another bin</>
-                      }
-                    </span>
-                    {(suggestion.max_fit_qty ?? 0) > 0 && (
-                      <div className="pw-qty-override">
-                        <label className="erpnext-label" style={{ fontSize: 11, fontWeight: 600, marginBottom: 4, display: 'block' }}>Qty to place:</label>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                          <input
-                            type="number"
-                            className="erpnext-input"
-                            style={{ width: 80, fontSize: 16, fontWeight: 700, textAlign: 'center' }}
-                            min={1}
-                            max={suggestion.max_fit_qty}
-                            value={placeQty ?? suggestion.max_fit_qty}
-                            onChange={e => {
-                              const v = Math.max(1, Math.min(Number(e.target.value) || 1, suggestion.max_fit_qty || 1))
-                              setPlaceQty(v)
-                            }}
-                          />
-                          <span style={{ fontSize: 12, color: 'var(--pw-text-dim, #6b7280)' }}>of {cti?.qty}</span>
-                          <ButtonPress
-                            className="erpnext-btn-primary"
-                            onClick={() => {
-                              const qty = placeQty ?? suggestion.max_fit_qty ?? cti?.qty ?? 0
-                              setConfirmPlace({
-                                targetId: suggestion.location_id,
-                                targetCode: suggestion.location_code,
-                                qty,
-                                isOverride: qty > (suggestion.max_fit_qty || 0)
-                              })
-                            }}
-                          >
-                            Place {placeQty ?? suggestion.max_fit_qty ?? '?'} here
-                          </ButtonPress>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+            <div className="pw-suggestion-card" style={{ padding: 16, margin: '0 16px 8px' }}>
+              <div className="pw-suggestion-label">⇨ Suggested Location</div>
+              <div className="pw-location-code">{suggestion.location_code}</div>
+              <div className="pw-suggestion-meta">
+                <span className="pw-suggestion-tag"><strong>Reason:</strong> {suggestion.reason}</span>
+                <span className="pw-suggestion-tag"><strong>Velocity:</strong> {suggestion.velocity_tier}</span>
+                <span className="pw-suggestion-tag"><strong>Shelf:</strong> {suggestion.shelf_band}</span>
+                {suggestion.free_capacity != null && (
+                  <span className="pw-suggestion-tag"><strong>Free:</strong> {suggestion.free_capacity} pcs</span>
                 )}
               </div>
-            ) : (
-              <p className="text-dim">No location suggestion available</p>
-            )}
-
-            <div className="pw-location-scan-section">
-              <div className="pw-scan-section-title">⇨ Scan location to place</div>
-              <CameraScanner
-                embedded
-                open={true}
-                onClose={() => {}}
-                title="QR Code Scanner"
-                onScan={placeFromScan}
-              />
-              <ScannerInput
-                onScan={(code) => { void placeFromScan(code) }}
-                placeholder="Paste or type location, then Enter"
-                suggestions={allCandidates.map((c: any) => ({
-                  code: c.location_code,
-                  name: c.reason,
-                }))}
-                onSelectSuggestion={(code) => { void placeFromScan(code) }}
-                autoFocus={false}
-                showTorch={false}
-                showCamera={false}
-              />
-              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                {suggestion && (suggestion.max_fit_qty == null || suggestion.max_fit_qty >= (cti?.qty || 0)) && (
-                  <ButtonPress
-                    className="erpnext-btn-primary flex-1"
-                    onClick={() => {
-                      setConfirmPlace({
-                        targetId: suggestion.location_id,
-                        targetCode: suggestion.location_code,
-                        qty: cti?.qty || 0,
-                        isOverride: false
-                      })
-                    }}
-                  >
-                    Place all {cti?.qty} here
-                  </ButtonPress>
-                )}
-                <ButtonPress
-                  className="erpnext-btn-secondary flex-1"
-                  onClick={() => {
-                    setFitQty(String(suggestion?.max_fit_qty || cti?.qty || 0))
-                    navigate('fit_exception', 'forward')
-                  }}
-                >
-                  ⇩ Doesn't fit
-                </ButtonPress>
-              </div>
             </div>
-
-            {putawayError && (
-              <div className="pw-exception-panel">
-                <div className="pw-exception-title">⚠ Putaway Exception</div>
-                <div className="pw-exception-msg">{putawayError.message}</div>
-                <div className="pw-exception-actions">
-                  {putawayError.type === 'bin_full' && (
-                    <>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => {
-                        setPutawayError(null)
-                        setLoading(true)
-                        void (async () => {
-                          const r = await api.putawaySuggest(cti?.item_code || '', cti?.qty || 0, session?.warehouse_id, {
-                            excludeLocationIds: [...usedLocationIds, suggestion?.location_id].filter(Boolean) as number[]
-                          })
-                          if (r.ok && r.data) setSuggestion(r.data)
-                          setLoading(false)
-                        })()
-                      }}>⇨ Find another bin</ButtonPress>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => {
-                        const maxFit = putawayError.data?.bin_capacity || 0
-                        const already = putawayError.data?.bin_on_hand || 0
-                        const room = Math.max(0, maxFit - already)
-                        setFitQty(String(Math.min(room, cti?.qty || 0)))
-                        navigate('fit_exception', 'forward')
-                      }}>
-                        ⇩ Split quantity
-                      </ButtonPress>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-override" onClick={() => {
-                        void (async () => {
-                          const targetId = suggestion?.location_id
-                          const fits = suggestion?.max_fit_qty || cti?.qty || 0
-                          if (!targetId) return
-                          const r = await api.post(`/putaway/sessions/${session?.id}/place/${cti?.id}`, {
-                            target_location_id: targetId, is_override: true, qty: fits
-                          })
-                          if (r.ok) {
-                            haptic(30)
-                            const resp = r.data as any
-                            const remaining = resp?.remaining ?? 0
-                            const placed = resp?.quantity ?? cti?.qty ?? 0
-                            setUsedLocationIds([...usedLocationIds, targetId])
-                            if (remaining > 0) {
-                              setToteItems(toteItems.map(i => i.id === cti?.id ? { ...i, qty: remaining, status: 'picked' } : i))
-                              setPutawayError(null)
-                              notify({ type: 'info', title: 'Partial override', message: `${placed} placed, ${remaining} remaining → suggesting next bin` })
-                              setLoading(true)
-                              const sr = await api.putawaySuggest(cti?.item_code || '', remaining, session?.warehouse_id, {
-                                excludeLocationIds: [...usedLocationIds, targetId]
-                              })
-                              if (sr.ok && sr.data) setSuggestion(sr.data)
-                              setLoading(false)
-                            } else {
-                              setToteItems(toteItems.map(i => i.id === cti?.id ? { ...i, status: 'placed' } : i))
-                              setPutawayError(null)
-                              notify({ type: 'success', title: 'Override placed', message: `${placed} × ${cti?.item_code} forced into ${suggestion?.location_code}` })
-                              if (toteItems.filter(i => i.status === 'picked').length <= 1) navigate('complete', 'forward')
-                            }
-                          } else {
-                            notify({ type: 'error', title: 'Override failed', message: r.error || 'Could not place' })
-                          }
-                        })()
-                      }}>
-                        ⚡ Force place (up to {suggestion?.max_fit_qty || cti?.qty} pcs)
-                      </ButtonPress>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn pw-exception-danger" onClick={() => navigate('fit_exception', 'forward')}>
-                        ⚠ Report issue
-                      </ButtonPress>
-                    </>
-                  )}
-                  {putawayError.type === 'mixed_items' && (
-                    <>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => {
-                        setPutawayError(null)
-                        setLoading(true)
-                        void (async () => {
-                          const r = await api.putawaySuggest(cti?.item_code || '', cti?.qty || 0, session?.warehouse_id)
-                          if (r.ok && r.data) setSuggestion(r.data)
-                          setLoading(false)
-                        })()
-                      }}>⇨ Find empty bin</ButtonPress>
-                      <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => {
-                        notify({ type: 'warning', title: 'Override blocked', message: 'Mixed items not allowed. Find an empty bin instead.' })
-                      }}>
-                        ⚠ Override (needs approval)
-                      </ButtonPress>
-                    </>
-                  )}
-                  {!['bin_full', 'mixed_items'].includes(putawayError.type) && (
-                    <ButtonPress className="erpnext-btn-secondary pw-exception-btn" onClick={() => setPutawayError(null)}>
-                      Dismiss
-                    </ButtonPress>
-                  )}
-                </div>
-              </div>
-            )}
-
-
+            <ScanCard
+              state={scanState}
+              code={lastScanCode}
+              reason={scanReason}
+              onMarkDamaged={() => {}}
+              canMarkDamaged={false}
+              onRestart={restartScanner}
+              onManualEntry={onLocationScan}
+              placeholder="Scan destination bin..."
+              viewport={
+                <CameraScanner
+                  key={cameraKey}
+                  open={true}
+                  embedded
+                  minimal
+                  continuous
+                  onClose={restartScanner}
+                  onScan={onLocationScan}
+                />
+              }
+            />
           </>
         ) : (
-          <EmptyState
-            icon="⇨"
-            title="Tote is empty"
-            message="Go back and pick items first"
-          />
+          <p className="text-dim" style={{ padding: 16, textAlign: 'center' }}>No location suggestion available</p>
         )}
-
-        {/* Confirmation Modal */}
-        {confirmPlace && (
-          <div
-            style={{
-              position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 200,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
-            }}
-            onClick={() => setConfirmPlace(null)}
-          >
-            <div
-              style={{
-                background: '#fff', borderRadius: 12, padding: 24, maxWidth: 400, width: '100%',
-                boxShadow: '0 20px 60px rgba(0,0,0,0.2)'
-              }}
-              onClick={e => e.stopPropagation()}
-            >
-              <h3 style={{ fontSize: 18, fontWeight: 700, margin: '0 0 12px' }}>Confirm Placement</h3>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 14, marginBottom: 8 }}>
-                  Place <strong>{confirmPlace.qty}</strong> × <strong>{cti?.item_code}</strong>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--pw-text-dim, #6b7280)' }}>
-                  <span>{cti?.source}</span>
-                  <span>→</span>
-                  <span style={{ fontWeight: 700, color: 'var(--pw-accent, #2563eb)', fontFamily: 'monospace' }}>{confirmPlace.targetCode}</span>
-                </div>
-                {confirmPlace.isOverride && (
-                  <div style={{ marginTop: 8, padding: '6px 10px', background: '#fef3c7', borderRadius: 6, fontSize: 12, color: '#92400e' }}>
-                    ⚠ Override — qty exceeds suggested capacity
-                  </div>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <ButtonPress
-                  className="erpnext-btn-secondary flex-1"
-                  onClick={() => setConfirmPlace(null)}
-                >
-                  Cancel
-                </ButtonPress>                  <ButtonPress
-                  className="erpnext-btn-primary flex-1"
-                  onClick={() => {
-                    const cp = confirmPlace
-                    setConfirmPlace(null)
-                    void doPlace(cp.targetId, cp.isOverride, cp.qty, cp.targetCode)
-                  }}
-                >
-                  ✓ Place {confirmPlace.qty}
-                </ButtonPress>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
+      </ScannerLayout>
     )
   }
 
-  // ─── FIT EXCEPTION ───
-  if (step === 'fit_exception') {
+  // ─── ITEM CONFIRM (re-scan item, place one by one) ───
+  if (step === 'item_confirm') {
     const cti = currentToteItem()
+
+    if (!cti || !scannedLocation) {
+      return (
+        <ScannerLayout title="Putaway" onBack={() => setStep('suggest_location')} flash={flash}>
+          <ScannerToastBar toasts={toasts} />
+          <VerificationHeader counted={0} total={0} po="PUTAWAY" pl="" grn="" tab="boxes" onTabChange={() => {}} onBack={() => setStep('suggest_location')} title="Putaway" />
+          <EmptyState icon="⇨" title="Ready to place" message="Scan location first" />
+        </ScannerLayout>
+      )
+    }
+
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <button onClick={() => navigate('putaway', 'backward')} className="erpnext-btn-secondary">← Back</button>
-          <h1>Doesn't Fit</h1>
+      <ScannerLayout title={`Place ${cti.item_code} at ${scannedLocation.code}`} onBack={() => setStep('suggest_location')} flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <VerificationHeader
+          counted={placedAtBin}
+          total={cti.qty}
+          po="PUTAWAY"
+          pl={scannedLocation.code}
+          grn={session?.id ? `#${session.id}` : '—'}
+          tab="boxes"
+          onTabChange={() => {}}
+          onBack={() => setStep('suggest_location')}
+          title={`Place ${cti.item_code} at ${scannedLocation.code}`}
+        />
+        <ScanCard
+          state={scanState}
+          code={lastScanCode}
+          reason={scanReason}
+          onMarkDamaged={() => {}}
+          canMarkDamaged={false}
+          onRestart={restartScanner}
+          onManualEntry={onItemConfirm}
+          placeholder={`Scan ${cti.item_code} to place...`}
+          viewport={
+            <CameraScanner
+              key={cameraKey}
+              open={true}
+              embedded
+              minimal
+              continuous
+              onClose={restartScanner}
+              onScan={onItemConfirm}
+            />
+          }
+        />
+        <div style={{ padding: '0 16px 8px' }}>
+          <div className="scan-section-title">Progress: {placedAtBin} of {cti.qty} at {scannedLocation.code}</div>
         </div>
-        {cti && (
-          <>
-            <div className="pw-current-item-card">
-              <div className="pw-current-item-code">{cti.item_code}</div>
-              <div className="pw-current-item-name">{cti.qty} × into {suggestion?.location_code || 'this bin'}</div>
-            </div>
-
-            <div className="mb-4">
-              <label className="erpnext-label font-semibold">How many actually fit in this bin?</label>
-              <input className="erpnext-input" type="number" min={1} max={cti.qty} value={fitQty}
-                onChange={e => setFitQty(e.target.value)} placeholder="Enter quantity" style={{ fontSize: 18, fontWeight: 700, textAlign: 'center' }} />
-              <p className="text-xs text-dim mt-1">System estimated {suggestion?.max_fit_qty || cti.qty} · Adjust if different</p>
-            </div>
-
-            <div className="mb-4">
-              <label className="erpnext-label font-semibold">Override location (optional)</label>
-              <input className="erpnext-input" value={fitOverride}
-                onChange={e => { setFitOverride(e.target.value); setFitOverrideId(null) }}
-                placeholder="Type location code to override" />
-              {suggestion?.candidates && suggestion.candidates.length > 0 && (
-                <select className="erpnext-input mt-1" value={fitOverrideId ?? ''}
-                  onChange={e => {
-                    const id = +e.target.value
-                    const c = suggestion.candidates.find((x: any) => x.location_id === id)
-                    if (c) { setFitOverride(c.location_code); setFitOverrideId(c.location_id) }
-                  }}>
-                  <option value="">Suggested other bins</option>
-                  {suggestion.candidates.filter((c: any) => c.location_id !== suggestion.location_id).map((c: any) => (
-                    <option key={c.location_id} value={c.location_id}>{c.location_code} — {c.reason}</option>
-                  ))}
-                </select>
-              )}
-            </div>
-
-            <ButtonPress className="erpnext-btn-primary w-full" onClick={() => {
-              void (async () => {
-                const fits = +(fitQty || 0)
-                const remaining = cti.qty - fits
-
-                const excR = await api.post('/putaway/fit-exception', {
-                  item_code: cti.item_code, rejected_location: suggestion?.location_code,
-                  rejected_location_id: suggestion?.location_id, reason: 'too_small',
-                  requested_qty: cti.qty, fits_qty: fits,
-                  override_location: fitOverride || undefined, override_location_id: fitOverrideId || undefined
-                })
-                if (!excR.ok) {
-                  notify({ type: 'error', title: 'Error', message: excR.error || 'Failed to record exception' })
-                  return
-                }
-
-                // Resolve typed override code to location_id if not from dropdown
-                let resolvedTargetId = fitOverrideId || suggestion?.location_id
-                let resolvedTargetCode = fitOverride || suggestion?.location_code
-                if (!fitOverrideId && fitOverride) {
-                  const lr = await api.get<{ id: number; code: string }[]>('/masterdata/locations')
-                  const loc = lr.ok && lr.data
-                    ? lr.data.find((l: any) => l.code?.toUpperCase() === fitOverride.toUpperCase())
-                    : undefined
-                  if (!loc) {
-                    notify({ type: 'error', title: 'Location not found', message: `No location matching "${fitOverride}"` })
-                    return
-                  }
-                  resolvedTargetId = loc.id
-                  resolvedTargetCode = loc.code
-                }
-
-                let placeR: any = { ok: false }
-                if (fits > 0 && resolvedTargetId) {
-                  placeR = await api.post(`/putaway/sessions/${session?.id}/place/${cti.id}`, {
-                    target_location_id: resolvedTargetId, is_override: true, qty: fits
-                  })
-                  if (placeR.ok) {
-                    haptic(20)
-                    notify({ type: 'success', title: 'Partial placed', message: `${fits} × ${cti.item_code} placed at ${resolvedTargetCode}` })
-                  } else {
-                    notify({ type: 'warning', title: 'Place failed', message: placeR.error || 'Could not place partial qty' })
-                  }
-                }
-
-                const actualRemaining = (placeR.ok && placeR.data?.remaining != null)
-                  ? placeR.data.remaining : remaining
-
-                const newUsedIds = fits > 0 && resolvedTargetId ? [...usedLocationIds, resolvedTargetId] : usedLocationIds
-                setUsedLocationIds(newUsedIds)
-
-                if (actualRemaining > 0) {
-                  setToteItems(toteItems.map(i =>
-                    i.id === cti.id ? { ...i, qty: actualRemaining, status: 'picked' } : i
-                  ))
-                  notify({ type: 'info', title: 'Remainder', message: `${actualRemaining} × ${cti.item_code} remaining — system will suggest new location` })
-                } else {
-                  setToteItems(toteItems.map(i =>
-                    i.id === cti.id ? { ...i, status: 'placed' } : i
-                  ))
-                  if (toteItems.filter(i => i.status === 'picked').length <= 1) {
-                    navigate('complete', 'forward')
-                    return
-                  }
-                }
-
-                setFitQty('')
-                setFitOverride('')
-                setFitOverrideId(null)
-                setPutawayError(null)
-                navigate('putaway', 'backward')
-              })()
-            }} disabled={!(+(fitQty || 0) > 0)}>
-              {+(fitQty || 0) > 0 ? `Place ${fitQty} here${+(fitQty || 0) < cti.qty ? ` · ${cti.qty - +(fitQty || 0)} remaining` : ''}` : 'Enter how many fit'}
-            </ButtonPress>
-          </>
-        )}
-      </div>
+      </ScannerLayout>
     )
   }
 
   // ─── COMPLETE ───
   if (step === 'complete') {
     const placedItems = toteItems.filter(i => i.status === 'placed')
+
     return (
-      <div className={`desk-page ${animClass}`}>
-        <div className="desk-head">
-          <h1>Putaway Complete</h1>
-        </div>
-        <div className="pw-complete-card">
-          <div className="pw-complete-icon">✓</div>
-          <div className="pw-complete-count">
-            {placedItems.length} item{placedItems.length !== 1 ? 's' : ''} placed successfully
+      <ScannerLayout title="Putaway Complete" noBack flash={flash}>
+        <ScannerToastBar toasts={toasts} />
+        <div className="rw-complete" style={{ padding: 16, textAlign: 'center' }}>
+          <div className="rw-complete-icon">✓</div>
+          <div className="rw-complete-title">Putaway Complete!</div>
+          <div className="rw-complete-stats">
+            <div className="rw-complete-stat">
+              <div className="rw-complete-stat-value">{placedItems.length}</div>
+              <div className="rw-complete-stat-label">Items placed</div>
+            </div>
+            <div className="rw-complete-stat">
+              <div className="rw-complete-stat-value">{usedLocationIds.length}</div>
+              <div className="rw-complete-stat-label">Bins used</div>
+            </div>
           </div>
+          <div className="scan-section-title" style={{ marginTop: 16, textAlign: 'left' }}>Placed Items</div>
           {placedItems.map(item => (
-            <div key={item.id} className="pw-complete-item">
-              <div>
-                <div style={{ fontWeight: 600 }}>{item.item_code}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-dim)' }}>{item.item_name || ''}</div>
+            <div key={item.id} className="scan-row" style={{ margin: '8px 16px 0' }}>
+              <div className="scan-row-info">
+                <div className="scan-row-code">{item.item_code}</div>
+                <div className="scan-row-desc">{item.item_name || ''} → {item.target_location_code || 'placed'}</div>
               </div>
-              <span className="pw-qty-badge">{item.qty} pcs</span>
+              <div className="scan-row-meta">
+                <div className="scan-row-qty">{item.qty}</div>
+              </div>
             </div>
           ))}
-          <ButtonPress className="erpnext-btn-primary mt-6" onClick={() => {
-            setSelectedItem(null); setSuggestion(null); setToteItems([])
-            navigate(mode === 'zone' ? 'item_pick' : 'mode_select', 'forward')
-          }}>
-            {mode === 'zone' ? 'Next Item' : 'Done'}
-          </ButtonPress>
+          <div style={{ padding: '12px 16px', marginTop: 'auto' }}>
+            <div style={{ width: '100%', minHeight: 52 }}>
+              <ButtonPress
+                className="erpnext-btn-primary"
+                onClick={() => {
+                  setSelectedZone(null)
+                  setSuggestion(null)
+                  setToteItems([])
+                  setUsedLocationIds([])
+                  setScannedLocation(null)
+                  setSelectedToteItemId(null)
+                  setPlacedAtBin(0)
+                  setSession(null)
+                  setStep('mode_select')
+                }}
+              >
+                New Putaway
+              </ButtonPress>
+            </div>
+          </div>
         </div>
-      </div>
+      </ScannerLayout>
     )
   }
 
+  // RF redirect
+  if (rf) return <Navigate to="/putaway" replace />
+
   return (
-    <div className="desk-page">
-      <h1>Putaway Wizard</h1>
+    <ScannerLayout title="Putaway">
+      <ScannerToastBar toasts={toasts} />
       <p>Step: {step}</p>
-    </div>
+    </ScannerLayout>
   )
 }
