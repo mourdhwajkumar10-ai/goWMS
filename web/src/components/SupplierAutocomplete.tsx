@@ -184,11 +184,11 @@ export default function SupplierAutocomplete({
         aria-label={ariaLabel || placeholder}
         onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
           if (e.key === 'Escape') setOpen(false)
-          if (e.key === 'Enter') {
-            e.preventDefault()
-            if (results.length === 1) {
+          if (e.key === 'Enter' || e.key === 'Tab') {
+            if (results.length > 0) {
+              e.preventDefault()
               handleSelect(results[0])
-            } else {
+            } else if (e.key === 'Enter') {
               void tryResolveCode(value)
             }
           }

@@ -1030,8 +1030,7 @@ export default function ReceivingManagement() {
                           if (!prev || (prev.name || "") !== v) lastPoPromptedRef.current = null;
                         }
                       }}
-                      onFocus={() => setShowPoDropdown(true)}
-                      onBlur={() => {
+                      onFocus={() => setShowPoDropdown(true)}                      onBlur={() => {
                         setTimeout(() => {
                           setShowPoDropdown(false);
                           const q = poName.trim().toLowerCase();
@@ -1040,7 +1039,17 @@ export default function ReceivingManagement() {
                             (p: any) => (p.name || "").toLowerCase() === q
                           );
                           if (match) promptPoChoice(match, "blur");
+
                         }, 200);
+                      }}
+                      onKeyDown={e => {
+                        if ((e.key === 'Enter' || e.key === 'Tab') && showPoDropdown && poSuggestions.length > 0) {
+                          const filtered = poSuggestions.filter((p: any) => !poFilter || (p.name || '').toLowerCase().includes(poFilter.toLowerCase())).slice(0, 10)
+                          if (filtered.length > 0) {
+                            e.preventDefault()
+                            promptPoChoice(filtered[0], 'select')
+                          }
+                        }
                       }}
                       autoComplete="off"
                     />
@@ -1081,6 +1090,16 @@ export default function ReceivingManagement() {
                       onChange={(e) => { setSupplierName(e.target.value); setSupplierFilter(e.target.value); setShowSupplierDropdown(true); }}
                       onFocus={() => setShowSupplierDropdown(true)}
                       onBlur={() => setTimeout(() => setShowSupplierDropdown(false), 200)}
+                      onKeyDown={e => {
+                        if ((e.key === 'Enter' || e.key === 'Tab') && showSupplierDropdown && supplierSuggestions.length > 0) {
+                          const filtered = supplierSuggestions.filter((s: any) => !supplierFilter || (s.name || '').toLowerCase().includes(supplierFilter.toLowerCase())).slice(0, 10)
+                          if (filtered.length > 0) {
+                            e.preventDefault()
+                            setSupplierName(filtered[0].name || '')
+                            setShowSupplierDropdown(false)
+                          }
+                        }
+                      }}
                       autoComplete="off"
                     />
                     {showSupplierDropdown && supplierSuggestions.length > 0 && (
@@ -1126,6 +1145,15 @@ export default function ReceivingManagement() {
                       onChange={(e) => { setDriverName(e.target.value); setDriverFilter(e.target.value); setShowDriverDropdown(true); loadTransports(e.target.value); }}
                       onFocus={() => { setShowDriverDropdown(true); loadTransports(driverFilter); }}
                       onBlur={() => setTimeout(() => setShowDriverDropdown(false), 200)}
+                      onKeyDown={e => {
+                        if ((e.key === 'Enter' || e.key === 'Tab') && showDriverDropdown && truckSuggestions.length > 0) {
+                          const filtered = truckSuggestions.filter((t: any) => t.driver_name && (!driverFilter || t.driver_name.toLowerCase().includes(driverFilter.toLowerCase()) || t.driver_phone?.includes(driverFilter))).slice(0, 10)
+                          if (filtered.length > 0) {
+                            e.preventDefault()
+                            selectTransport(filtered[0])
+                          }
+                        }
+                      }}
                       autoComplete="off"
                     />
                     {showDriverDropdown && truckSuggestions.length > 0 && (
@@ -1170,6 +1198,15 @@ export default function ReceivingManagement() {
                       onChange={(e) => { setTransporter(e.target.value); setTruckFilter(e.target.value); setShowTruckDropdown(true); loadTransports(e.target.value); }}
                       onFocus={() => { setShowTruckDropdown(true); loadTransports(truckFilter); }}
                       onBlur={() => setTimeout(() => setShowTruckDropdown(false), 200)}
+                      onKeyDown={e => {
+                        if ((e.key === 'Enter' || e.key === 'Tab') && showTruckDropdown && truckSuggestions.length > 0) {
+                          const filtered = truckSuggestions.filter((t: any) => !truckFilter || t.truck_no?.toLowerCase().includes(truckFilter.toLowerCase()) || t.transporter?.toLowerCase().includes(truckFilter.toLowerCase()) || t.name?.toLowerCase().includes(truckFilter.toLowerCase())).slice(0, 10)
+                          if (filtered.length > 0) {
+                            e.preventDefault()
+                            selectTransport(filtered[0])
+                          }
+                        }
+                      }}
                       autoComplete="off"
                     />
                     {showTruckDropdown && truckSuggestions.length > 0 && (
