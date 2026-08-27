@@ -291,6 +291,16 @@ export default function SalesOrders() {
                   onChange={e => { setCustomer(e.target.value); setShowCustDrop(true) }}
                   onBlur={() => setTimeout(() => setShowCustDrop(false), 200)}
                   placeholder="Type to search customers..."
+                  onKeyDown={e => {
+                    if ((e.key === 'Enter' || e.key === 'Tab') && showCustDrop && customerList.length > 0) {
+                      const filtered = customerList.filter((c: any) => !customer || (c.name || '').toLowerCase().includes(customer.toLowerCase())).slice(0, 10)
+                      if (filtered.length > 0) {
+                        setCustomer(filtered[0].name)
+                        setShowCustDrop(false)
+                        if (e.key === 'Enter') e.preventDefault()
+                      }
+                    }
+                  }}
                 />
                 {showCustDrop && customerList.length > 0 && (
                   <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50, background: 'var(--card-bg, #fff)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 8px 24px rgba(0,0,0,0.12)', maxHeight: 200, overflowY: 'auto' }}>
