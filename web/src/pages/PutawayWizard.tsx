@@ -11,13 +11,11 @@ import { useScanFeedback } from '../hooks/useScanFeedback'
 
 function SkeletonCards({ count = 3 }: { count?: number }) {
   return (
-    <div>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {Array.from({ length: count }).map((_, i) => (
-        <div key={i} className="pw-skeleton pw-skeleton-card">
-          <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            <div className="pw-skeleton pw-skeleton-line" style={{ width: '50%' }} />
-            <div className="pw-skeleton pw-skeleton-line" style={{ width: '30%' }} />
-          </div>
+        <div key={i} className="scan-skeleton">
+          <div className="scan-skeleton-line" style={{ width: '50%' }} />
+          <div className="scan-skeleton-line" style={{ width: '30%' }} />
         </div>
       ))}
     </div>
@@ -26,10 +24,10 @@ function SkeletonCards({ count = 3 }: { count?: number }) {
 
 function EmptyState({ icon, title, message }: { icon: string; title: string; message: string }) {
   return (
-    <div className="pw-empty-state">
-      <div className="pw-empty-icon">{icon}</div>
-      <div className="pw-empty-title">{title}</div>
-      <div className="pw-empty-msg">{message}</div>
+    <div className="scan-empty">
+      <div className="scan-empty-icon">{icon}</div>
+      <div className="scan-empty-title">{title}</div>
+      <div className="scan-empty-msg">{message}</div>
     </div>
   )
 }
@@ -502,7 +500,7 @@ export default function PutawayWizard() {
     const totalItems = zoneItems.length
 
     return (
-      <ScannerLayout title="Scan Items" onBack={() => setStep(mode === 'zone' ? 'zone_select' : 'mode_select')} flash={flash}>
+      <ScannerLayout title="Scan Items" hideHeader noBack flash={scanState === 'rejected' || flash === 'err' ? 'err' : scanState === 'accepted' || flash === 'ok' ? 'ok' : null}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
           counted={totePicked.length}
@@ -525,15 +523,17 @@ export default function PutawayWizard() {
           onManualEntry={onItemScan}
           placeholder="Scan item barcode..."
           viewport={
-            <CameraScanner
-              key={cameraKey}
-              open={true}
-              embedded
-              minimal
-              continuous
-              onClose={restartScanner}
-              onScan={onItemScan}
-            />
+            <div className="scan-live-viewport">
+              <CameraScanner
+                key={cameraKey}
+                open={true}
+                embedded
+                minimal
+                continuous
+                onClose={restartScanner}
+                onScan={onItemScan}
+              />
+            </div>
           }
         />
         <div style={{ padding: '0 16px 8px' }}>
@@ -589,16 +589,20 @@ export default function PutawayWizard() {
     const cti = currentToteItem()
     if (!cti) {
       return (
-        <ScannerLayout title="Putaway" onBack={() => setStep('scan_items')} flash={flash}>
+        <ScannerLayout title="Putaway" hideHeader noBack flash={flash}>
           <ScannerToastBar toasts={toasts} />
           <VerificationHeader counted={0} total={0} po="PUTAWAY" pl="" grn="" tab="boxes" onTabChange={() => {}} onBack={() => setStep('scan_items')} title="Putaway" />
-          <EmptyState icon="⇨" title="Tote is empty" message="Go back and pick items first" />
+          <div className="scan-empty">
+            <div className="scan-empty-icon">⇨</div>
+            <div className="scan-empty-title">Tote is empty</div>
+            <div className="scan-empty-msg">Go back and pick items first</div>
+          </div>
         </ScannerLayout>
       )
     }
 
     return (
-      <ScannerLayout title={`Place ${cti.item_code}`} onBack={() => setStep('scan_items')} flash={flash}>
+      <ScannerLayout title={`Place ${cti.item_code}`} hideHeader noBack flash={scanState === 'rejected' || flash === 'err' ? 'err' : scanState === 'accepted' || flash === 'ok' ? 'ok' : null}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
           counted={toteItems.filter(i => i.status === 'placed').length}
@@ -612,22 +616,19 @@ export default function PutawayWizard() {
           title={`Place ${cti.item_code}`}
         />
         {loading ? (
-          <div className="pw-loading-card" style={{ padding: 16, textAlign: 'center' }}>
-            <div className="pw-spinner" style={{ margin: '0 auto 8px' }} />
-            <p className="text-dim">Finding best location...</p>
+          <div className="scan-skeleton">
+            <div className="scan-skeleton-line" />
+            <div className="scan-skeleton-line" />
           </div>
         ) : suggestion ? (
           <>
-            <div className="pw-suggestion-card" style={{ padding: 16, margin: '0 16px 8px' }}>
-              <div className="pw-suggestion-label">⇨ Suggested Location</div>
-              <div className="pw-location-code">{suggestion.location_code}</div>
-              <div className="pw-suggestion-meta">
-                <span className="pw-suggestion-tag"><strong>Reason:</strong> {suggestion.reason}</span>
-                <span className="pw-suggestion-tag"><strong>Velocity:</strong> {suggestion.velocity_tier}</span>
-                <span className="pw-suggestion-tag"><strong>Shelf:</strong> {suggestion.shelf_band}</span>
-                {suggestion.free_capacity != null && (
-                  <span className="pw-suggestion-tag"><strong>Free:</strong> {suggestion.free_capacity} pcs</span>
-                )}
+            <div className="suggest-card best" style={{ margin: 0 }}>
+              <div className="suggest-card-loc">{suggestion.location_code}</div>
+              <div className="suggest-card-reason">{suggestion.reason?.replace(/_/g, ' ')} · free: {suggestion.free_capacity ?? '—'}</div>
+              <div className="suggest-card-meta">
+                <span className="suggest-card-stat"><strong>Velocity:</strong> {suggestion.velocity_tier}</span>
+                <span className="suggest-card-stat"><strong>Shelf:</strong> {suggestion.shelf_band}</span>
+                {suggestion.free_capacity != null && <span className="suggest-card-stat"><strong>Free:</strong> {suggestion.free_capacity} pcs</span>}
               </div>
             </div>
             <ScanCard
@@ -640,20 +641,26 @@ export default function PutawayWizard() {
               onManualEntry={onLocationScan}
               placeholder="Scan destination bin..."
               viewport={
-                <CameraScanner
-                  key={cameraKey}
-                  open={true}
-                  embedded
-                  minimal
-                  continuous
-                  onClose={restartScanner}
-                  onScan={onLocationScan}
-                />
+                <div className="scan-live-viewport">
+                  <CameraScanner
+                    key={cameraKey}
+                    open={true}
+                    embedded
+                    minimal
+                    continuous
+                    onClose={restartScanner}
+                    onScan={onLocationScan}
+                  />
+                </div>
               }
             />
           </>
         ) : (
-          <p className="text-dim" style={{ padding: 16, textAlign: 'center' }}>No location suggestion available</p>
+          <div className="scan-empty">
+            <div className="scan-empty-icon">📦</div>
+            <div className="scan-empty-title">No location suggestion</div>
+            <div className="scan-empty-msg">No bins available for this item</div>
+          </div>
         )}
       </ScannerLayout>
     )
@@ -665,16 +672,20 @@ export default function PutawayWizard() {
 
     if (!cti || !scannedLocation) {
       return (
-        <ScannerLayout title="Putaway" onBack={() => setStep('suggest_location')} flash={flash}>
+        <ScannerLayout title="Putaway" hideHeader noBack flash={flash}>
           <ScannerToastBar toasts={toasts} />
           <VerificationHeader counted={0} total={0} po="PUTAWAY" pl="" grn="" tab="boxes" onTabChange={() => {}} onBack={() => setStep('suggest_location')} title="Putaway" />
-          <EmptyState icon="⇨" title="Ready to place" message="Scan location first" />
+          <div className="scan-empty">
+            <div className="scan-empty-icon">⇨</div>
+            <div className="scan-empty-title">Ready to place</div>
+            <div className="scan-empty-msg">Scan location first</div>
+          </div>
         </ScannerLayout>
       )
     }
 
     return (
-      <ScannerLayout title={`Place ${cti.item_code} at ${scannedLocation.code}`} onBack={() => setStep('suggest_location')} flash={flash}>
+      <ScannerLayout title={`Place ${cti.item_code} at ${scannedLocation.code}`} hideHeader noBack flash={scanState === 'rejected' ? 'err' : scanState === 'accepted' ? 'ok' : flash === 'err' ? 'err' : flash === 'ok' ? 'ok' : null}>
         <ScannerToastBar toasts={toasts} />
         <VerificationHeader
           counted={placedAtBin}
@@ -697,20 +708,23 @@ export default function PutawayWizard() {
           onManualEntry={onItemConfirm}
           placeholder={`Scan ${cti.item_code} to place...`}
           viewport={
-            <CameraScanner
-              key={cameraKey}
-              open={true}
-              embedded
-              minimal
-              continuous
-              onClose={restartScanner}
-              onScan={onItemConfirm}
-            />
+            <div className="scan-live-viewport">
+              <CameraScanner
+                key={cameraKey}
+                open={true}
+                embedded
+                minimal
+                continuous
+                onClose={restartScanner}
+                onScan={onItemConfirm}
+              />
+            </div>
           }
         />
-        <div style={{ padding: '0 16px 8px' }}>
-          <div className="scan-section-title">Progress: {placedAtBin} of {cti.qty} at {scannedLocation.code}</div>
+        <div className="scan-progress-bar" style={{ marginTop: 8 }}>
+          <div className="scan-progress-fill" style={{ width: `${cti.qty > 0 ? (placedAtBin / cti.qty) * 100 : 0}%` }} />
         </div>
+        <div className="scan-badge ok" style={{ alignSelf: 'center' }}>{placedAtBin} of {cti.qty} at {scannedLocation.code}</div>
       </ScannerLayout>
     )
   }
@@ -720,9 +734,9 @@ export default function PutawayWizard() {
     const placedItems = toteItems.filter(i => i.status === 'placed')
 
     return (
-      <ScannerLayout title="Putaway Complete" noBack flash={flash}>
+      <ScannerLayout title="Putaway Complete" hideHeader noBack flash={flash}>
         <ScannerToastBar toasts={toasts} />
-        <div className="rw-complete" style={{ padding: 16, textAlign: 'center' }}>
+        <div className="rw-complete">
           <div className="rw-complete-icon">✓</div>
           <div className="rw-complete-title">Putaway Complete!</div>
           <div className="rw-complete-stats">
@@ -735,37 +749,39 @@ export default function PutawayWizard() {
               <div className="rw-complete-stat-label">Bins used</div>
             </div>
           </div>
-          <div className="scan-section-title" style={{ marginTop: 16, textAlign: 'left' }}>Placed Items</div>
-          {placedItems.map(item => (
-            <div key={item.id} className="scan-row" style={{ margin: '8px 16px 0' }}>
-              <div className="scan-row-info">
-                <div className="scan-row-code">{item.item_code}</div>
-                <div className="scan-row-desc">{item.item_name || ''} → {item.target_location_code || 'placed'}</div>
-              </div>
-              <div className="scan-row-meta">
-                <div className="scan-row-qty">{item.qty}</div>
-              </div>
+          {placedItems.length > 0 && (
+            <div className="scan-section-card" style={{ marginTop: 12 }}>
+              <div className="scan-section-title">Placed Items</div>
+              {placedItems.map(item => (
+                <div key={item.id} className="scan-row" style={{ marginTop: 8 }}>
+                  <div className="scan-row-info">
+                    <div className="scan-row-code">{item.item_code}</div>
+                    <div className="scan-row-desc">{item.item_name || ''} → {item.target_location_code || 'placed'}</div>
+                  </div>
+                  <div className="scan-row-meta">
+                    <div className="scan-row-qty">{item.qty}</div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ))}
-          <div style={{ padding: '12px 16px', marginTop: 'auto' }}>
-            <div style={{ width: '100%', minHeight: 52 }}>
-              <ButtonPress
-                className="erpnext-btn-primary"
-                onClick={() => {
-                  setSelectedZone(null)
-                  setSuggestion(null)
-                  setToteItems([])
-                  setUsedLocationIds([])
-                  setScannedLocation(null)
-                  setSelectedToteItemId(null)
-                  setPlacedAtBin(0)
-                  setSession(null)
-                  setStep('mode_select')
-                }}
-              >
-                New Putaway
-              </ButtonPress>
-            </div>
+          )}
+          <div className="rw-complete-actions">
+            <button
+              className="scan-btn scan-btn-primary"
+              onClick={() => {
+                setSelectedZone(null)
+                setSuggestion(null)
+                setToteItems([])
+                setUsedLocationIds([])
+                setScannedLocation(null)
+                setSelectedToteItemId(null)
+                setPlacedAtBin(0)
+                setSession(null)
+                setStep('mode_select')
+              }}
+            >
+              New Putaway
+            </button>
           </div>
         </div>
       </ScannerLayout>
