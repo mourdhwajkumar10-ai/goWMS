@@ -24,8 +24,9 @@ type PutawayStep = 'mode_select' | 'scan_items' | 'suggest_location' | 'place_it
 type RunnerMode = 'zone' | 'item'
 
 /* ── Receiving-style progress header ── */
-function ProgressHeader({ counted, total, label, step, zone, title, onBack }: {
+function ProgressHeader({ counted, total, label, step, zone, title, onBack, mode, zones, currentZone, onZoneChange }: {
   counted: number; total: number; label: string; step: PutawayStep; zone?: string; title?: string; onBack?: () => void
+  mode?: RunnerMode; zones?: { zone: string; count: number }[]; currentZone?: string; onZoneChange?: (z: string) => void
 }) {
   const pct = total > 0 ? Math.round((counted / total) * 100) : 0
   return (
@@ -73,6 +74,22 @@ function ProgressHeader({ counted, total, label, step, zone, title, onBack }: {
           return <div key={s} className={`scan-progress-dot ${dotState}`} style={{ height: 6, flex: 1, borderRadius: 9999, background: dotState === 'done' || dotState === 'current' ? 'var(--primary)' : 'var(--border)', transition: 'background 0.3s ease', ...(dotState === 'current' ? { animation: 'smPulse 1.5s cubic-bezier(0.4,0,0.6,1) infinite' } : {}) }} />
         })}
       </div>
+      {/* Zone tabs for Item mode */}
+      {mode === 'item' && zones && zones.length > 0 && (
+        <div className="scan-tabs" style={{ marginTop: 4 }}>
+          {zones.map(z => (
+            <button
+              key={z.zone}
+              type="button"
+              className={`scan-tab ${currentZone === z.zone ? 'active' : ''}`}
+              onClick={() => onZoneChange?.(z.zone)}
+              style={{ padding: '6px 12px', fontSize: 12 }}
+            >
+              {z.zone} ({z.count})
+            </button>
+          ))}
+        </div>
+      )}
       <div style={{ fontSize: 12, fontWeight: 500, color: 'var(--muted-foreground)' }}>{label}</div>
     </div>
   )
@@ -93,8 +110,8 @@ function ScannedItemCard({ item, index, total }: { item: QueueItem; index: numbe
 }
 
 /* ── Suggestion card (matches Receiving route flash) ── */
-function SuggestionCard({ suggestion, onReject, onTryNext }: {
-  suggestion: SuggestResult; onReject: () => void; onTryNext: () => void
+function SuggestionCard({ suggestion, onReject }: {
+  suggestion: SuggestResult; onReject: () => void
 }) {
   return (
     <div className="rw-route-flash" style={{ margin: '0 0 8px' }}>
@@ -107,14 +124,9 @@ function SuggestionCard({ suggestion, onReject, onTryNext }: {
       <div style={{ fontSize: 12, color: 'var(--muted-foreground)', marginBottom: 8 }}>
         {suggestion.reason?.replace(/_/g, ' ')} · free: {suggestion.free_capacity ?? '—'}
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button onClick={onTryNext} className="scan-btn scan-btn-outline scan-btn-sm" style={{ flex: 1 }}>
-          Try next →
-        </button>
-        <button onClick={onReject} className="scan-btn scan-btn-outline scan-btn-sm" style={{ flex: 1 }}>
-          Reject
-        </button>
-      </div>
+      <button onClick={onReject} className="scan-btn scan-btn-outline scan-btn-sm" style={{ width: '100%' }}>
+        Reject location
+      </button>
     </div>
   )
 }
@@ -136,7 +148,7 @@ export default function PutawayRunner() {
   const [pickedItemId, setPickedItemId] = useState<number | null>(null)
   const [scanCode, setScanCode] = useState('')
   const [toasts, setToasts] = useState<{ id: number; text: string; type: string }[]>([])
-  const [flash, setFlash] = useState<'success' | 'error' | null>(null)
+  const [flash, setFlash] = useState<'ok' | 'err' | null>(null)
   const [placeQty, setPlaceQty] = useState(0)
 
   const totalPending = zones.reduce((sum, z) => sum + z.count, 0)
@@ -147,7 +159,7 @@ export default function PutawayRunner() {
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3000)
   }, [])
 
-  const doFlash = useCallback((t: 'success' | 'error') => { setFlash(t); setTimeout(() => setFlash(null), 300) }, [])
+  const doFlash = useCallback((t: 'ok' | 'err') => { setFlash(t); setTimeout(() => setFlash(null), 300) }, [])
 
   const refreshZones = useCallback(async () => {
     try { const r: any = await api.get('/putaway/queue/zones'); if (r.ok) setZones(r.data ?? []) } catch {}
@@ -192,12 +204,12 @@ export default function PutawayRunner() {
     if (step === 'scan_items') {
       const match = dedupedQueue.find(q => q.item_code.toUpperCase() === clean)
       if (!match) {
-        doFlash('error'); toast(`Not in queue: ${clean}`, 'error'); return
+        doFlash('err'); toast(`Not in queue: ${clean}`, 'error'); return
       }
       if (scannedItems.some(s => s.item_code.toUpperCase() === clean && s.location_id === match.location_id)) {
-        doFlash('error'); toast(`Already scanned: ${clean}`, 'error'); return
+        doFlash('err'); toast(`Already scanned: ${clean}`, 'error'); return
       }
-      doFlash('success')
+      doFlash('ok')
       const newScanned = [...scannedItems, match]
       setScannedItems(newScanned)
       toast(`✓ ${match.item_code} scanned (${newScanned.length}/${dedupedQueue.length})`, 'success')
@@ -223,14 +235,24 @@ export default function PutawayRunner() {
       return
     }
 
-    // STEP: suggest_location — scan destination bin
+    // STEP: suggest_location — scan destination bin (hard validation: must match suggestion)
     if (step === 'suggest_location') {
-      const r: any = await api.get('/masterdata/locations')
-      const location = r.ok && Array.isArray(r.data) ? r.data.find((l: any) => String(l.code ?? '').toUpperCase() === clean) : null
-      if (!location) { doFlash('error'); toast(`Location not found: ${clean}`, 'error'); return }
-      setScannedLocation({ id: location.id, code: location.code })
-      doFlash('success')
-      toast(`✓ Bin ${location.code} confirmed`, 'success')
+      if (!suggestion) { doFlash('err'); toast('No suggestion available', 'error'); return }
+      const targetCode = suggestion.location_code.toUpperCase()
+      if (clean !== targetCode) {
+        const cand = suggestion.candidates?.find((c: any) => c.location_code?.toUpperCase() === clean)
+        if (!cand) {
+          doFlash('err')
+          toast(`Must scan ${suggestion.location_code}`, 'error')
+          return
+        }
+        // Candidate match allowed as override
+        setScannedLocation({ id: cand.location_id, code: cand.location_code })
+      } else {
+        setScannedLocation({ id: suggestion.location_id, code: suggestion.location_code })
+      }
+      doFlash('ok')
+      toast(`✓ Bin ${suggestion.location_code} confirmed`, 'success')
       setStep('place_items')
       return
     }
@@ -238,13 +260,13 @@ export default function PutawayRunner() {
     // STEP: place_items — scan item barcode to confirm placement
     if (step === 'place_items' && currentItem && pickedItemId && session) {
       if (clean !== currentItem.item_code.toUpperCase()) {
-        doFlash('error'); toast(`Scan ${currentItem.item_code} to place`, 'error'); return
+        doFlash('err'); toast(`Scan ${currentItem.item_code} to place`, 'error'); return
       }
       const r: any = await api.post(`/putaway/sessions/${session.id}/place/${pickedItemId}`, {
         target_location_id: scannedLocation!.id, qty: 1,
       })
-      if (!r.ok) { doFlash('error'); toast(r.error ?? 'Place failed', 'error'); return }
-      doFlash('success')
+      if (!r.ok) { doFlash('err'); toast(r.error ?? 'Place failed', 'error'); return }
+      doFlash('ok')
       const newPlaced = placeQty + 1
       setPlaceQty(newPlaced)
       toast(`✓ ${currentItem.item_code} placed (${newPlaced}/${totalToPlace})`, 'success')
@@ -307,7 +329,7 @@ export default function PutawayRunner() {
       <div className="rw-page">
         {flash && <div className={`scan-flash show ${flash}`} />}
         <div style={{ padding: '0 16px' }}>
-          <ProgressHeader counted={scannedItems.length} total={dedupedQueue.length} label="items scanned" step={step} zone={zone || undefined} />
+          <ProgressHeader counted={scannedItems.length} total={dedupedQueue.length} label="items scanned" step={step} zone={zone || undefined} mode={mode} zones={zones} currentZone={zone} onZoneChange={setZone} />
         </div>
 
         {/* Back button */}
@@ -428,7 +450,7 @@ export default function PutawayRunner() {
       <div className="rw-page">
         {flash && <div className={`scan-flash show ${flash}`} />}
         <div style={{ padding: '0 16px' }}>
-          <ProgressHeader counted={scannedItems.indexOf(currentItem)} total={scannedItems.length} label={`Placing ${currentItem.item_code}`} step={step} zone={zone || undefined} />
+          <ProgressHeader counted={scannedItems.indexOf(currentItem)} total={scannedItems.length} label={`Placing ${currentItem.item_code}`} step={step} zone={zone || undefined} mode={mode} zones={zones} currentZone={zone} onZoneChange={setZone} />
         </div>
 
         <div style={{ padding: '8px 16px 0' }}>
@@ -463,10 +485,6 @@ export default function PutawayRunner() {
           <SuggestionCard
             suggestion={suggestion}
             onReject={() => { setSuggestion(null); toast('Location rejected', 'warning') }}
-            onTryNext={() => {
-              const next = suggestion.candidates?.[1]
-              if (next) setSuggestion({ ...suggestion, location_id: next.location_id, location_code: next.location_code, reason: next.reason })
-            }}
           />
         </div>
 
@@ -488,7 +506,7 @@ export default function PutawayRunner() {
       <div className="rw-page">
         {flash && <div className={`scan-flash show ${flash}`} />}
         <div style={{ padding: '0 16px' }}>
-          <ProgressHeader counted={placeQty} total={totalToPlace} label={`${currentItem.item_code} → ${scannedLocation.code}`} step={step} zone={zone || undefined} />
+          <ProgressHeader counted={placeQty} total={totalToPlace} label={`${currentItem.item_code} → ${scannedLocation.code}`} step={step} zone={zone || undefined} mode={mode} zones={zones} currentZone={zone} onZoneChange={setZone} />
         </div>
 
         <div style={{ padding: '8px 16px 0' }}>

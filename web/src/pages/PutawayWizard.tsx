@@ -1,13 +1,9 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
-import { Navigate } from 'react-router-dom'
+import { useState, useEffect, useCallback } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
-import ScannerInput from '../components/ScannerInput'
 import CameraScanner from '../components/CameraScanner'
 import ButtonPress from '../components/ButtonPress'
 import { useHaptic } from '../hooks/useHaptic'
-import { useRfUi } from '../hooks/useRfUi'
-import { useLoadMore } from '../hooks/useLoadMore'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
 import VerificationHeader from '../components/scan/VerificationHeader'
 import ScanCard from '../components/scan/ScanCard'
@@ -124,7 +120,6 @@ const ZONE_COLORS: Record<string, string> = {
 }
 
 export default function PutawayWizard() {
-  const rf = useRfUi()
   const { toasts, toast } = useScannerToasts()
   const fb = useScanFeedback()
   const haptic = useHaptic()
@@ -194,6 +189,28 @@ export default function PutawayWizard() {
     }
     return toteItems.find(i => i.status === 'picked') || null
   }
+
+  // Suggest-location auto-fetch (must be top-level hook, not inside conditional branch)
+  useEffect(() => {
+    if (step !== 'suggest_location') return
+    const cti = currentToteItem()
+    if (!cti || !session || suggestion || loading) return
+    setLoading(true)
+    void (async () => {
+      const r = await api.putawaySuggest(
+        cti.item_code,
+        cti.qty,
+        session.warehouse_id,
+        usedLocationIds.length > 0 ? { excludeLocationIds: usedLocationIds } : undefined
+      )
+      if (r.ok && r.data) {
+        setSuggestion(r.data)
+      } else {
+        notify({ type: 'error', title: 'No location found', message: (r as any).error || 'No bins available for this item' })
+      }
+      setLoading(false)
+    })()
+  }, [step, session, selectedToteItemId, toteItems, usedLocationIds, suggestion, loading])
 
   // ─── SCAN HANDLERS (top-level hooks) ───
   const onItemScan = useCallback(async (code: string): Promise<boolean> => {
@@ -321,28 +338,35 @@ export default function PutawayWizard() {
     const remaining = resp?.remaining ?? 0
 
     if (remaining > 0) {
+      // Backend updated qty to remaining; reflect in tote
+      setToteItems(prev => prev.map(it => it.id === cti.id ? { ...it, qty: remaining } : it))
       setUsedLocationIds(prev => [...prev, scannedLocation.id])
-      setLoading(true)
-      const sr = await api.putawaySuggest(cti.item_code, remaining, session.warehouse_id, {
-        excludeLocationIds: [...usedLocationIds, scannedLocation.id]
-      })
-      if (sr.ok && sr.data) {
-        setSuggestion(sr.data)
-        setScannedLocation(null)
-        setPlacedAtBin(0)
-        setStep('suggest_location')
-        notify({ type: 'info', title: 'Next bin', message: `Remaining ${remaining} → ${sr.data.location_code}` })
-      }
-      setLoading(false)
+      setSuggestion(null)
+      setScannedLocation(null)
+      setPlacedAtBin(0)
+      setScanState('idle')
+      setScanReason(undefined)
+      setLastScanCode('')
+      setStep('suggest_location')
+      toast(`Remaining ${remaining} → next bin`, 'ok')
     } else {
+      // Mark this item placed
+      setToteItems(prev => prev.map(it => it.id === cti.id ? { ...it, status: 'placed', target_location_code: scannedLocation.code } : it))
       const nextItem = toteItems.find(i => i.id !== cti.id && i.status === 'picked')
       if (nextItem) {
         setSelectedToteItemId(nextItem.id)
         setUsedLocationIds(prev => [...prev, scannedLocation.id])
-        setStep('suggest_location')
+        setSuggestion(null)
         setScannedLocation(null)
         setPlacedAtBin(0)
+        setScanState('idle')
+        setScanReason(undefined)
+        setLastScanCode('')
+        setStep('suggest_location')
       } else {
+        setUsedLocationIds(prev => [...prev, scannedLocation.id])
+        setScannedLocation(null)
+        setPlacedAtBin(0)
         setStep('complete')
       }
     }
@@ -563,27 +587,6 @@ export default function PutawayWizard() {
   // ─── SUGGEST LOCATION ───
   if (step === 'suggest_location') {
     const cti = currentToteItem()
-
-    useEffect(() => {
-      if (cti && session) {
-        setLoading(true)
-        void (async () => {
-          const r = await api.putawaySuggest(
-            cti.item_code,
-            cti.qty,
-            session.warehouse_id,
-            usedLocationIds.length > 0 ? { excludeLocationIds: usedLocationIds } : undefined
-          )
-          if (r.ok && r.data) {
-            setSuggestion(r.data)
-          } else {
-            notify({ type: 'error', title: 'No location found', message: r.error || 'No bins available for this item' })
-          }
-          setLoading(false)
-        })()
-      }
-    }, [cti, session, usedLocationIds])
-
     if (!cti) {
       return (
         <ScannerLayout title="Putaway" onBack={() => setStep('scan_items')} flash={flash}>
@@ -768,9 +771,6 @@ export default function PutawayWizard() {
       </ScannerLayout>
     )
   }
-
-  // RF redirect
-  if (rf) return <Navigate to="/putaway" replace />
 
   return (
     <ScannerLayout title="Putaway">
