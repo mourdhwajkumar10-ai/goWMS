@@ -72,11 +72,12 @@ describe('PutawayWizard', () => {
     expect(screen.getByText('By Item')).toBeInTheDocument()
   })
 
-  it('displays queue count in banner', async () => {
+  it('displays queue count on mode cards', async () => {
     mockApi.putawayQueue.mockResolvedValue({ ok: true, data: [queuedItem] })
     render(<PutawayWizard />)
     await waitFor(() => {
-      expect(screen.getByText('1')).toBeInTheDocument()
+      expect(screen.getByText('1 pending')).toBeInTheDocument()
+      expect(screen.getByText('1 in queue')).toBeInTheDocument()
     })
   })
 
