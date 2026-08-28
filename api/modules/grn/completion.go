@@ -206,6 +206,10 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		if !sessionWritable(status) {
 			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
 		}
+		// Fix #9: Block completion from draft status.
+		if strings.ToLower(strings.TrimSpace(status)) == "draft" {
+			return shared.Err(c, fiber.StatusBadRequest, "cannot complete verification from draft status — activate the session first")
+		}
 		healFalsePOExcess(c, db, sessionID)
 
 		rows, err := db.Query(c.Context(), `
@@ -286,6 +290,9 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		// Without this, items never appear on the putaway screen because
 		// stock_location_balances has no rows at incoming locations.
 		if next == "putaway_pending" {
+			// Fix #2: Set putaway_status='deferred' before closing.
+			shared.SafeExec(c.Context(), db, "grn", `
+				UPDATE grn_sessions SET putaway_status='deferred', updated_at=now() WHERE id=$1`, sessionID)
 			c.Locals("grnCloseStatus", "completed")
 			c.Locals("grnCloseSilent", true)
 			_ = doCloseSession(c, db, sessionID)

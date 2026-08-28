@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"strconv"
 	"strings"
@@ -280,10 +281,17 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 			// PO, reuse it instead of creating a duplicate.
 			if poName != "" {
 				var existingID int
-				err = tx.QueryRow(c.Context(), `
+				// Fix #6: Also match supplier_name when available.
+				reuseQuery := `
 					SELECT id FROM grn_sessions
-					WHERE purchase_receipt_no = $1 AND status NOT IN ('closed','completed')
-					ORDER BY id DESC LIMIT 1`, poName).Scan(&existingID)
+					WHERE purchase_receipt_no = $1 AND status NOT IN ('closed','completed')`
+				reuseArgs := []any{poName}
+				if supplierName != "" {
+					reuseQuery += ` AND (supplier_name = $2 OR supplier_name IS NULL OR supplier_name = '')`
+					reuseArgs = append(reuseArgs, supplierName)
+				}
+				reuseQuery += ` ORDER BY id DESC LIMIT 1`
+				err = tx.QueryRow(c.Context(), reuseQuery, reuseArgs...).Scan(&existingID)
 				if err == nil {
 					sessionID = existingID
 					err = tx.QueryRow(c.Context(), `SELECT session_no FROM grn_sessions WHERE id=$1`, existingID).Scan(&sessionNo)
@@ -304,7 +312,7 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 						purchase_receipt_no, supplier_name
 					) VALUES (
 						'GRN-'||TO_CHAR(NOW(),'YYYY')||'-'||LPAD(nextval('grn_sessions_id_seq')::TEXT,5,'0'),
-						$1, 'open', 'packing_list', $6,
+						$1, 'receiving', 'packing_list', $6,
 						NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), $5, NOW(),
 						NULLIF($7, ''), NULLIF($8, '')
 					) RETURNING id, session_no`,
@@ -666,14 +674,17 @@ func listReceivingInvoices(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session_id required")
 		}
 
+		// Fix #11: Join with grn_invoices to get actual invoice date.
 		q := `
 			SELECT 
 				l.invoice_no,
+				COALESCE(MAX(gi.invoice_date::text), '') as invoice_date,
 				COUNT(DISTINCT c.delivery_no) as delivery_count,
 				COUNT(DISTINCT c.id) as box_count,
 				COALESCE(SUM(l.expected_qty), 0) as total_qty
 			FROM grn_lines l
 			JOIN grn_cartons c ON l.grn_carton_id = c.id
+			LEFT JOIN grn_invoices gi ON gi.grn_session_id = l.grn_session_id AND gi.invoice_no = l.invoice_no
 			WHERE l.grn_session_id = $1 AND l.invoice_no IS NOT NULL AND l.invoice_no <> ''
 			GROUP BY l.invoice_no
 			ORDER BY l.invoice_no`
@@ -695,11 +706,13 @@ func listReceivingInvoices(db *pgxpool.Pool) fiber.Handler {
 		var summaries []invoiceSummary
 		for rows.Next() {
 			var s invoiceSummary
-			err := rows.Scan(&s.InvoiceNo, &s.DeliveryCount, &s.BoxCount, &s.TotalQty)
+			err := rows.Scan(&s.InvoiceNo, &s.InvoiceDate, &s.DeliveryCount, &s.BoxCount, &s.TotalQty)
 			if err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			s.InvoiceDate = time.Now().Format("2006-01-02") // Fallback / mock since we don't store header-level invoice date separately
+			if s.InvoiceDate == "" {
+				s.InvoiceDate = time.Now().Format("2006-01-02")
+			}
 			summaries = append(summaries, s)
 		}
 		if summaries == nil {
@@ -1076,6 +1089,8 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 	}
 	var poID int
 	if err := tx.QueryRow(ctx, `SELECT id FROM purchase_orders WHERE name=$1`, poName).Scan(&poID); err != nil {
+		// Fix #10: Log the error so failures are visible.
+		log.Printf("GRN [backfill] PO lookup failed for '%s': %v", poName, err)
 		return 0, 0
 	}
 
@@ -1085,6 +1100,7 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 		WHERE purchase_order_id=$1 AND qty > 0
 		ORDER BY id`, poID)
 	if err != nil {
+		log.Printf("GRN [backfill] PO items query failed for poID=%d: %v", poID, err)
 		return 0, 0
 	}
 	type poItem struct {

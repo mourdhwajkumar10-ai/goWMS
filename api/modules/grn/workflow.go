@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -139,6 +140,8 @@ func writeException(db *pgxpool.Pool, c *fiber.Ctx, sessionID int, excType strin
 		sessionID, excType, get("invoice_no"), get("box_no"), get("part_no"),
 		get("expected_qty"), get("scanned_qty"), get("variance"), actor, deviceVal)
 	if err != nil && strings.Contains(err.Error(), "device") {
+		// Fix #13: Log the missing column so the migration debt is visible.
+		log.Printf("GRN [writeException] device column missing in grn_exceptions — run migration to add it.")
 		_, _ = db.Exec(ctx, `
 			INSERT INTO grn_exceptions (
 				grn_session_id, exception_type, invoice_no, box_no, part_no,

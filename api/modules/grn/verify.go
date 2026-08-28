@@ -339,7 +339,11 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 			lineID, itemCode)
 	}
 	if err == pgx.ErrNoRows {
-		_ = tx.Rollback(c.Context())
+		// Fix #4: Roll back the FOR UPDATE query but keep the transaction alive
+		// using a savepoint, so acceptScanAgainstPO can insert within the same tx
+		// and concurrent scans cannot create duplicate PO-fallback lines.
+		_, _ = tx.Exec(c.Context(), `SAVEPOINT sp_no_line`)
+		_, _ = tx.Exec(c.Context(), `ROLLBACK TO SAVEPOINT sp_no_line`)
 		onThisPO := itemOnThisGRNPO(c, db, sessionID, itemCode)
 		otherPO, onOther := otherPOForItem(c, db, sessionID, itemCode)
 		switch decideMissingBoxLine(hasPackingList, extra.Substitute, onThisPO, onOther) {
@@ -368,6 +372,9 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 				"item_code": itemCode, "box_no": boxNo, "pack_qty": packQty, "scan_qty": qty,
 			})
 		case itemDecisionAcceptPO:
+			// Fix #4: Commit the transaction before calling acceptScanAgainstPO
+			// so the FOR UPDATE lock is released cleanly.
+			_ = tx.Commit(c.Context())
 			return acceptScanAgainstPO(c, db, sessionID, cartonID, boxNo, itemCode, qty, packQty, extra)
 		default:
 			writeEvent(db, c, sessionID, "ITEM_WRONG_SCANNED", fiber.Map{
@@ -414,25 +421,30 @@ func verifyAgainstBox(c *fiber.Ctx, db *pgxpool.Pool, sessionID, cartonID int, i
 		}
 	}
 
-	// Default over-receipt tolerance: block if scanned > expected * (1 + tolerance%)
-	// unless the PO item has an explicit max_overreceipt_pct set.
+	// Fix #7: Use nullable pointer to distinguish NULL (use default) from 0 (no limit).
 	const defaultOverReceiptPct = 10.0
 	if expected > 0 && newScanned > expected {
-		var maxPct float64
+		var maxPctPtr *float64
 		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(poi.max_overreceipt_pct, 0)
+			SELECT poi.max_overreceipt_pct
 			FROM grn_sessions gs
 			JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
 			JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND UPPER(poi.item_code)=UPPER($2)
-			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPct)
-		tolerance := maxPct
-		if tolerance <= 0 {
+			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPctPtr)
+		var tolerance float64
+		if maxPctPtr == nil {
 			tolerance = defaultOverReceiptPct
+		} else if *maxPctPtr <= 0 {
+			tolerance = 0
+		} else {
+			tolerance = *maxPctPtr
 		}
-		overPct := (newScanned - expected) / expected * 100
-		if overPct > tolerance {
-			return shared.Err(c, fiber.StatusBadRequest,
-				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", overPct, tolerance, defaultOverReceiptPct))
+		if tolerance >= 0 {
+			overPct := (newScanned - expected) / expected * 100
+			if overPct > tolerance {
+				return shared.Err(c, fiber.StatusBadRequest,
+					fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%%", overPct, tolerance))
+			}
 		}
 	}
 	if excess > 0 {
@@ -796,20 +808,28 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 				st = "excess"
 			}
 		}
-		err = db.QueryRow(c.Context(), `
-			INSERT INTO grn_lines (grn_session_id, item_code, expected_qty, scanned_qty, status, verification_method)
-			SELECT $1, $2, $4, $3, $5, 'invoice_only'
-			WHERE NOT EXISTS (SELECT 1 FROM grn_lines WHERE grn_session_id=$1 AND UPPER(item_code)=UPPER($2))
-			RETURNING id`, sessionID, canonical, qty, expQty, st).Scan(&lineID)
-		if err != nil {
-			var cartonID int
+		// Fix #8: Use UPSERT pattern to handle concurrent scans of the same item.
+		var cartonID int
+		_ = db.QueryRow(c.Context(), `
+			SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no='CONSOLIDATED'`, sessionID).Scan(&cartonID)
+		if cartonID == 0 {
 			_ = db.QueryRow(c.Context(), `
-				SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no='CONSOLIDATED'`, sessionID).Scan(&cartonID)
+				INSERT INTO grn_cartons (grn_session_id, carton_no, status, is_expected)
+				VALUES ($1,'CONSOLIDATED','received',false)
+				ON CONFLICT DO NOTHING RETURNING id`, sessionID).Scan(&cartonID)
 			if cartonID == 0 {
 				_ = db.QueryRow(c.Context(), `
-					INSERT INTO grn_cartons (grn_session_id, carton_no, status, is_expected)
-					VALUES ($1,'CONSOLIDATED','received',false) RETURNING id`, sessionID).Scan(&cartonID)
+					SELECT id FROM grn_cartons WHERE grn_session_id=$1 AND carton_no='CONSOLIDATED'`, sessionID).Scan(&cartonID)
 			}
+		}
+		err = db.QueryRow(c.Context(), `
+			INSERT INTO grn_lines (grn_carton_id, grn_session_id, item_code, expected_qty, scanned_qty, status, verification_method)
+			VALUES ($1,$2,$3,$5,$4,$6,'invoice_only')
+			ON CONFLICT (grn_session_id, item_code) WHERE verification_method = 'invoice_only'
+			DO UPDATE SET scanned_qty = grn_lines.scanned_qty + EXCLUDED.scanned_qty
+			RETURNING id`,
+			cartonID, sessionID, canonical, qty, expQty, st).Scan(&lineID)
+		if err != nil {
 			err = db.QueryRow(c.Context(), `
 				INSERT INTO grn_lines (grn_carton_id, grn_session_id, item_code, expected_qty, scanned_qty, status, verification_method)
 				VALUES ($1,$2,$3,$5,$4,$6,'invoice_only') RETURNING id`,
@@ -844,8 +864,7 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 	}
 	newScanned := scanned + qty
 
-	// Default over-receipt tolerance: block if total scanned for this item
-	// exceeds the PO line qty * (1 + tolerance%).
+	// Fix #7: Use nullable pointer to distinguish NULL (use default) from 0 (no limit).
 	const defaultOverReceiptPct = 10.0
 	po := lookupPOItemForSession(c, db, sessionID, itemCode)
 	poQty := expected
@@ -853,21 +872,27 @@ func verifyInvoiceOnly(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, itemCode s
 		poQty = po.Remaining + scanned // total PO line qty for this item
 	}
 	if poQty > 0 && newScanned > poQty {
-		var maxPct float64
+		var maxPctPtr *float64
 		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(poi.max_overreceipt_pct, 0)
+			SELECT poi.max_overreceipt_pct
 			FROM grn_sessions gs
 			JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
 			JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND UPPER(poi.item_code)=UPPER($2)
-			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPct)
-		tolerance := maxPct
-		if tolerance <= 0 {
+			WHERE gs.id=$1 LIMIT 1`, sessionID, itemCode).Scan(&maxPctPtr)
+		var tolerance float64
+		if maxPctPtr == nil {
 			tolerance = defaultOverReceiptPct
+		} else if *maxPctPtr <= 0 {
+			tolerance = 0
+		} else {
+			tolerance = *maxPctPtr
 		}
-		overPct := (newScanned - poQty) / poQty * 100
-		if overPct > tolerance {
-			return shared.Err(c, fiber.StatusBadRequest,
-				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", overPct, tolerance, defaultOverReceiptPct))
+		if tolerance >= 0 {
+			overPct := (newScanned - poQty) / poQty * 100
+			if overPct > tolerance {
+				return shared.Err(c, fiber.StatusBadRequest,
+					fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%%", overPct, tolerance))
+			}
 		}
 	}
 

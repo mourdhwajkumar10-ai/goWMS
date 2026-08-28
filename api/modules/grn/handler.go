@@ -740,26 +740,31 @@ func doScanLine(c *fiber.Ctx, db *pgxpool.Pool, in scanLineInput) error {
 		return shared.Err(c, fiber.StatusConflict, "item master incomplete — complete required fields before receiving")
 	}
 
-	var maxPct float64
+	// Fix #7: Use nullable pointer to distinguish NULL (use default) from 0 (no limit).
+	var maxPctPtr *float64
 	_ = db.QueryRow(c.Context(), `
-		SELECT COALESCE(poi.max_overreceipt_pct, 0)
+		SELECT poi.max_overreceipt_pct
 		FROM grn_cartons gc
 		JOIN grn_sessions gs ON gs.id = gc.grn_session_id
 		JOIN purchase_orders po ON po.name = gs.purchase_receipt_no
 		JOIN purchase_order_items poi ON poi.purchase_order_id = po.id AND poi.item_code = $1
-		WHERE gc.id = $2 LIMIT 1`, itemCode, in.CartonID).Scan(&maxPct)
+		WHERE gc.id = $2 LIMIT 1`, itemCode, in.CartonID).Scan(&maxPctPtr)
 
-	// Default 10% over-receipt tolerance when PO item has no explicit limit.
 	const defaultOverReceiptPct = 10.0
-	if maxPct <= 0 && in.ExpQty > 0 {
-		maxPct = defaultOverReceiptPct
+	var tolerance float64
+	if maxPctPtr == nil {
+		tolerance = defaultOverReceiptPct
+	} else if *maxPctPtr <= 0 {
+		tolerance = 0
+	} else {
+		tolerance = *maxPctPtr
 	}
 
-	if maxPct > 0 && in.ExpQty > 0 {
+	if tolerance >= 0 && in.ExpQty > 0 {
 		over := (in.ScanQty - in.ExpQty) / in.ExpQty * 100
-		if over > maxPct {
+		if over > tolerance {
 			return shared.Err(c, fiber.StatusBadRequest,
-				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%% (default tolerance %.0f%%)", over, maxPct, defaultOverReceiptPct))
+				fmt.Sprintf("Over-receipt blocked: %.1f%% exceeds max %.1f%%", over, tolerance))
 		}
 	}
 
@@ -934,7 +939,13 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	variances := []fiber.Map{}
 
 	for _, l := range lines {
-		goodQty := l.scanned - l.damaged
+		// Fix #3: Use min(scanned, damaged) for DAMAGED location to prevent phantom stock
+		// when damaged_qty > scanned_qty (e.g. manual edit or data entry error).
+		dmgPost := l.damaged
+		if dmgPost > l.scanned {
+			dmgPost = l.scanned
+		}
+		goodQty := l.scanned - dmgPost
 		if goodQty < 0 {
 			goodQty = 0
 		}
@@ -948,8 +959,9 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 
 		// Damaged → DAMAGED location (not sellable, not putaway queue for storage).
-		if l.damaged > 0 {
-			if err := shared.AdjustLocationQty(c.Context(), db, l.itemCode, wid, dmgID, l.batch, l.damaged); err != nil {
+		// Fix #3: Post min(scanned, damaged) to avoid phantom stock.
+		if dmgPost > 0 {
+			if err := shared.AdjustLocationQty(c.Context(), db, l.itemCode, wid, dmgID, l.batch, dmgPost); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			postedDamaged++
@@ -997,14 +1009,19 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 
 		// Stock ledger entry (audit trail only — stock_location_balances is the single truth).
+		// Fix #12: Compute running balance for qty_after_transaction.
 		batchArg := any(nil)
 		if l.batch != "" {
 			batchArg = l.batch
 		}
+		var runningBal float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(actual_qty),0) FROM stock_location_balances
+			WHERE item_code=$1 AND warehouse_id=$2`, l.itemCode, wid).Scan(&runningBal)
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO stock_ledger_entries (item_code, warehouse, actual_qty, qty_after_transaction, voucher_type, voucher_no, posting_date, creation, batch_no)
-			VALUES ($1,$2,$3,$3,'GRN',$4,CURRENT_DATE,NOW(),$5)`,
-			l.itemCode, whCode, l.scanned, voucherNo, batchArg); err != nil {
+			VALUES ($1,$2,$3,$4,'GRN',$5,CURRENT_DATE,NOW(),$6)`,
+			l.itemCode, whCode, l.scanned, runningBal, voucherNo, batchArg); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 	}
@@ -1024,8 +1041,9 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		WHERE UPPER(i.code)=sub.ic`, sessionID)
 
 	// Update linked Purchase Order (purchase_receipt_no stores PO name).
+	// Fix #1: Only update PO received_qty when stock was just posted (not on re-entry).
 	poUpdate := fiber.Map{}
-	if poName != nil && *poName != "" {
+	if claim.RowsAffected() > 0 && poName != nil && *poName != "" {
 		var poID int
 		var perBilled float64
 		err = db.QueryRow(c.Context(),
