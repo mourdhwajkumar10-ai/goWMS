@@ -1,0 +1,153 @@
+/* web/src/styles/tokens.css */
+/* Single source — COPIED ONCE from web/src/index.css (no hand-merge) */
+/* Wizard hex tokens MAPPED via :root alias mapping (not find-replace) */
+
+:root,
+[data-theme="light"] {
+  /* ─── C Core (oklch) — SINGLE SOURCE FROM index.css ─── */
+  --background: oklch(0.955 0.008 250);
+  --foreground: oklch(0.17 0.018 258);
+  --card: oklch(0.995 0.002 250);
+  --card-foreground: oklch(0.185 0.012 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.185 0.012 260);
+  --primary: oklch(0.56 0.18 250);
+  --primary-foreground: oklch(0.99 0.004 250);
+  --secondary: oklch(0.945 0.004 250);
+  --secondary-foreground: oklch(0.185 0.012 260);
+  --muted: oklch(0.945 0.004 250);
+  --muted-foreground: oklch(0.575 0.012 258);
+  --accent: oklch(0.7 0.16 155);
+  --accent-foreground: oklch(0.99 0 0);
+  --destructive: oklch(0.6 0.198 24);
+  --destructive-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.78 0.15 78);
+  --warning-foreground: oklch(0.2 0.03 78);
+  --border: oklch(0.912 0.005 250);
+  --input: oklch(0.912 0.005 250);
+  --ring: oklch(0.185 0.012 260);
+  --radius: 1rem;
+
+  /* RF/Scanner specific */
+  --sm-bg: var(--background);
+  --sm-fg: var(--foreground);
+  --sm-card: var(--card);
+  --sm-card-foreground: var(--card-foreground);
+  --sm-border: var(--border);
+  --sm-secondary: var(--secondary);
+  --sm-muted-fg: var(--muted-foreground);
+  --sm-accent: var(--accent);
+  --sm-accent-fg: var(--accent-foreground);
+  --sm-destructive: var(--destructive);
+  --sm-warning: var(--warning);
+  --sm-radius: var(--radius-lg);
+  --sm-radius-sm: var(--radius-md);
+  --sm-gap: 12px;
+  --sm-btn-h: 52px;
+  --sm-font: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sm-font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+  --sm-shadow: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
+  --sm-shadow-md: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 4px 12px oklch(0.17 0.018 258 / 0.06);
+  --rf-content-max: 32.5rem;
+  --scan-flash-success: oklch(0.7 0.16 155 / 0.08);
+  --scan-flash-error:   oklch(0.6 0.198 24 / 0.10);
+  --scan-flash-warn:    oklch(0.78 0.15 78 / 0.10);
+
+  /* Desk aliases → RF/C tokens (NO new tokens, NO circular refs) */
+  --text: var(--foreground);
+  --text-dim: var(--muted-foreground);
+  --text-muted: var(--muted-foreground);
+  --text-color: var(--foreground);
+  --heading-color: var(--foreground);
+  --bg: var(--background);
+  --bg-color: var(--background);
+  --bg-soft: var(--secondary);
+  --panel: var(--card);
+  --panel-2: var(--secondary);
+  --border-color: var(--border);
+  --accent: var(--primary);
+  --green: var(--accent);
+  --amber: var(--warning);
+  --red: var(--destructive);
+
+  /* Radius aliases (from index.css) */
+  --border-radius-sm: calc(var(--radius) * 0.4);
+  --border-radius: calc(var(--radius) * 0.6);
+  --border-radius-md: calc(var(--radius) * 0.6);
+  --border-radius-lg: var(--radius);
+  --border-radius-full: 9999px;
+  --radius-sm: calc(var(--radius) * 0.4);
+  --radius-md: calc(var(--radius) * 0.6);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+
+  /* Typography */
+  --font-stack: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
+  --shadow-sm: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 1px 3px oklch(0.17 0.018 258 / 0.04);
+  --shadow-base: 0 4px 8px oklch(0.17 0.018 258 / 0.06), 0 1px 3px oklch(0.17 0.018 258 / 0.05);
+  --shadow-md: 0 8px 24px oklch(0.17 0.018 258 / 0.08), 0 2px 6px oklch(0.17 0.018 258 / 0.04);
+
+  /* RF/Scanner specific */
+  --sm-gap: 12px;
+  --sm-btn-h: 52px;
+  --sm-font: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --sm-font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
+  --sm-shadow: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
+  --sm-shadow-md: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 4px 12px oklch(0.17 0.018 258 / 0.06);
+  --rf-content-max: 32.5rem;
+  --scan-flash-success: oklch(0.7 0.16 155 / 0.08);
+  --scan-flash-error:   oklch(0.6 0.198 24 / 0.10);
+  --scan-flash-warn:    oklch(0.78 0.15 78 / 0.10);
+
+  /* Motion tokens (from index.css) */
+  --animate-sweep: sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  --animate-halo: halo 2.2s ease-out infinite;
+  --animate-verdict: verdict 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* Wizard hex migration: safe :root alias mapping (Phase 1.3) */
+:root {
+  /* Receiving wizard hex tokens → unified tokens */
+  --rw-accent: var(--primary);
+  --rw-accent-hover: var(--primary);
+  --rw-bg: var(--bg);
+  --rw-bg-2: var(--bg-soft);
+  --rw-border: var(--border);
+  --rw-text: var(--text);
+  --rw-text-dim: var(--text-dim);
+  --rw-radius: var(--border-radius-lg);
+
+  /* GRN wizard hex tokens → unified tokens */
+  --grn-accent: var(--primary);
+  --grn-bg: var(--bg);
+  --grn-border: var(--border);
+  --grn-text: var(--text);
+  --grn-radius: var(--border-radius-lg);
+}
+
+/* ALL animations — NO DUPLICATES */
+@keyframes sweep { 0% { transform: translateY(-46%); opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { transform: translateY(46%); opacity: 0; } }
+@keyframes halo { 0% { transform: scale(0.9); opacity: 0.5; } 100% { transform: scale(1.7); opacity: 0; } }
+@keyframes verdict { 0% { transform: scale(0.82); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes smPulse { 50% { opacity: 0.5; } }
+@keyframes cam-scan { 0%, 100% { top: 10px; opacity: 1; } 50% { top: calc(100% - 12px); opacity: 0.7; } }
+@keyframes cam-screen-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes rw-toast-in { from { opacity: 0; transform: translateY(16px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes rw-flash { 0% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes rw-pop { 0% { transform: scale(0); opacity: 0; } 60% { transform: scale(1.15); } 100% { transform: scale(1); opacity: 1; } }
+@keyframes rw-sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes rw-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes rw-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
