@@ -18,9 +18,16 @@ interface ListPageProps<T> {
   description?: string
   columns: Column<T>[]
   data: T[]
-  search?: { placeholder?: string; onChange?: (q: string) => void }
+  pager?: any
+  search?: { placeholder?: string; value?: string; onChange?: (q: string) => void }
+  filters?: any[]
+  toolbar?: React.ReactNode
   actions?: ListPageAction[]
   emptyState?: { icon?: string; title: string; message?: string }
+  onRowClick?: (row: T) => void
+  children?: React.ReactNode
+  detailPanel?: React.ReactNode
+  className?: string
 }
 
 function rowKey(row: any, index: number): string {
@@ -37,9 +44,15 @@ export function ListPage<T>({
   description,
   columns,
   data,
+  pager,
   search,
+  toolbar,
   actions,
   emptyState,
+  onRowClick,
+  children,
+  detailPanel,
+  className,
 }: ListPageProps<T>) {
   const [query, setQuery] = useState('')
 
@@ -81,17 +94,21 @@ export function ListPage<T>({
         )}
       </div>
 
+      {toolbar && <div className="erpnext-card px-4 py-3">{toolbar}</div>}
+
       {search && (
         <div className="erpnext-card px-4 py-3">
           <input
             className="erpnext-input"
             style={{ maxWidth: 360 }}
-            value={query}
+            value={search.value ?? query}
             onChange={e => onSearch(e.target.value)}
             placeholder={search.placeholder || 'Search…'}
           />
         </div>
       )}
+
+      {children && <div style={{ marginTop: 12 }}>{children}</div>}
 
       <div className="erpnext-card">
         <div className="p-4">
@@ -105,7 +122,7 @@ export function ListPage<T>({
             </thead>
             <tbody>
               {filtered.map((row, i) => (
-                <tr key={rowKey(row, i)}>
+                <tr key={rowKey(row, i)} onClick={() => onRowClick?.(row)} style={onRowClick ? { cursor: 'pointer' } : undefined}>
                   {columns.map(col => (
                     <td key={col.key}>
                       {col.render
@@ -131,6 +148,8 @@ export function ListPage<T>({
           </table>
         </div>
       </div>
+
+      {detailPanel && <div style={{ marginTop: 12 }}>{detailPanel}</div>}
     </div>
   )
 }
