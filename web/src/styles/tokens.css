@@ -1,0 +1,180 @@
+/* goWMS design tokens — recreated after 1d80265 shipped without this file.
+   Light theme (default) + dark-theme overrides are handled in index.css;
+   this file defines the canonical light-theme token set. */
+
+:root {
+  /* ── Palette: grays (Frappe v14 light) ── */
+  --gray-50: #f8f9fa;
+  --gray-100: #f1f3f5;
+  --gray-200: #e9ecef;
+  --gray-300: #dee2e6;
+  --gray-400: #ced4da;
+  --gray-500: #adb5bd;
+  --gray-600: #868e96;
+  --gray-700: #495057;
+  --gray-800: #343a40;
+  --gray-900: #212529;
+
+  /* ── Palette: brand hues ── */
+  --blue-50: #e7f1fb;
+  --blue-100: #d0e3f7;
+  --blue-200: #b3d4f2;
+  --blue-300: #8abce8;
+  --blue-400: #5ea3e0;
+  --blue-500: #3b8fd9;
+  --blue-600: #2563eb;
+  --blue-700: #1d4ed8;
+  --blue-800: #1e40af;
+  --blue-900: #1e3a8a;
+
+  --green-50: #ebf7ee;
+  --green-100: #d5f0dd;
+  --green-500: #22c55e;
+  --green-600: #16a34a;
+  --green-700: #15803d;
+
+  --dark-green-50: #e8f5ec;
+  --dark-green-500: #16a34a;
+  --dark-green-600: #15803d;
+  --dark-green-700: #166534;
+
+  --red-50: #fdecec;
+  --red-100: #f8d7da;
+  --red-500: #ef4444;
+  --red-600: #dc2626;
+
+  --yellow-50: #fdf6e3;
+  --yellow-100: #fcf0d0;
+  --yellow-500: #eab308;
+  --yellow-700: #a16207;
+
+  --orange-50: #fff4ed;
+  --orange-500: #f97316;
+  --orange-700: #c2410c;
+
+  --amber: #f59e0b;
+  --green: #16a34a;
+  --red: #dc2626;
+  --yellow: #eab308;
+  --success: #16a34a;
+  --warning: #d97706;
+  --danger: #dc2626;
+
+  /* ── Semantic aliases (desk light theme) ── */
+  --background: var(--gray-50);
+  --foreground: var(--gray-900);
+  --card: #ffffff;
+  --panel: #ffffff;
+  --panel-2: var(--gray-50);
+  --border: var(--gray-300);
+  --border-color: var(--gray-300);
+  --accent: var(--blue-600);
+  --accent-foreground: #ffffff;
+  --primary: var(--blue-600);
+  --primary-color: var(--blue-600);
+  --primary-foreground: #ffffff;
+  --primary-foreground-contrast: #ffffff;
+  --secondary: var(--gray-200);
+  --muted: var(--gray-100);
+  --muted-foreground: var(--gray-600);
+  --ring: var(--blue-400);
+  --destructive: var(--red-600);
+  --destructive-foreground: #ffffff;
+  --warning-foreground: #ffffff;
+
+  /* ── Text ── */
+  --text: var(--gray-900);
+  --text-color: var(--gray-900);
+  --text-dim: var(--gray-600);
+  --text-muted: var(--gray-600);
+  --heading-color: var(--gray-900);
+  --fg-hover-color: var(--gray-100);
+
+  /* ── Type scale ── */
+  --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 15px;
+  --text-xl: 18px;
+  --text-2xl: 22px;
+
+  /* ── Radii ── */
+  --border-radius: 8px;
+  --border-radius-md: 6px;
+  --border-radius-lg: 10px;
+  --border-radius-xl: 14px;
+  --border-radius-full: 9999px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* ── Shadows ── */
+  --sm-shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 1px 3px rgba(16, 24, 40, 0.1);
+  --sm-shadow-md: 0 2px 4px rgba(16, 24, 40, 0.07), 0 4px 8px rgba(16, 24, 40, 0.05);
+  --md-shadow: 0 4px 8px rgba(16, 24, 40, 0.08), 0 8px 16px rgba(16, 24, 40, 0.06);
+
+  /* ── Controls / layout ── */
+  --btn-height: 34px;
+  --input-height: 34px;
+  --navbar-height: 48px;
+  --control-bg: var(--gray-100);
+
+  /* ── GRN wizard tokens ── */
+  --grn-accent: var(--blue-600);
+  --grn-bg: #ffffff;
+  --grn-bg-2: var(--gray-50);
+  --grn-bg-3: var(--gray-100);
+  --grn-border: var(--gray-300);
+  --grn-text: var(--gray-900);
+  --grn-text-dim: var(--gray-600);
+  --grn-radius: 12px;
+  --grn-radius-sm: 8px;
+  --grn-radius-xs: 6px;
+  --grn-shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.06);
+
+  /* ── Receiving wizard (rw) tokens ── */
+  --rw-accent: var(--blue-600);
+  --rw-accent-hover: var(--blue-700);
+  --rw-accent-light: var(--blue-50);
+  --rw-bg: #ffffff;
+  --rw-bg-2: var(--gray-50);
+  --rw-bg-3: var(--gray-100);
+  --rw-border: var(--gray-300);
+  --rw-border-hover: var(--gray-400);
+  --rw-text: var(--gray-900);
+  --rw-text-dim: var(--gray-600);
+  --rw-text-muted: var(--gray-600);
+  --rw-radius: 12px;
+  --rw-radius-sm: 8px;
+  --rw-shadow-md: 0 2px 6px rgba(16, 24, 40, 0.08);
+  --rw-shadow-lg: 0 8px 20px rgba(16, 24, 40, 0.12);
+  --rw-success: var(--green-600);
+  --rw-success-bg: var(--green-50);
+  --rw-error: var(--red-600);
+  --rw-error-bg: var(--red-50);
+  --rw-warning: var(--amber);
+  --rw-warning-bg: var(--yellow-50);
+  --rf-content-max: 480px;
+
+  /* ── Scanner (sm) tokens ── */
+  --sm-bg: #0b1220;
+  --sm-border: rgba(255, 255, 255, 0.14);
+  --sm-btn-h: 52px;
+  --sm-card: rgba(255, 255, 255, 0.06);
+  --sm-fg: #f8fafc;
+  --sm-font: 15px;
+  --sm-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sm-gap: 10px;
+  --sm-muted-fg: #94a3b8;
+  --sm-radius: 16px;
+  --sm-shadow: 0 8px 24px rgba(2, 6, 23, 0.5);
+  --sm-shadow-md: 0 4px 12px rgba(2, 6, 23, 0.4);
+
+  /* ── Packing wizard (pw) tokens ── */
+  --pw-bg-2: var(--gray-50);
+  --pw-border: var(--gray-300);
+  --pw-text: var(--gray-900);
+  --pw-text-dim: var(--gray-600);
+}
