@@ -14,6 +14,7 @@ import "../styles/receiving-wizard.css";
 import "../styles/scanner.css";
 import { mergeReceivingChoices, receivingChoiceMatches, type ReceivingChoice } from "../utils/receivingData";
 import { useLoadMore } from "../hooks/useLoadMore";
+import { canonicalBoxNo } from "../utils/boxQr";
 
 type POInfo = ReceivingChoice;
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string; }
@@ -292,7 +293,8 @@ export default function ReceivingWizard() {
   }, [sid, toast, refreshProg, transporterSignedOff]);
 
   const handleBoxScan = useCallback(async (rawOverride?: string): Promise<boolean> => {
-    const raw = (rawOverride !== undefined ? rawOverride : scanIn).trim();
+    const rawInput = (rawOverride !== undefined ? rawOverride : scanIn).trim();
+    const raw = canonicalBoxNo(rawInput) || rawInput;
     if (!raw || !sid) return false;
     setScanIn("");
     setLoading(true);

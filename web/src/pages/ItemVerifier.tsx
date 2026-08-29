@@ -5,6 +5,7 @@ import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/
 import CameraScanner from '../components/CameraScanner'
 import { useScanFeedback } from '../hooks/useScanFeedback'
 import { useLoadMore } from '../hooks/useLoadMore'
+import { canonicalBoxNo } from '../utils/boxQr'
 import '../styles/scanner.css'
 
 interface BoxItem { part_code: string; part_name: string; expected_qty: number; scanned_qty: number; status: string }
@@ -33,7 +34,8 @@ export default function ItemVerifier() {
   const itemMore = useLoadMore(boxItems, 10, activeBox?.box_number ?? '')
 
   const openBox = useCallback(async (code?: string) => {
-    const carton = (code ?? box).trim()
+    const raw = (code ?? box).trim()
+    const carton = canonicalBoxNo(raw) || raw
     if (!sid || !carton) return
     const r: any = await api.post(`/grn/session/${sid}/open-box`, { carton_no: carton })
     if (r.ok) {

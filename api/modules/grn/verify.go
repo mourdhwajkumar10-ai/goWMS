@@ -86,7 +86,10 @@ func openBoxForVerify(db *pgxpool.Pool) fiber.Handler {
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
-		cartonNo := strings.TrimSpace(body.CartonNo)
+		cartonNo := shared.CanonicalBoxNo(body.CartonNo)
+		if cartonNo == "" {
+			cartonNo = strings.TrimSpace(body.CartonNo)
+		}
 		var cartonID int
 		var status, cNo string
 		if body.CartonID > 0 {
@@ -94,9 +97,33 @@ func openBoxForVerify(db *pgxpool.Pool) fiber.Handler {
 				SELECT id, carton_no, status FROM grn_cartons WHERE id=$1 AND grn_session_id=$2`,
 				body.CartonID, sessionID).Scan(&cartonID, &cNo, &status)
 		} else if cartonNo != "" {
-			err = db.QueryRow(c.Context(), `
-				SELECT id, carton_no, status FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
-				sessionID, cartonNo).Scan(&cartonID, &cNo, &status)
+			// Try canonical first, then regex fallbacks
+			candidates := shared.ExtractBoxCandidates(body.CartonNo)
+			// Ensure canonical is first
+			if len(candidates) == 0 {
+				candidates = []string{cartonNo}
+			}
+			var found bool
+			for _, cand := range candidates {
+				err = db.QueryRow(c.Context(), `
+					SELECT id, carton_no, status FROM grn_cartons WHERE grn_session_id=$1 AND carton_no=$2`,
+					sessionID, cand).Scan(&cartonID, &cNo, &status)
+				if err == nil {
+					found = true
+					break
+				}
+				// Also try UPPER match for case-insensitive (DB may have lowercase)
+				err = db.QueryRow(c.Context(), `
+					SELECT id, carton_no, status FROM grn_cartons WHERE grn_session_id=$1 AND UPPER(carton_no)=UPPER($2)`,
+					sessionID, cand).Scan(&cartonID, &cNo, &status)
+				if err == nil {
+					found = true
+					break
+				}
+			}
+			if !found {
+				err = pgx.ErrNoRows
+			}
 		} else {
 			return shared.Err(c, fiber.StatusBadRequest, "carton_no or carton_id required")
 		}
