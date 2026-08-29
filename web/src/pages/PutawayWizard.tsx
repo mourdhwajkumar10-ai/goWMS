@@ -8,6 +8,8 @@ import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/
 import VerificationHeader from '../components/scan/VerificationHeader'
 import ScanCard from '../components/scan/ScanCard'
 import { useScanFeedback } from '../hooks/useScanFeedback'
+import { ScannerPage } from '../components/templates/ScannerPage'
+import { useScannerState } from '../hooks/useScannerState'
 
 function SkeletonCards({ count = 3 }: { count?: number }) {
   return (
