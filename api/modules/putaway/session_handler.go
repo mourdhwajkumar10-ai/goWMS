@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strconv"
+	"strings"
 	"time"
 
 	"goWMS/api/modules/rbac"
@@ -28,43 +29,28 @@ func createSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "warehouse_id required")
 		}
 
-		userID := 0
-		if v, ok := c.Locals("user_id").(int); ok {
-			userID = v
-		}
+userID := 0
+	if v, ok := c.Locals("user_id").(int); ok {
+		userID = v
+	}
 
-		tx, err := db.Begin(c.Context())
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		defer tx.Rollback(c.Context())
+	// Fix #15: Don't auto-cancel all user sessions - allow multiple sessions per user
+	// Only clean up abandoned sessions (older than 24 hours) for this user
+	tx, err := db.Begin(c.Context())
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	defer tx.Rollback(c.Context())
 
-		rows, err := tx.Query(c.Context(),
-			`SELECT id FROM putaway_sessions WHERE user_id=$1 AND status='picking' FOR UPDATE`, userID)
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		for rows.Next() {
-		}
-		rows.Close()
-		if err = rows.Err(); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
+	_, _ = tx.Exec(c.Context(), `
+		UPDATE putaway_sessions SET status='cancelled', completed_at=now(), updated_at=now()
+		WHERE user_id=$1 AND status='picking' AND started_at < NOW() - INTERVAL '24 hours'`, userID)
 
-		if err = releasePickedReservationsForUser(c.Context(), tx, userID); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if _, err = tx.Exec(c.Context(),
-			`UPDATE putaway_sessions SET status='cancelled', completed_at=now(), updated_at=now()
-			 WHERE user_id=$1 AND status='picking'`, userID); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-
-		var id int
-		err = tx.QueryRow(c.Context(),
-			`INSERT INTO putaway_sessions (user_id, warehouse_id, zone, status)
-			 VALUES ($1, $2, NULLIF($3,''), 'picking') RETURNING id`,
-			userID, body.WarehouseID, body.Zone).Scan(&id)
+	var id int
+	err = tx.QueryRow(c.Context(),
+		`INSERT INTO putaway_sessions (user_id, warehouse_id, zone, status)
+		 VALUES ($1, $2, NULLIF($3,''), 'picking') RETURNING id`,
+		userID, body.WarehouseID, body.Zone).Scan(&id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -206,25 +192,27 @@ func completeSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "session is not active")
 		}
 
-		var pending float64
-		if err := tx.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(qty),0) FROM putaway_session_items
-			WHERE session_id=$1 AND status='picked'`, sessionID).Scan(&pending); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if err := validatePutawayCompletion(pending); err != nil {
-			return shared.Err(c, fiber.StatusBadRequest, err.Error())
-		}
-		var reserved float64
-		_ = tx.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(slb.reserved_qty),0)
-			FROM stock_location_balances slb
-			JOIN putaway_session_items psi ON psi.source_location_id=slb.location_id
-			  AND UPPER(psi.item_code)=UPPER(slb.item_code)
-			WHERE psi.session_id=$1 AND psi.status='picked'`, sessionID).Scan(&reserved)
-		if reserved > 1e-9 {
-			return shared.Err(c, fiber.StatusBadRequest, "putaway still has reserved source quantity")
-		}
+var pending float64
+	if err := tx.QueryRow(c.Context(), `
+		SELECT COALESCE(SUM(qty),0) FROM putaway_session_items
+		WHERE session_id=$1 AND status='picked'`, sessionID).Scan(&pending); err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	if err := validatePutawayCompletion(pending); err != nil {
+		return shared.Err(c, fiber.StatusBadRequest, err.Error())
+	}
+	// Fix #8: Check reserved qty for both 'picked' and 'placed' items
+	// (placed items should have 0 reserved, but verify to catch any inconsistencies)
+	var reserved float64
+	_ = tx.QueryRow(c.Context(), `
+		SELECT COALESCE(SUM(slb.reserved_qty),0)
+		FROM stock_location_balances slb
+		JOIN putaway_session_items psi ON psi.source_location_id=slb.location_id
+		  AND UPPER(psi.item_code)=UPPER(slb.item_code)
+		WHERE psi.session_id=$1 AND psi.status IN ('picked','placed')`, sessionID).Scan(&reserved)
+	if reserved > 1e-9 {
+		return shared.Err(c, fiber.StatusBadRequest, "putaway still has reserved source quantity")
+	}
 
 		if _, err := tx.Exec(c.Context(), `
 			UPDATE putaway_sessions SET status='completed', completed_at=now(), updated_at=now()
@@ -309,8 +297,9 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 		// This happens when GRN reached putaway_pending but stock was never auto-posted.
 		var grnQty float64
 		var grnWarehouseID, grnSessionID int
+		var grnLineID int
 		err = tx.QueryRow(c.Context(),
-			`SELECT COALESCE(gl.scanned_qty,0), COALESCE(gs.warehouse_id,1), COALESCE(gl.grn_session_id, gc.grn_session_id)
+			`SELECT gl.id, COALESCE(gl.scanned_qty,0), COALESCE(gs.warehouse_id,1), COALESCE(gl.grn_session_id, gc.grn_session_id)
 			 FROM grn_lines gl
 			 JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
 			 JOIN grn_sessions gs ON gs.id = gc.grn_session_id
@@ -322,51 +311,72 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			     UPPER(COALESCE(gl.route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01')
 			   )
 			 ORDER BY gl.id ASC
-			 LIMIT 1`, body.ItemCode).Scan(&grnQty, &grnWarehouseID, &grnSessionID)
+			 LIMIT 1 FOR UPDATE`, body.ItemCode).Scan(&grnLineID, &grnQty, &grnWarehouseID, &grnSessionID)
 		if err == nil && grnQty > 0 {
-			// Auto-post stock from GRN to stock_location_balances so pick can proceed.
-			if grnWarehouseID < 1 {
-				grnWarehouseID = 1
+			// Fix #1: Use advisory lock to prevent concurrent auto-post of same GRN line
+			lockKey1 := int64(grnSessionID) << 32
+			lockKey2 := int64(grnLineID)
+			_, _ = tx.Exec(c.Context(), `SELECT pg_advisory_xact_lock($1, $2)`, lockKey1, lockKey2)
+
+			// Re-check the line state after acquiring lock (another txn may have posted it)
+			var recheckQty float64
+			var recheckRoute string
+			_ = tx.QueryRow(c.Context(),
+				`SELECT COALESCE(scanned_qty,0), COALESCE(route_location,'') FROM grn_lines WHERE id=$1`, grnLineID).
+				Scan(&recheckQty, &recheckRoute)
+			if recheckQty > 0 && (recheckRoute == "" || recheckRoute == "INCOMING-01" || recheckRoute == "HOLD-01" || recheckRoute == "STAGING-01") {
+				// Auto-post stock from GRN to stock_location_balances so pick can proceed.
+				if grnWarehouseID < 1 {
+					grnWarehouseID = 1
+				}
+				// Use INSERT ... ON CONFLICT to handle both new and existing rows.
+				_, postErr := tx.Exec(c.Context(),
+					`INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty, allocation_status)
+					 VALUES ($1,$2,$3,NULL,$4,0,'staging')
+					 ON CONFLICT (item_code, location_id, COALESCE(batch_no,''))
+					 DO UPDATE SET actual_qty = stock_location_balances.actual_qty + $4,
+					               allocation_status='staging', updated_at=now()`,
+					body.ItemCode, grnWarehouseID, body.SourceLocationID, grnQty)
+				if postErr != nil {
+					log.Printf("PUTAWAY AUTO-POST: failed to insert stock for %s at location %d: %v", body.ItemCode, body.SourceLocationID, postErr)
+				}
+				// Mark THIS specific GRN line as stock-posted (not all lines for item_code)
+				_, _ = tx.Exec(c.Context(), `
+					UPDATE grn_lines SET route_location = COALESCE(NULLIF(route_location,''),'INCOMING-01')
+					WHERE id=$1`, grnLineID)
+				// Fix #11: Check if ALL lines in session have been posted (route_location not in staging)
+				// A line is considered "posted" if route_location is a real storage location (not staging)
+				var stillStaging int
+				_ = tx.QueryRow(c.Context(), `
+					SELECT COUNT(*) FROM grn_lines
+					WHERE grn_session_id=$1
+					  AND COALESCE(scanned_qty,0) > 0
+					  AND (UPPER(COALESCE(route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01'))`, grnSessionID).Scan(&stillStaging)
+				// Also check if any lines have been placed (route_location is a real warehouse location)
+				var placedLines int
+				_ = tx.QueryRow(c.Context(), `
+					SELECT COUNT(*) FROM grn_lines
+					WHERE grn_session_id=$1
+					  AND COALESCE(scanned_qty,0) > 0
+					  AND UPPER(COALESCE(route_location,'')) NOT IN ('','INCOMING-01','HOLD-01','STAGING-01')`, grnSessionID).Scan(&placedLines)
+				// Session is fully posted if no lines in staging AND at least one line placed
+				// OR if all lines have been moved out of staging (some placed, some auto-posted)
+				if stillStaging == 0 && placedLines > 0 {
+					_, _ = tx.Exec(c.Context(),
+						`UPDATE grn_sessions SET stock_posted_at=now() WHERE id=$1 AND COALESCE(stock_posted_at) IS NULL`, grnSessionID)
+				}
+				// Now re-query the balance we just created.
+				err = tx.QueryRow(c.Context(),
+					`SELECT id, actual_qty, COALESCE(reserved_qty,0)
+					 FROM stock_location_balances
+					 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+					   AND actual_qty > 0
+					 ORDER BY id LIMIT 1 FOR UPDATE`,
+					body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
+			} else {
+				// Another transaction already posted this line; fall through to re-query balance
+				err = pgx.ErrNoRows
 			}
-			// Use INSERT ... ON CONFLICT to handle both new and existing rows.
-			_, postErr := tx.Exec(c.Context(),
-				`INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, batch_no, actual_qty, reserved_qty, allocation_status)
-				 VALUES ($1,$2,$3,NULL,$4,0,'staging')
-				 ON CONFLICT (item_code, location_id, COALESCE(batch_no,''))
-				 DO UPDATE SET actual_qty = stock_location_balances.actual_qty + $4,
-				               allocation_status='staging', updated_at=now()`,
-				body.ItemCode, grnWarehouseID, body.SourceLocationID, grnQty)
-			if postErr != nil {
-				log.Printf("PUTAWAY AUTO-POST: failed to insert stock for %s at location %d: %v", body.ItemCode, body.SourceLocationID, postErr)
-			}
-			// Mark this specific GRN line as stock-posted via a per-line flag
-			// (grn_sessions.stock_posted_at stays NULL so additional lines still show).
-			_, _ = tx.Exec(c.Context(), `
-				UPDATE grn_lines SET route_location = COALESCE(NULLIF(route_location,''),'INCOMING-01')
-				WHERE grn_session_id=$1
-				  AND item_code=$2
-				  AND COALESCE(scanned_qty,0) > 0
-				  AND (UPPER(COALESCE(route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01'))`,
-				grnSessionID, body.ItemCode)
-			// If every GRN line in this session is now non-staging, mark the session posted.
-			var stillStaging int
-			_ = tx.QueryRow(c.Context(), `
-				SELECT COUNT(*) FROM grn_lines
-				WHERE grn_session_id=$1
-				  AND COALESCE(scanned_qty,0) > 0
-				  AND (UPPER(COALESCE(route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01'))`, grnSessionID).Scan(&stillStaging)
-			if stillStaging == 0 {
-				_, _ = tx.Exec(c.Context(),
-					`UPDATE grn_sessions SET stock_posted_at=now() WHERE id=$1 AND COALESCE(stock_posted_at) IS NULL`, grnSessionID)
-			}
-			// Now re-query the balance we just created.
-			err = tx.QueryRow(c.Context(),
-				`SELECT id, actual_qty, COALESCE(reserved_qty,0)
-				 FROM stock_location_balances
-				 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
-				   AND actual_qty > 0
-				 ORDER BY id LIMIT 1 FOR UPDATE`,
-				body.SourceLocationID, body.ItemCode).Scan(&balID, &actual, &reserved)
 		}
 	}
 	if err == pgx.ErrNoRows {
@@ -375,13 +385,34 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
-		avail := actual - reserved
-		if avail+1e-9 < body.Qty {
-			return shared.Err(c, fiber.StatusBadRequest,
-				fmt.Sprintf("insufficient stock at source (available %.0f, requested %.0f)", avail, body.Qty))
-		}
+avail := actual - reserved
+	if avail+1e-9 < body.Qty {
+		return shared.Err(c, fiber.StatusBadRequest,
+			fmt.Sprintf("insufficient stock at source (available %.0f, requested %.0f)", avail, body.Qty))
+	}
 
-		tag, err := tx.Exec(c.Context(), `
+	// Fix #4: Validate that source location matches GRN line's route_location
+	var grnRouteLocation string
+	_ = tx.QueryRow(c.Context(),
+		`SELECT COALESCE(route_location,'') FROM grn_lines
+		 WHERE id = (
+		   SELECT gl.id FROM grn_lines gl
+		   JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+		   WHERE UPPER(gl.item_code) = UPPER($1)
+		     AND gl.scanned_qty > 0
+		     AND UPPER(COALESCE(gl.route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01')
+		   ORDER BY gl.id ASC LIMIT 1
+		 )`, body.ItemCode).Scan(&grnRouteLocation)
+	if grnRouteLocation != "" {
+		var sourceLocCode string
+		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.SourceLocationID).Scan(&sourceLocCode)
+		if sourceLocCode != "" && !strings.EqualFold(sourceLocCode, grnRouteLocation) {
+			return shared.Err(c, fiber.StatusBadRequest,
+				fmt.Sprintf("source location mismatch: GRN line at %s, picking from %s", grnRouteLocation, sourceLocCode))
+		}
+	}
+
+	tag, err := tx.Exec(c.Context(), `
 			UPDATE stock_location_balances
 			SET reserved_qty = reserved_qty + $1, updated_at=now()
 			WHERE id=$2 AND (actual_qty - reserved_qty) >= $1 - 1e-9`, body.Qty, balID)
@@ -638,35 +669,40 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
-		var warehouseWarning string
-		rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
-		if rule != nil && rule.StockCapacity > 0 {
-			if rule.CurrentQty+qty > rule.StockCapacity+1e-9 {
-				warehouseWarning = "warehouse_cap_exceeded"
-				log.Printf("WAREHOUSE CAP WARNING: item %s in warehouse %s would exceed cap %.0f (current %.0f, adding %.0f)",
-					itemCode, rule.Warehouse, rule.StockCapacity, rule.CurrentQty, qty)
-			}
+var warehouseWarning string
+	rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
+	if rule != nil && rule.StockCapacity > 0 {
+		if rule.CurrentQty+qty > rule.StockCapacity+1e-9 {
+			warehouseWarning = "warehouse_cap_exceeded"
+			log.Printf("WAREHOUSE CAP WARNING: item %s in warehouse %s would exceed cap %.0f (current %.0f, adding %.0f)",
+				itemCode, rule.Warehouse, rule.StockCapacity, rule.CurrentQty, qty)
 		}
+	}
 
-		tag, err := tx.Exec(c.Context(), `
-			UPDATE stock_location_balances
-			SET actual_qty = actual_qty - $1,
-			    reserved_qty = CASE WHEN reserved_qty >= $1 THEN reserved_qty - $1 ELSE 0 END,
-			    updated_at=now()
-			WHERE location_id=$2 AND UPPER(item_code)=UPPER($3) AND actual_qty >= $1 - 1e-9`,
-			qty, sourceLocationID, itemCode)
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		if tag.RowsAffected() != 1 {
-			return shared.Err(c, fiber.StatusConflict, "insufficient stock at source")
-		}
+	// Fix #2: Lock source first (consistent lock order: source then target)
+	// to prevent deadlocks with concurrent putaway operations.
+	var sourceBalID int
+	_, err = tx.Exec(c.Context(), `
+		UPDATE stock_location_balances
+		SET actual_qty = actual_qty - $1,
+		    reserved_qty = CASE WHEN reserved_qty >= $1 THEN reserved_qty - $1 ELSE 0 END,
+		    updated_at=now()
+		WHERE location_id=$2 AND UPPER(item_code)=UPPER($3) AND actual_qty >= $1 - 1e-9`,
+		qty, sourceLocationID, itemCode)
+	if err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
+	// Verify source decrement succeeded by checking the balance
+	_ = tx.QueryRow(c.Context(),
+		`SELECT id FROM stock_location_balances
+		 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2) FOR UPDATE`,
+		sourceLocationID, itemCode).Scan(&sourceBalID)
 
-		var existingID int
-		err = tx.QueryRow(c.Context(),
-			`SELECT id FROM stock_location_balances
-			 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2) FOR UPDATE`,
-			body.TargetLocationID, itemCode).Scan(&existingID)
+	var existingID int
+	err = tx.QueryRow(c.Context(),
+		`SELECT id FROM stock_location_balances
+		 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2) FOR UPDATE`,
+		body.TargetLocationID, itemCode).Scan(&existingID)
 		if err == pgx.ErrNoRows {
 			if _, err = tx.Exec(c.Context(), `
 				INSERT INTO stock_location_balances (item_code, warehouse_id, location_id, actual_qty, reserved_qty, allocation_status)
@@ -693,10 +729,11 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 		var targetCode, sourceCode string
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.TargetLocationID).Scan(&targetCode)
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, sourceLocationID).Scan(&sourceCode)
-		if targetCode != "" {
+if targetCode != "" {
 			// Prefer the GRN line linked at pick time so we update the exact row the
 			// operator is working on. Fall back to the legacy fuzzy match for old
 			// sessions that pre-date the grn_line_id column.
+			// Fix #5: Add FOR UPDATE to prevent concurrent updates to same GRN line
 			if grnLineID != nil {
 				_, _ = tx.Exec(c.Context(), `
 					UPDATE grn_lines SET route_location=$2
@@ -706,7 +743,8 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 					    OR UPPER(route_location) LIKE 'INCOMING%'
 					    OR UPPER(route_location) LIKE 'HOLD%'
 					    OR UPPER(route_location) LIKE 'STAGING%'
-					  )`, *grnLineID, targetCode)
+					  )
+					FOR UPDATE`, *grnLineID, targetCode)
 			} else {
 				_, _ = tx.Exec(c.Context(), `
 					UPDATE grn_lines gl SET route_location=$2
@@ -714,15 +752,16 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 					  AND COALESCE(gl.scanned_qty,0) > 0
 					  AND (
 					    NULLIF(BTRIM(gl.route_location),'') IS NULL
-					    OR UPPER(gl.route_location) LIKE 'INCOMING%'
-					    OR UPPER(gl.route_location) LIKE 'HOLD%'
-					    OR UPPER(gl.route_location) LIKE 'STAGING%'
+					    OR UPPER(route_location) LIKE 'INCOMING%'
+					    OR UPPER(route_location) LIKE 'HOLD%'
+					    OR UPPER(route_location) LIKE 'STAGING%'
 					  )
 					  AND EXISTS (
 					    SELECT 1 FROM grn_sessions gs
 					    WHERE gs.id = gl.grn_session_id
 					      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
-					  )`, itemCode, targetCode)
+					  )
+					FOR UPDATE`, itemCode, targetCode)
 			}
 		}
 
@@ -742,23 +781,29 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
-		remaining := sessionQty - qty
-		if remaining > 1e-9 {
-			tag, err = tx.Exec(c.Context(),
-				`UPDATE putaway_session_items SET qty=$1
-				 WHERE id=$2 AND session_id=$3 AND status='picked'`, remaining, itemID, sessionID)
-		} else {
-			tag, err = tx.Exec(c.Context(),
-				`UPDATE putaway_session_items
-				 SET target_location_id=$1, status='placed', qty=$4
-				 WHERE id=$2 AND session_id=$3 AND status='picked'`, body.TargetLocationID, itemID, sessionID, qty)
-		}
+remaining := sessionQty - qty
+	if remaining > 1e-9 {
+		tag, err := tx.Exec(c.Context(),
+			`UPDATE putaway_session_items SET qty=$1
+			 WHERE id=$2 AND session_id=$3 AND status='picked'`, remaining, itemID, sessionID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		if tag.RowsAffected() != 1 {
 			return shared.Err(c, fiber.StatusConflict, "item already placed")
 		}
+	} else {
+		tag, err := tx.Exec(c.Context(),
+			`UPDATE putaway_session_items
+			 SET target_location_id=$1, status='placed', qty=$4
+			 WHERE id=$2 AND session_id=$3 AND status='picked'`, body.TargetLocationID, itemID, sessionID, qty)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if tag.RowsAffected() != 1 {
+			return shared.Err(c, fiber.StatusConflict, "item already placed")
+		}
+	}
 
 		_, _ = tx.Exec(c.Context(),
 			`UPDATE putaway_session_items SET used_location_ids = array_append(used_location_ids, $1) WHERE id = $2`,
@@ -829,16 +874,26 @@ func placeSessionItem(db *pgxpool.Pool) fiber.Handler {
 }
 
 func releasePickedReservations(ctx context.Context, tx pgx.Tx, sessionID int) error {
-	if _, err := tx.Exec(ctx, `
+	// Fix #11: Use FOR UPDATE to prevent race with concurrent pickSessionItem
+	// First, lock the affected balance rows
+	_, err := tx.Exec(ctx, `
 		UPDATE stock_location_balances slb
 		SET reserved_qty = GREATEST(slb.reserved_qty - psi.qty, 0), updated_at=now()
 		FROM putaway_session_items psi
 		WHERE psi.session_id = $1 AND psi.status = 'picked'
 		  AND slb.location_id = psi.source_location_id
-		  AND UPPER(slb.item_code) = UPPER(psi.item_code)`, sessionID); err != nil {
+		  AND UPPER(slb.item_code) = UPPER(psi.item_code)
+		  AND slb.id IN (
+		    SELECT slb2.id FROM stock_location_balances slb2
+		    JOIN putaway_session_items psi2 ON psi2.source_location_id = slb2.location_id
+		      AND UPPER(psi2.item_code) = UPPER(slb2.item_code)
+		    WHERE psi2.session_id = $1 AND psi2.status = 'picked'
+		    FOR UPDATE OF slb2
+		  )`, sessionID)
+	if err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE warehouse_locations wl
 		SET last_picked_by_user_id = NULL, updated_at = now()
 		FROM putaway_session_items psi
@@ -849,17 +904,27 @@ func releasePickedReservations(ctx context.Context, tx pgx.Tx, sessionID int) er
 }
 
 func releasePickedReservationsForUser(ctx context.Context, tx pgx.Tx, uid int) error {
-	if _, err := tx.Exec(ctx, `
+	// Fix #11: Use FOR UPDATE to prevent race with concurrent pickSessionItem
+	_, err := tx.Exec(ctx, `
 		UPDATE stock_location_balances slb
 		SET reserved_qty = GREATEST(slb.reserved_qty - psi.qty, 0), updated_at=now()
 		FROM putaway_session_items psi
 		JOIN putaway_sessions ps ON ps.id = psi.session_id
 		WHERE ps.user_id = $1 AND ps.status = 'picking' AND psi.status = 'picked'
 		  AND slb.location_id = psi.source_location_id
-		  AND UPPER(slb.item_code) = UPPER(psi.item_code)`, uid); err != nil {
+		  AND UPPER(slb.item_code) = UPPER(psi.item_code)
+		  AND slb.id IN (
+		    SELECT slb2.id FROM stock_location_balances slb2
+		    JOIN putaway_session_items psi2 ON psi2.source_location_id = slb2.location_id
+		      AND UPPER(psi2.item_code) = UPPER(slb2.item_code)
+		    JOIN putaway_sessions ps2 ON ps2.id = psi2.session_id
+		    WHERE ps2.user_id = $1 AND ps2.status = 'picking' AND psi2.status = 'picked'
+		    FOR UPDATE OF slb2
+		  )`, uid)
+	if err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `
+	_, err = tx.Exec(ctx, `
 		UPDATE warehouse_locations wl
 		SET last_picked_by_user_id = NULL, updated_at = now()
 		FROM putaway_session_items psi

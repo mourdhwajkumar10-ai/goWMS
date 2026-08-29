@@ -682,7 +682,6 @@ export default function ReceivingWizard() {
                       <CameraScanner
                         key={`${uiTab}-${cameraKey}`}
                         embedded
-                        minimal
                         open
                         onClose={() => {}}
                         onScan={(code) => onBoxScan(code)}
@@ -795,13 +794,12 @@ export default function ReceivingWizard() {
               viewport={
                 <div className="scan-live-viewport">
                   <CameraScanner
-                    key={`item-${cameraKey}-${curBox.box_number}`}
-                    embedded
-                    minimal
-                    open
-                    onClose={() => {}}
-                    onScan={(code) => onItemScanUi(code)}
-                  />
+                      key={`item-${cameraKey}-${curBox.box_number}`}
+                      embedded
+                      open
+                      onClose={() => {}}
+                      onScan={(code) => onItemScanUi(code)}
+                    />
                 </div>
               }
             />

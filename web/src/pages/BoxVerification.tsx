@@ -108,7 +108,6 @@ export default function BoxVerification() {
                 <CameraScanner
                   key={cameraKey}
                   embedded
-                  minimal
                   open
                   onClose={() => {}}
                   onScan={(code) => {

@@ -271,11 +271,12 @@ func loadBox(db *pgxpool.Pool) fiber.Handler {
 			}
 		}
 
-		if _, err := tx.Exec(c.Context(),
-			`INSERT INTO box_load_logs (box_id,trip_id,loaded_by) VALUES ($1,$2,$3)`,
-			body.BoxID, tripID, userID(c)); err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
+if _, err := tx.Exec(c.Context(),
+		`INSERT INTO box_load_logs (box_id,trip_id,loaded_by) VALUES ($1,$2,$3)
+		 ON CONFLICT (box_id, trip_id) DO NOTHING`,
+		body.BoxID, tripID, userID(c)); err != nil {
+		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+	}
 		if _, err := tx.Exec(c.Context(),
 			`UPDATE boxes SET loaded=true, loaded_at=NOW() WHERE id=$1`, body.BoxID); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())

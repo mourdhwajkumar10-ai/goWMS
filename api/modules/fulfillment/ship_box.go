@@ -106,14 +106,11 @@ func ShipBox(ctx context.Context, tx shared.DBTX, boxID int) error {
 			ORDER BY id FOR UPDATE`,
 			l.ItemCode, packLoc, l.BatchNo).Scan(&balID, &actual)
 		if err != nil {
-			// Try without batch match
-			err = tx.QueryRow(ctx, `
-				SELECT id, actual_qty FROM stock_location_balances
-				WHERE item_code=$1 AND location_id=$2 AND actual_qty > 0
-				ORDER BY id FOR UPDATE LIMIT 1`,
-				l.ItemCode, packLoc).Scan(&balID, &actual)
+			// Fix #3: Strict fail — do not fall back to a different batch.
+			// Consuming a different batch breaks traceability.
+			return fmt.Errorf("%w: batch %q not found at packing location for %s (qty %.0f)", ErrInsufficientPack, l.BatchNo, l.ItemCode, l.Qty)
 		}
-		if err != nil || actual+0.0001 < l.Qty {
+		if actual+0.0001 < l.Qty {
 			return fmt.Errorf("%w: %s need %.0f at packing", ErrInsufficientPack, l.ItemCode, l.Qty)
 		}
 		if _, err := tx.Exec(ctx, `
@@ -197,6 +194,8 @@ func ShipBox(ctx context.Context, tx shared.DBTX, boxID int) error {
 }
 
 func postLedger(ctx context.Context, tx shared.DBTX, itemCode, warehouse string, qty float64, voucherType, voucherNo string) error {
+	// Fix #10: actual_qty column stores transaction quantity (positive for receipt, negative for issue).
+	// Column name is historical; consider renaming to transaction_qty in future migration.
 	_, err := tx.Exec(ctx, `
 		INSERT INTO stock_ledger_entries (
 			item_code, warehouse, actual_qty, voucher_type, voucher_no,

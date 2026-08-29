@@ -203,11 +203,12 @@ func ConsumePickListStock(ctx context.Context, db DBTX, pickListID int) error {
 	if pickListID <= 0 {
 		return nil
 	}
+	// Fix #5: Add FOR UPDATE to prevent concurrent double-consumption
 	rows, err := db.Query(ctx, `
 		SELECT id, COALESCE(balance_id,0), COALESCE(allocated_qty,0), COALESCE(picked_qty,0), COALESCE(consumed_qty,0)
 		FROM pick_list_items
 		WHERE pick_list_id = $1
-		ORDER BY id`, pickListID)
+		ORDER BY id FOR UPDATE`, pickListID)
 	if err != nil {
 		return err
 	}

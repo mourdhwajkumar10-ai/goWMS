@@ -291,8 +291,8 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 		// stock_location_balances has no rows at incoming locations.
 		if next == "putaway_pending" {
 			// Fix #2: Set putaway_status='deferred' before closing.
-			shared.SafeExec(c.Context(), db, "grn", `
-				UPDATE grn_sessions SET putaway_status='deferred', updated_at=now() WHERE id=$1`, sessionID)
+			_, _ = db.Exec(c.Context(),
+				`UPDATE grn_sessions SET putaway_status='deferred', updated_at=now() WHERE id=$1`, sessionID)
 			c.Locals("grnCloseStatus", "completed")
 			c.Locals("grnCloseSilent", true)
 			_ = doCloseSession(c, db, sessionID)

@@ -43,6 +43,10 @@ export default defineConfig({
     }),
   ],
   server: {
+    https: {
+      key: "./certs/key.pem",
+      cert: "./certs/cert.pem",
+    },
     port: 5173,
     proxy: {
       "/api": {

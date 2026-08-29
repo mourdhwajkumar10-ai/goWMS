@@ -12,20 +12,26 @@ import (
 
 func init() {
 	shared.OnIncomingStock = func(ctx context.Context, db *pgxpool.Pool, itemCode string, warehouseID, locationID int, batchArg any, delta float64) {
-		go func() {
-			bgCtx := context.Background()
-			locID, _, maxFit, requiresSplit, err := FindBestLocation(bgCtx, db, itemCode, delta, warehouseID)
-			if err == nil && locID > 0 {
-				_, _ = db.Exec(bgCtx,
-					`UPDATE stock_location_balances
-					SET suggested_location_id=$1, updated_at=now()
-					WHERE item_code=$2 AND location_id=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
-					locID, itemCode, locationID, batchArg)
-				if requiresSplit {
-					log.Printf("auto-putaway: item %s requires split (max_fit=%.0f, requested=%.0f)", itemCode, maxFit, delta)
-				}
+		// Fix #17: Run synchronously with proper error handling and context propagation
+		// Use the provided context instead of Background() to respect cancellation
+		locID, _, maxFit, requiresSplit, err := FindBestLocation(ctx, db, itemCode, delta, warehouseID)
+		if err != nil {
+			log.Printf("auto-putaway error for item %s: %v", itemCode, err)
+			return
+		}
+		if locID > 0 {
+			if _, err := db.Exec(ctx,
+				`UPDATE stock_location_balances
+				SET suggested_location_id=$1, updated_at=now()
+				WHERE item_code=$2 AND location_id=$3 AND COALESCE(batch_no,'')=COALESCE($4,'')`,
+				locID, itemCode, locationID, batchArg); err != nil {
+				log.Printf("auto-putaway update failed for item %s: %v", itemCode, err)
+				return
 			}
-		}()
+			if requiresSplit {
+				log.Printf("auto-putaway: item %s requires split (max_fit=%.0f, requested=%.0f)", itemCode, maxFit, delta)
+			}
+		}
 	}
 }
 

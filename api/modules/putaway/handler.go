@@ -30,6 +30,9 @@ var hsnZoneSQL = `COALESCE(
 const (
 	putawayRoutePermission    = "putaway.access"
 	putawayOverridePermission = "putaway.override"
+	// Default bin capacity when no explicit capacity is configured.
+	// Can be overridden per-item via item_bin_capacities or per-warehouse via putaway_rules.
+	defaultBinCapacity = 50.0
 )
 
 func validatePlacementQuantity(qty, picked float64) error {
@@ -292,8 +295,11 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 			_ = shared.EnsureDefaultPickBins(c.Context(), db, warehouseID)
 		}
 
-		if prefAisle == "" || prefBay == "" {
-			if homeID != nil {
+		// Fix #18: Consolidate preferred aisle/bay/level resolution into single chain
+		// Priority: query params > item home_location > last stock balance
+		resolvePreferredLocation := func() {
+			// 1. Try item's home_location
+			if (prefAisle == "" || prefBay == "") && homeID != nil {
 				var a, s string
 				if db.QueryRow(c.Context(), `
 					SELECT COALESCE(aisle,''), COALESCE(shelf, COALESCE(rack,''))
@@ -306,25 +312,27 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 					}
 				}
 			}
-		}
-		if prefAisle == "" || prefBay == "" {
-			var a, s string
-			_ = db.QueryRow(c.Context(), `
-				SELECT COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,''))
-				FROM stock_location_balances slb
-				JOIN warehouse_locations wl ON wl.id = slb.location_id
-				WHERE slb.item_code=$1 AND slb.actual_qty > 0
-				  AND wl.location_type IN ('pick_face','storage')
-				  AND ($2=0 OR wl.warehouse_id=$2)
-				ORDER BY CASE WHEN wl.location_type='pick_face' THEN 0 ELSE 1 END, slb.updated_at DESC
-				LIMIT 1`, itemCode, warehouseID).Scan(&a, &s)
-			if prefAisle == "" {
-				prefAisle = strings.ToUpper(a)
+			// 2. Try last stock balance location
+			if prefAisle == "" || prefBay == "" {
+				var a, s string
+				_ = db.QueryRow(c.Context(), `
+					SELECT COALESCE(wl.aisle,''), COALESCE(wl.shelf, COALESCE(wl.rack,''))
+					FROM stock_location_balances slb
+					JOIN warehouse_locations wl ON wl.id = slb.location_id
+					WHERE slb.item_code=$1 AND slb.actual_qty > 0
+					  AND wl.location_type IN ('pick_face','storage')
+					  AND ($2=0 OR wl.warehouse_id=$2)
+					ORDER BY CASE WHEN wl.location_type='pick_face' THEN 0 ELSE 1 END, slb.updated_at DESC
+					LIMIT 1`, itemCode, warehouseID).Scan(&a, &s)
+				if prefAisle == "" {
+					prefAisle = strings.ToUpper(a)
+				}
+				if prefBay == "" {
+					prefBay = s
+				}
 			}
-			if prefBay == "" {
-				prefBay = s
-			}
 		}
+		resolvePreferredLocation()
 
 		rule, _ := shared.LoadWarehousePutawayRule(c.Context(), db, itemCode, warehouseID)
 		if rule != nil && rule.StockCapacity > 0 && rule.Remaining <= 0 {
@@ -421,15 +429,14 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 					&maxW, &binV, &totW, &totV) != nil {
 					continue
 				}
-				if cap != nil {
-					free := *cap - s.OnHandQty
-					s.FreeCapacity = &free
-				} else {
-					// Apply default capacity when none configured
-					defCap := 50.0
-					free := defCap - s.OnHandQty
-					s.FreeCapacity = &free
-				}
+if cap != nil {
+				free := *cap - s.OnHandQty
+				s.FreeCapacity = &free
+			} else {
+				// Apply default capacity when none configured
+				free := defaultBinCapacity - s.OnHandQty
+				s.FreeCapacity = &free
+			}
 				freeCap := 0.0
 				if s.FreeCapacity != nil {
 					freeCap = *s.FreeCapacity
@@ -519,11 +526,9 @@ func suggest(db *pgxpool.Pool) fiber.Handler {
 				args = append(args, prefBay)
 			}
 			if len(excludeIDs) > 0 {
-				ids := make([]string, len(excludeIDs))
-				for i, id := range excludeIDs {
-					ids[i] = strconv.Itoa(id)
-				}
-				sql += ` AND wl.id NOT IN (` + strings.Join(ids, ",") + `)`
+				n++
+				sql += fmt.Sprintf(` AND wl.id != ALL($%d)`, n)
+				args = append(args, excludeIDs)
 			}
 			sql += ` ORDER BY
 				CASE WHEN wl.aisle = $` + strconv.Itoa(n+1) + ` AND wl.shelf = $` + strconv.Itoa(n+2) + ` AND wl.level::int BETWEEN $` + strconv.Itoa(n+3) + `-1 AND $` + strconv.Itoa(n+3) + `+1 THEN 0 ELSE 1 END,
@@ -629,47 +634,7 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		zoneFilter := strings.TrimSpace(c.Query("zone"))
 
-		// Build a query that includes both:
-		// 1. Items already in stock_location_balances at incoming/hold/staging locations
-		// 2. Items from GRN sessions that are ready for putaway but stock hasn't been posted yet
-		//    (safety net for GRNs stuck at putaway_pending before auto-finalize was added)
-		incomingQuery := `
-			SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
-		       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
-		       slb.suggested_location_id, wl2.code,
-		       ` + hsnZoneSQL + ` as zone
-		FROM stock_location_balances slb
-		JOIN warehouse_locations wl ON wl.id = slb.location_id
-		JOIN warehouses w ON w.id = slb.warehouse_id
-		LEFT JOIN items i ON i.code = slb.item_code
-		LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
-		WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
-
-		unpostedGRNQuery := `
-			SELECT gl.id + 1000000, gl.item_code, i.name, COALESCE(w.id,1), COALESCE(w.code,'MAIN'),
-		       wl.id, wl.code, COALESCE(gl.batch_no,''), COALESCE(gl.scanned_qty,0), wl.location_type,
-		       NULL::int, NULL::text,
-		       ` + hsnZoneSQL + ` as zone
-		FROM grn_lines gl
-		JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
-		JOIN grn_sessions gs ON gs.id = gc.grn_session_id
-		JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
-		LEFT JOIN items i ON i.code = gl.item_code
-		LEFT JOIN warehouses w ON w.id = COALESCE(gs.warehouse_id, 1)
-		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
-		  AND COALESCE(gl.scanned_qty,0) > 0
-		  AND COALESCE(gs.stock_posted_at) IS NULL
-		  AND COALESCE(gl.scanned_qty,0) - COALESCE((
-		        SELECT SUM(GREATEST(actual_qty - reserved_qty, 0))
-		        FROM stock_location_balances slb
-		        WHERE slb.item_code = gl.item_code
-		          AND slb.location_id = wl.id
-		          AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
-		      ), 0) > 1e-9`
-
-		// The UNION must be filtered as a whole. Appending `AND` after the
-		// UNION filters only the second SELECT and produces invalid SQL when
-		// the first SELECT has already terminated its WHERE clause.
+		incomingQuery, unpostedGRNQuery := buildPutawayQueueQueries()
 		query := `SELECT * FROM (` + incomingQuery + ` UNION ALL ` + unpostedGRNQuery + `) pending`
 
 		args := []any{}
@@ -679,7 +644,6 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 		}
 		query += ` ORDER BY 2 ASC`
 
-		// Pending = incoming/hold balances not yet moved to storage.
 		rows, err := db.Query(c.Context(), query, args...)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -715,34 +679,55 @@ func queue(db *pgxpool.Pool) fiber.Handler {
 	}
 }
 
+// buildPutawayQueueQueries returns the two query parts for the putaway queue.
+// Fix #20: Shared logic for queue and queueZones to avoid duplication.
+func buildPutawayQueueQueries() (incomingQuery, unpostedGRNQuery string) {
+	incomingQuery = `
+		SELECT slb.id, slb.item_code, i.name, slb.warehouse_id, w.code, wl.id, wl.code,
+		       COALESCE(slb.batch_no,''), slb.actual_qty, wl.location_type,
+		       slb.suggested_location_id, wl2.code,
+		       ` + hsnZoneSQL + ` as zone
+		FROM stock_location_balances slb
+		JOIN warehouse_locations wl ON wl.id = slb.location_id
+		JOIN warehouses w ON w.id = slb.warehouse_id
+		LEFT JOIN items i ON i.code = slb.item_code
+		LEFT JOIN warehouse_locations wl2 ON wl2.id = slb.suggested_location_id
+		WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')`
+
+	unpostedGRNQuery = `
+		SELECT gl.id + 1000000, gl.item_code, i.name, COALESCE(w.id,1), COALESCE(w.code,'MAIN'),
+		       src_wl.id, src_wl.code, COALESCE(gl.batch_no,''), COALESCE(gl.scanned_qty,0), src_wl.location_type,
+		       NULL::int, NULL::text,
+		       ` + hsnZoneSQL + ` as zone
+		FROM grn_lines gl
+		JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+		JOIN grn_sessions gs ON gs.id = gc.grn_session_id
+		LEFT JOIN items i ON i.code = gl.item_code
+		LEFT JOIN warehouses w ON w.id = COALESCE(gs.warehouse_id, 1)
+		-- Join to the actual source location from GRN line's route_location
+		LEFT JOIN warehouse_locations src_wl ON src_wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
+			AND src_wl.code = gl.route_location
+		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
+		  AND COALESCE(gl.scanned_qty,0) > 0
+		  AND COALESCE(gs.stock_posted_at) IS NULL
+		  AND src_wl.id IS NOT NULL
+		  AND COALESCE(gl.scanned_qty,0) - COALESCE((
+		        SELECT SUM(GREATEST(actual_qty - reserved_qty, 0))
+		        FROM stock_location_balances slb
+		        WHERE slb.item_code = gl.item_code
+		          AND slb.location_id = src_wl.id
+		          AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
+		      ), 0) > 1e-9`
+	return incomingQuery, unpostedGRNQuery
+}
+
 func queueZones(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(c.Context(), `SELECT zone, COUNT(*) as count FROM (
-				SELECT `+hsnZoneSQL+` as zone
-				FROM stock_location_balances slb
-				JOIN warehouse_locations wl ON wl.id = slb.location_id
-				LEFT JOIN items i ON i.code = slb.item_code
-				WHERE slb.actual_qty > 0 AND wl.location_type IN ('incoming','hold','staging')
-				UNION ALL
-				SELECT `+hsnZoneSQL+` as zone
-				FROM grn_lines gl
-				JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
-				JOIN grn_sessions gs ON gs.id = gc.grn_session_id
-				JOIN warehouse_locations wl ON wl.code = 'INCOMING-01' AND wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
-				LEFT JOIN items i ON i.code = gl.item_code
-				WHERE gs.status IN ('putaway_pending','putaway_in_progress')
-				  AND COALESCE(gl.scanned_qty,0) > 0
-				  AND COALESCE(gs.stock_posted_at) IS NULL
-				  AND COALESCE(gl.scanned_qty,0) - COALESCE((
-				        SELECT SUM(GREATEST(actual_qty - reserved_qty, 0))
-				        FROM stock_location_balances slb
-				        WHERE slb.item_code = gl.item_code
-				          AND slb.location_id = wl.id
-				          AND COALESCE(slb.batch_no,'') = COALESCE(gl.batch_no,'')
-				      ), 0) > 1e-9
-			) sub
-			GROUP BY zone
-			ORDER BY zone`)
+		// Fix #20: Use shared query builder to avoid duplication
+		incomingQuery, unpostedGRNQuery := buildPutawayQueueQueries()
+		query := `SELECT zone, COUNT(*) as count FROM (` + incomingQuery + ` UNION ALL ` + unpostedGRNQuery + `) sub GROUP BY zone ORDER BY zone`
+
+		rows, err := db.Query(c.Context(), query)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -798,6 +783,16 @@ func recordFitException(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		if body.FitsQty > 0 && body.RejectedLocationID > 0 {
+			// Fix #12: Validate that rejected_location_id exists and is a valid storage/pick_face location
+			var locType string
+			err = db.QueryRow(c.Context(),
+				`SELECT location_type FROM warehouse_locations WHERE id=$1`, body.RejectedLocationID).Scan(&locType)
+			if err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, "rejected_location_id does not exist")
+			}
+			if locType != "storage" && locType != "pick_face" {
+				return shared.Err(c, fiber.StatusBadRequest, "rejected_location_id must be a storage or pick_face location")
+			}
 			_, _ = db.Exec(c.Context(), `
 				INSERT INTO item_bin_capacities (item_code, location_id, max_qty, updated_at)
 				VALUES ($1,$2,$3,now())
@@ -917,7 +912,16 @@ func resolveRule(db *pgxpool.Pool) fiber.Handler {
 			ruleID = rule.ID
 			wh = rule.Warehouse
 			cap = rule.StockCapacity
-			current = rule.CurrentQty
+			// Fix #14: Use consistent current stock calculation - always query actual stock
+			// instead of relying on rule.CurrentQty which might use different logic
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(slb.actual_qty),0)
+				FROM stock_location_balances slb
+				JOIN warehouse_locations wl ON wl.id = slb.location_id
+				JOIN warehouses w ON w.id = slb.warehouse_id
+				WHERE UPPER(slb.item_code)=UPPER($1)
+				  AND wl.location_type IN ('pick_face','storage')
+				  AND UPPER(w.code)=UPPER($2)`, itemCode, wh).Scan(&current)
 		} else {
 			_ = db.QueryRow(c.Context(), `
 				SELECT COALESCE(SUM(slb.actual_qty),0)
@@ -926,8 +930,7 @@ func resolveRule(db *pgxpool.Pool) fiber.Handler {
 				JOIN warehouses w ON w.id = slb.warehouse_id
 				WHERE UPPER(slb.item_code)=UPPER($1)
 				  AND wl.location_type IN ('pick_face','storage')
-				  AND ($2='' OR $2='any' OR $2='*' OR $2='all' OR UPPER(w.code)=UPPER($2))`,
-				itemCode, wh).Scan(&current)
+				  AND UPPER(w.code)=UPPER($2)`, itemCode, wh).Scan(&current)
 		}
 
 		available := cap - current

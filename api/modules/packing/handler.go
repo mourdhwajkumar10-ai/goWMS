@@ -345,11 +345,22 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "item_code and quantity > 0 required")
 		}
 
-		var inBox float64
-		if err := db.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(quantity),0) FROM box_items
-			WHERE box_id=$1 AND item_code=$2`, boxID, body.ItemCode).Scan(&inBox); err != nil {
+		tx, err := db.Begin(c.Context())
+		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
+		var pickListID *int
+		var inBox float64
+		if err := tx.QueryRow(c.Context(), `
+			SELECT pick_list_id, COALESCE(SUM(quantity),0) FROM boxes
+			LEFT JOIN box_items ON box_items.box_id = boxes.id AND box_items.item_code = $2
+			WHERE boxes.id=$1`, boxID, body.ItemCode).Scan(&pickListID, &inBox); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if pickListID == nil || *pickListID <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "box is not linked to a pick list")
 		}
 		if body.Quantity > inBox+0.0001 {
 			return shared.Err(c, fiber.StatusConflict, fmt.Sprintf(
@@ -358,14 +369,14 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		var itemID int
-		err = db.QueryRow(c.Context(),
+		err = tx.QueryRow(c.Context(),
 			`SELECT id FROM box_items WHERE box_id=$1 AND item_code=$2 ORDER BY id DESC LIMIT 1`,
 			boxID, body.ItemCode).Scan(&itemID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "box item not found")
 		}
 
-		tag, err := db.Exec(c.Context(),
+		tag, err := tx.Exec(c.Context(),
 			`UPDATE box_items SET quantity=quantity-$1 WHERE id=$2 AND quantity>=$1`,
 			body.Quantity, itemID)
 		if err != nil {
@@ -375,10 +386,56 @@ func reverseItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "insufficient quantity in box")
 		}
 
-		if _, err := db.Exec(c.Context(),
+		// Fix #8: Decrement packed_qty on corresponding pick_list_items (FEFO reverse — highest id first)
+		remaining := body.Quantity
+		rows, err := tx.Query(c.Context(), `
+			SELECT id, COALESCE(packed_qty,0)
+			FROM pick_list_items
+			WHERE pick_list_id=$1 AND item_code=$2
+			  AND COALESCE(packed_qty,0) > 0
+			ORDER BY id DESC
+			FOR UPDATE`, *pickListID, body.ItemCode)
+		if err == nil {
+			type line struct {
+				ID        int
+				PackedQty float64
+			}
+			var lines []line
+			for rows.Next() {
+				var l line
+				if err := rows.Scan(&l.ID, &l.PackedQty); err != nil {
+					rows.Close()
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				lines = append(lines, l)
+			}
+			rows.Close()
+			for _, l := range lines {
+				if remaining <= 0 {
+					break
+				}
+				take := l.PackedQty
+				if take > remaining {
+					take = remaining
+				}
+				newPacked := l.PackedQty - take
+				if _, err := tx.Exec(c.Context(),
+					`UPDATE pick_list_items SET packed_qty = $1 WHERE id=$2`,
+					newPacked, l.ID); err != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				remaining -= take
+			}
+		}
+
+		if _, err := tx.Exec(c.Context(),
 			`INSERT INTO pack_reversals (box_id, box_item_id, item_code, qty_removed, reason, reversed_by)
 			 VALUES ($1,$2,$3,$4,$5,$6)`,
 			boxID, itemID, body.ItemCode, body.Quantity, body.Reason, userID(c)); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+
+		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 

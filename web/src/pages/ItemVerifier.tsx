@@ -52,8 +52,8 @@ export default function ItemVerifier() {
 
   const verifyItem = useCallback(async (code: string) => {
     if (!sid || !activeBox || !code.trim()) return
-    const cleanCode = code.trim().split('-')[0].toUpperCase()
-    const r: any = await api.post(`/grn/session/${sid}/verify-item`, { item_code: cleanCode, qty: 1 })
+    const raw = code.trim()
+    const r: any = await api.post(`/grn/session/${sid}/verify-item`, { item_code: raw, qty: 1 })
     if (r.ok) {
       fb.ok()
       if (r.data.box_auto_closed) {
@@ -61,12 +61,13 @@ export default function ItemVerifier() {
         setActiveBox(null)
         setCameraKey((k) => k + 1)
       } else {
-        toast(`${cleanCode} +1`, 'ok')
+        const disp = String(r.data.item_code ?? raw).toUpperCase()
+        toast(`${disp} +1`, 'ok')
       }
       const fresh: any = await api.get(`/grn/session/${sid}/active-box`)
       if (fresh.ok) setActiveBox(fresh.data as ActiveBox)
     } else if (r.data?.wrong_item) {
-      fb.err(); toast(`Wrong item: ${cleanCode}`, 'err'); setFlash('err'); setTimeout(() => setFlash(null), 300)
+      fb.err(); toast(`Wrong item: ${raw}`, 'err'); setFlash('err'); setTimeout(() => setFlash(null), 300)
     } else {
       fb.warn(); toast(r.error ?? 'Scan failed', 'warn')
     }
@@ -118,7 +119,6 @@ export default function ItemVerifier() {
             <CameraScanner
               key={`box-${cameraKey}`}
               embedded
-              minimal
               open
               continuous
               onClose={() => {}}
@@ -163,7 +163,6 @@ export default function ItemVerifier() {
             <CameraScanner
               key={`item-${cameraKey}-${activeBox.box_number}`}
               embedded
-              minimal
               open
               continuous
               onClose={() => {}}

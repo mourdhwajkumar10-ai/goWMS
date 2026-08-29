@@ -1,5 +1,10 @@
 import { useState, useRef, useEffect, useCallback, type ReactNode } from "react";
 import { Camera, CameraOff, Flashlight, FlashlightOff, RotateCcw, AlertCircle } from "lucide-react";
+import {
+  BrowserMultiFormatReader,
+  DecodeHintType,
+  BarcodeFormat,
+} from "@zxing/library";
 import "../styles/receiving-wizard.css";
 import { cameraErrorMessage } from "../utils/receivingData";
 import type { CameraState } from "../utils/receivingData";
@@ -16,6 +21,23 @@ interface CameraScannerProps {
   title?: string;
   footer?: ReactNode;
 }
+
+type NativeDetector = {
+  detect: (source: CanvasImageSource) => Promise<Array<{ rawValue: string }>>;
+};
+
+const ZXING_FORMATS = [
+  BarcodeFormat.QR_CODE,
+  BarcodeFormat.DATA_MATRIX,
+  BarcodeFormat.CODE_128,
+  BarcodeFormat.CODE_39,
+  BarcodeFormat.EAN_13,
+  BarcodeFormat.EAN_8,
+  BarcodeFormat.UPC_A,
+  BarcodeFormat.UPC_E,
+  BarcodeFormat.ITF,
+  BarcodeFormat.CODABAR,
+];
 
 function outcomeOk(result: void | boolean | ScanOutcome): boolean {
   return result !== false && result !== "error";
@@ -62,8 +84,28 @@ function ScanViewport({
   onToggleCamera: () => void; onToggleTorch: () => void;
   torchOn: boolean; onFlipCamera: () => void; minimal: boolean;
 }) {
+  const swipeStart = useRef<{ x: number; y: number } | null>(null)
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    const t = e.touches[0]
+    if (t) swipeStart.current = { x: t.clientX, y: t.clientY }
+  }, [])
+  const handleTouchEnd = useCallback((e: React.TouchEvent) => {
+    const s = swipeStart.current
+    swipeStart.current = null
+    if (!s) return
+    const t = e.changedTouches[0]
+    if (!t) return
+    const dx = t.clientX - s.x
+    const dy = t.clientY - s.y
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      onFlipCamera()
+    }
+  }, [onFlipCamera])
   return (
-    <div style={{
+    <div
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      style={{
       position: 'relative', width: '100%', aspectRatio: '4/3', maxHeight: 240,
       borderRadius: 16, overflow: 'hidden',
       background: cameraOn && !error ? '#000' : 'linear-gradient(135deg, #1e293b 0%, #0f172a 50%, #1e1b4b 100%)',
@@ -131,12 +173,14 @@ function ScanViewport({
         </div>
       )}
 
-      {/* Screen flash */}
+      {/* Screen flash — high contrast so error doesn't wash out on white QR */}
       {screenFlash && (
         <div style={{
           position: 'absolute', inset: 0, pointerEvents: 'none',
-          background: screenFlash === 'success' ? 'rgba(16,185,129,0.25)' : 'rgba(239,68,68,0.25)',
-          animation: 'cam-flash-fade 400ms ease-out forwards',
+          background: screenFlash === 'success' ? 'rgba(16,185,129,0.38)' : 'rgba(239,68,68,0.42)',
+          border: screenFlash === 'error' ? '3px solid rgba(239,68,68,0.95)' : '3px solid rgba(16,185,129,0.85)',
+          boxShadow: screenFlash === 'error' ? 'inset 0 0 24px rgba(239,68,68,0.35)' : 'inset 0 0 24px rgba(16,185,129,0.25)',
+          animation: 'cam-flash-fade 700ms ease-out forwards',
         }} />
       )}
 
@@ -188,7 +232,8 @@ export default function CameraScanner({
 }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const detectorRef = useRef<any>(null);
+  const detectorRef = useRef<NativeDetector | null>(null);
+  const readerRef = useRef<BrowserMultiFormatReader | null>(null);
   const animRef = useRef<number>(0);
   const sessionRef = useRef(0);
   const cameraOnRef = useRef(readCameraPref());
@@ -217,6 +262,8 @@ export default function CameraScanner({
     if (animRef.current) cancelAnimationFrame(animRef.current);
     animRef.current = 0;
     detectorRef.current = null;
+    try { readerRef.current?.reset(); } catch { /* ignore */ }
+    readerRef.current = null;
     const stream = streamRef.current;
     streamRef.current = null;
     stopTracks(stream);
@@ -320,40 +367,98 @@ export default function CameraScanner({
         if (settings?.facingMode === "user" || settings?.facingMode === "environment") { facingRef.current = settings.facingMode as any; setFacing(settings.facingMode as any); }
         if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.setAttribute("playsinline", "true"); await videoRef.current.play().catch(() => undefined); }
         if (stale()) { stopTracks(stream); detachVideo(videoRef.current); if (streamRef.current === stream) streamRef.current = null; return; }
-        const BD = (window as any).BarcodeDetector;
-        if (BD) {
-          detectorRef.current = new BD({ formats: ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "code_39", "itf", "codabar"] });
+
+        const emitCode = (raw: string) => {
+          const value = String(raw || "").trim();
+          if (!value || stale()) return;
+          const now = Date.now();
+          const last = lastCodeRef.current;
+          if (last && last.value === value && now - last.at < 1200) return;
+          if (busyRef.current) return;
+          busyRef.current = true;
+          lastCodeRef.current = { value, at: now };
+          navigator.vibrate?.(10);
+          setLastCode(value);
+          void (async () => {
+            try {
+              const result = await onScanRef.current(value);
+              if (stale()) return;
+              const ok = outcomeOk(result);
+              setScreenFlash(ok ? "success" : "error");
+              window.setTimeout(() => setScreenFlash(null), 900);
+            } catch {
+              if (!stale()) {
+                setScreenFlash("error");
+                window.setTimeout(() => setScreenFlash(null), 900);
+              }
+            } finally {
+              busyRef.current = false;
+              if (!continuousRef.current && !stale()) handleClose();
+            }
+          })();
+        };
+
+        const startNative = async (): Promise<boolean> => {
+          const BD = (window as unknown as { BarcodeDetector?: new (o?: unknown) => NativeDetector }).BarcodeDetector;
+          if (!BD) return false;
+          try {
+            detectorRef.current = new BD({
+              formats: ["qr_code", "code_128", "ean_13", "ean_8", "upc_a", "code_39", "itf", "codabar", "data_matrix"],
+            });
+          } catch {
+            detectorRef.current = null;
+            return false;
+          }
           setScanning(true);
           const detect = async () => {
             if (stale() || !detectorRef.current || !videoRef.current) return;
             if (!busyRef.current) {
               try {
-                const results = await detectorRef.current.detect(videoRef.current);
-                if (stale()) return;
-                if (results.length > 0 && results[0].rawValue) {
-                  const value = String(results[0].rawValue);
-                  const now = Date.now();
-                  const last = lastCodeRef.current;
-                  if (!last || last.value !== value || now - last.at >= 1200) {
-                    busyRef.current = true; lastCodeRef.current = { value, at: now };
-                    navigator.vibrate?.(10); setLastCode(value);
-                    void (async () => {
-                      try {
-                        const result = await onScanRef.current(value);
-                        if (stale()) return;
-                        const ok = outcomeOk(result);
-                        setScreenFlash(ok ? "success" : "error");
-                        window.setTimeout(() => setScreenFlash(null), 900);
-                      } catch { if (!stale()) { setScreenFlash("error"); window.setTimeout(() => setScreenFlash(null), 900); } }
-                      finally { busyRef.current = false; if (!continuousRef.current && !stale()) handleClose(); }
-                    })();
-                  }
+                if (videoRef.current.readyState >= 2) {
+                  const results = await detectorRef.current.detect(videoRef.current);
+                  if (stale()) return;
+                  if (results.length > 0 && results[0].rawValue) emitCode(results[0].rawValue);
                 }
-              } catch {}
+              } catch { /* transient frame errors */ }
             }
             if (!stale()) animRef.current = requestAnimationFrame(() => { void detect(); });
           };
           animRef.current = requestAnimationFrame(() => { void detect(); });
+          return true;
+        };
+
+        const startZxing = async () => {
+          const hints = new Map();
+          hints.set(DecodeHintType.POSSIBLE_FORMATS, ZXING_FORMATS);
+          hints.set(DecodeHintType.TRY_HARDER, true);
+          const reader = new BrowserMultiFormatReader(hints, 500);
+          readerRef.current = reader;
+          setScanning(true);
+          await reader.decodeFromStream(stream, videoRef.current!, (result) => {
+            if (stale() || !result) return;
+            emitCode(result.getText());
+          });
+        };
+
+        // Native first (fast on Android Chrome) — ZXing as fallback for iOS/desktop and on-screen QR.
+        // Run both in parallel when native is available for maximum reliability.
+        const nativeOk = await startNative();
+        if (!nativeOk) {
+          try {
+            await startZxing();
+          } catch {
+            if (stale()) return;
+            setCameraState("unsupported");
+            setError("Barcode scanner unavailable. Type the code manually.");
+            setScanning(false);
+          }
+        } else {
+          // Native is running — also start ZXing after a short delay as parallel detector
+          // so QR that native misses (e.g. small on-screen QR) is still caught.
+          setTimeout(() => {
+            if (stale() || readerRef.current) return;
+            startZxing().catch(() => {});
+          }, 600);
         }
       } catch (e: any) {
         if (!stale()) {

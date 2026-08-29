@@ -27,6 +27,12 @@ func AssignToBox(ctx context.Context, tx shared.DBTX, in AssignToBoxInput) (int,
 		return 0, "", fmt.Errorf("box_id and pick_list_id required")
 	}
 
+	// Fix #1: Advisory lock to prevent concurrent AssignToBox for same pick_list_id + item_code
+	// from both passing the ceiling check and exceeding picked quantity.
+	lockKey1 := int64(in.PickListID) << 32
+	lockKey2 := int64(hashItemCode(in.ItemCode))
+	_, _ = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, lockKey1, lockKey2)
+
 	var boxPick *int
 	if err := tx.QueryRow(ctx,
 		`SELECT pick_list_id FROM boxes WHERE id=$1 FOR UPDATE`, in.BoxID).Scan(&boxPick); err != nil {
@@ -54,7 +60,9 @@ func AssignToBox(ctx context.Context, tx shared.DBTX, in AssignToBoxInput) (int,
 		in.PickListID, in.ItemCode).Scan(&packed); err != nil {
 		return 0, "", err
 	}
-	if packed+in.Quantity > ceiling+0.0001 {
+	// Fix #9: Use relative tolerance instead of absolute 0.0001
+	tolerance := ceiling * 0.0001
+	if packed+in.Quantity > ceiling+tolerance {
 		return 0, "", fmt.Errorf("%w: %.0f of %.0f already packed", ErrOverPack, packed, ceiling)
 	}
 
@@ -141,4 +149,13 @@ func AssignToBox(ctx context.Context, tx shared.DBTX, in AssignToBoxInput) (int,
 	}
 
 	return id, warning, nil
+}
+
+func hashItemCode(s string) uint32 {
+	h := uint32(2166136261)
+	for i := 0; i < len(s); i++ {
+		h ^= uint32(s[i])
+		h *= 16777619
+	}
+	return h
 }

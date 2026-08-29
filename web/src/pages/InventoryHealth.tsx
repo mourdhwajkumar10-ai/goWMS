@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
 
+interface Wh { id: number; code: string; name: string }
 interface ReorderAlert {
   item_code: string
   item_name: string
@@ -34,14 +35,21 @@ export default function InventoryHealth() {
   const [expiry, setExpiry] = useState<ExpiryAlert[]>([])
   const [tab, setTab] = useState<'reorder' | 'expiry'>('reorder')
   const [days, setDays] = useState('90')
+  const [warehouseId, setWarehouseId] = useState('')
+  const [warehouses, setWarehouses] = useState<Wh[]>([])
 
   const load = () => {
-    api.get<ReorderAlert[]>('/inventory/reorder-alerts').then(r => { if (r.ok) setReorder(r.data ?? []) })
-    api.get<ExpiryAlert[]>(`/inventory/expiry-alerts?days=${+days || 90}`).then(r => { if (r.ok) setExpiry(r.data ?? []) })
+    const whParam = warehouseId ? `?warehouse_id=${warehouseId}` : ''
+    api.get<ReorderAlert[]>(`/inventory/reorder-alerts${whParam}`).then(r => { if (r.ok) setReorder(r.data ?? []) })
+    api.get<ExpiryAlert[]>(`/inventory/expiry-alerts?days=${+days || 90}${warehouseId ? `&warehouse_id=${warehouseId}` : ''}`).then(r => { if (r.ok) setExpiry(r.data ?? []) })
   }
-  useEffect(() => { load() }, [days])
+  useEffect(() => { load() }, [days, warehouseId])
   const reorderPager = useClientPager(reorder)
   const expiryPager = useClientPager(expiry)
+
+  useEffect(() => {
+    api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
+  }, [])
 
   const refresh = async () => {
     const r = await api.post<{ notifications_created: number }>('/inventory/refresh-alerts', {})
@@ -62,7 +70,14 @@ export default function InventoryHealth() {
             Min/max reorder alerts and FEFO expiry warnings
           </p>
         </div>
-        <div className="flex gap-2 items-end">
+        <div className="flex gap-2 items-end flex-wrap">
+          <div>
+            <label className="erpnext-label">Warehouse</label>
+            <select className="erpnext-input" value={warehouseId} onChange={e => setWarehouseId(e.target.value)}>
+              <option value="">All warehouses</option>
+              {warehouses.map(w => <option key={w.id} value={w.id}>{w.code}</option>)}
+            </select>
+          </div>
           <div>
             <label className="erpnext-label">Expiry window (days)</label>
             <input className="erpnext-input" style={{ width: 100 }} type="number" value={days} onChange={e => setDays(e.target.value)} />

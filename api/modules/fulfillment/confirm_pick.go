@@ -127,7 +127,9 @@ func ConfirmPick(ctx context.Context, tx shared.DBTX, in ConfirmPickInput) (*Con
 	if target <= 0 {
 		target = ordered
 	}
-	if picked+in.Quantity > target+0.0001 {
+	// Fix #9: Use relative tolerance
+	tolerance := target * 0.0001
+	if picked+in.Quantity > target+tolerance {
 		_ = logScan(ctx, tx, in, itemID, itemCode, expected, true)
 		return nil, ErrOverPick
 	}
@@ -148,7 +150,8 @@ func ConfirmPick(ctx context.Context, tx shared.DBTX, in ConfirmPickInput) (*Con
 
 	newPicked := picked + in.Quantity
 	newStatus := "in_progress"
-	if newPicked+0.0001 >= target {
+	// Fix #9: Use relative tolerance
+	if newPicked+tolerance >= target {
 		newStatus = "picked"
 	}
 	if _, err := tx.Exec(ctx,

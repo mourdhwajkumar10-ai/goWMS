@@ -189,38 +189,38 @@ func createPickList(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusConflict, "insufficient stock to allocate any line (FEFO)")
 		}
 
+		shortages := make([]shared.ShortageLine, 0)
+		for _, ln := range lines {
+			if ln.Status == "shortage" {
+				shortages = append(shortages, shared.ShortageLine{ItemCode: ln.ItemCode, Qty: ln.OrderedQty})
+			}
+		}
+
+		boCreated := false
+		var boNo string
+		if len(shortages) > 0 {
+			// Fix #6: Create backorder inside main transaction for consistency
+			boNo, boCreated, err = shared.CreateBackorderFromShortages(
+				c.Context(), tx, id, body.SalesOrder, body.Customer, whName, shortages)
+			if err != nil {
+				boCreated = false
+				boNo = ""
+			}
+		}
+
 		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
 		notifications.EmitPickCreated(c.Context(), db, name, body.SalesOrder)
 
-		shortages := make([]shared.ShortageLine, 0)
 		for _, ln := range lines {
 			if ln.Status == "shortage" {
-				shortages = append(shortages, shared.ShortageLine{ItemCode: ln.ItemCode, Qty: ln.OrderedQty})
 				notifications.EmitShortage(c.Context(), db, name, ln.ItemCode)
 			}
 		}
-		boCreated := false
-		var boNo string
-		if len(shortages) > 0 {
-			// Post-commit: match prior free-form behaviour (notifications already fired).
-			tx2, err := db.Begin(c.Context())
-			if err == nil {
-				boNo, boCreated, err = shared.CreateBackorderFromShortages(
-					c.Context(), tx2, id, body.SalesOrder, body.Customer, whName, shortages)
-				if err != nil {
-					_ = tx2.Rollback(c.Context())
-					boCreated = false
-					boNo = ""
-				} else if err := tx2.Commit(c.Context()); err != nil {
-					boCreated = false
-					boNo = ""
-				} else if boCreated {
-					notifications.EmitBackorderCreated(c.Context(), db, boNo, len(shortages))
-				}
-			}
+		if boCreated {
+			notifications.EmitBackorderCreated(c.Context(), db, boNo, len(shortages))
 		}
 
 		return shared.OK(c, fiber.Map{
@@ -511,15 +511,40 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "cannot pick shortage line — no stock allocated")
 		}
 
-		target := allocated
-		if target <= 0 {
-			target = ordered
-		}
-		if picked+body.Quantity > target+0.0001 {
-			return shared.Err(c, fiber.StatusBadRequest, fmt.Sprintf("over-pick: %.0f of %.0f already allocated", picked, target))
-		}
+target := allocated
+	if target <= 0 {
+		target = ordered
+	}
+	// Fix #9: Use relative tolerance instead of absolute 0.0001
+	tolerance := target * 0.0001
+	if picked+body.Quantity > target+tolerance {
+		return shared.Err(c, fiber.StatusBadRequest, fmt.Sprintf("over-pick: %.0f of %.0f already allocated", picked, target))
+	}
 
-		expected := body.ExpectedBin
+	// Fix #4: Legacy path stock movement — consume from source, add to packing location.
+	var batchNo string
+	var packingLocID *int
+	var warehouseID *int
+	if balanceID != nil && *balanceID > 0 {
+		// Get batch_no for this line (not in SELECT above, fetch separately)
+		_ = tx.QueryRow(c.Context(),
+			`SELECT COALESCE(batch_no,'') FROM pick_list_items WHERE id=$1`, itemID).Scan(&batchNo)
+		// Consume reserved + actual at source location
+		if err := shared.ConsumeReserved(c.Context(), tx, *balanceID, body.Quantity); err != nil {
+			return shared.Err(c, fiber.StatusConflict, err.Error())
+		}
+	}
+	// Get packing location and warehouse from pick list
+	_ = tx.QueryRow(c.Context(),
+		`SELECT packing_location_id, warehouse_id FROM pick_lists WHERE id=$1`, body.PickListID).
+		Scan(&packingLocID, &warehouseID)
+	if packingLocID != nil && *packingLocID > 0 && warehouseID != nil && *warehouseID > 0 {
+		if err := shared.AdjustLocationQtyTx(c.Context(), tx, itemCode, *warehouseID, *packingLocID, batchNo, body.Quantity); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+	}
+
+	expected := body.ExpectedBin
 		if expected == "" {
 			expected = locCode
 		}
@@ -537,11 +562,12 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		newPicked := picked + body.Quantity
-		newStatus := "in_progress"
-		if newPicked+0.0001 >= target {
-			newStatus = "picked"
-		}
+newPicked := picked + body.Quantity
+	newStatus := "in_progress"
+	// Fix #9: Use relative tolerance
+	if newPicked+tolerance >= target {
+		newStatus = "picked"
+	}
 		if _, err := tx.Exec(c.Context(),
 			`UPDATE pick_list_items SET picked_qty=$1, status=$2 WHERE id=$3`,
 			newPicked, newStatus, itemID); err != nil {

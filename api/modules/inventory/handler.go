@@ -27,7 +27,17 @@ func Register(r fiber.Router, db *pgxpool.Pool) {
 
 func reorderAlerts(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(c.Context(), `
+		// Fix #19: Allow filtering by warehouse_id for per-warehouse reorder alerts
+		warehouseID, _ := strconv.Atoi(c.Query("warehouse_id"))
+
+		warehouseFilter := ""
+		args := []any{}
+		if warehouseID > 0 {
+			warehouseFilter = " AND slb.warehouse_id = $1"
+			args = append(args, warehouseID)
+		}
+
+		query := `
 			SELECT i.code, i.name,
 			       COALESCE(i.safety_stock,0), COALESCE(i.reorder_level,0), COALESCE(i.reorder_qty,0),
 			       COALESCE(i.max_stock,0),
@@ -37,10 +47,12 @@ func reorderAlerts(db *pgxpool.Pool) fiber.Handler {
 			         JOIN warehouse_locations wl ON wl.id = slb.location_id
 			         WHERE slb.item_code = i.code
 			           AND wl.location_type IN ('storage','pick_face')
+			           ` + warehouseFilter + `
 			       ),0) AS available_qty
 			FROM items i
 			WHERE i.disabled=false AND COALESCE(i.master_complete,true)=true
-			ORDER BY i.code`)
+			ORDER BY i.code`
+		rows, err := db.Query(c.Context(), query, args...)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -418,10 +430,17 @@ func shipTransfer(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
 		}
+
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
 		var status string
 		var fromWID, toWID *int
-		err = db.QueryRow(c.Context(), `
-			SELECT COALESCE(status,'draft'), from_warehouse_id, to_warehouse_id FROM stock_entries WHERE id=$1`, id).
+		err = tx.QueryRow(c.Context(), `
+			SELECT COALESCE(status,'draft'), from_warehouse_id, to_warehouse_id FROM stock_entries WHERE id=$1 FOR UPDATE`, id).
 			Scan(&status, &fromWID, &toWID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "transfer not found")
@@ -438,7 +457,7 @@ func shipTransfer(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		rows, err := db.Query(c.Context(), `
+		rows, err := tx.Query(c.Context(), `
 			SELECT id, item_code, qty, COALESCE(batch_no,''), s_location_id
 			FROM stock_entry_items WHERE stock_entry_id=$1`, id)
 		if err != nil {
@@ -459,8 +478,8 @@ func shipTransfer(db *pgxpool.Pool) fiber.Handler {
 				srcID = *srcLoc
 			}
 			if srcID == 0 {
-				// pick any storage location with enough qty (FEFO if batch blank)
-				err = db.QueryRow(c.Context(), `
+				// Fix #6: Use FOR UPDATE to prevent concurrent shipTransfers from picking same source location
+				err = tx.QueryRow(c.Context(), `
 					SELECT slb.location_id FROM stock_location_balances slb
 					JOIN warehouse_locations wl ON wl.id = slb.location_id
 					WHERE slb.item_code=$1 AND slb.warehouse_id=$2
@@ -471,24 +490,26 @@ func shipTransfer(db *pgxpool.Pool) fiber.Handler {
 					  SELECT MIN(b.expiry_date) FROM batches b
 					  WHERE b.item_code=slb.item_code AND b.batch_id=slb.batch_no
 					) NULLS LAST, slb.id
-					LIMIT 1`, itemCode, *fromWID, qty, batch).Scan(&srcID)
-				if err != nil {
-					return shared.Err(c, fiber.StatusBadRequest, fmt.Sprintf("insufficient stock for %s", itemCode))
-				}
+					LIMIT 1 FOR UPDATE`, itemCode, *fromWID, qty, batch).Scan(&srcID)
+if err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, fmt.Sprintf("insufficient stock for %s", itemCode))
 			}
-			if err := shared.AdjustLocationQty(c.Context(), db, itemCode, *fromWID, srcID, batch, -qty); err != nil {
+			}
+			if err := shared.AdjustLocationQtyTx(c.Context(), tx, itemCode, *fromWID, srcID, batch, -qty); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			if err := shared.AdjustLocationQty(c.Context(), db, itemCode, *toWID, transitID, batch, qty); err != nil {
+			if err := shared.AdjustLocationQtyTx(c.Context(), tx, itemCode, *toWID, transitID, batch, qty); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			_, _ = db.Exec(c.Context(), `
+			_, _ = tx.Exec(c.Context(), `
 				UPDATE stock_entry_items SET s_location_id=$1, t_location_id=$2 WHERE id=$3`,
 				srcID, transitID, lineID)
 		}
 
-		_, err = db.Exec(c.Context(), `UPDATE stock_entries SET status='in_transit' WHERE id=$1`, id)
-		if err != nil {
+		if _, err := tx.Exec(c.Context(), `UPDATE stock_entries SET status='in_transit' WHERE id=$1`, id); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "status": "in_transit"})
@@ -506,10 +527,16 @@ func receiveTransfer(db *pgxpool.Pool) fiber.Handler {
 		}
 		_ = shared.Bind(c, &body)
 
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
 		var status string
 		var toWID *int
-		err = db.QueryRow(c.Context(), `
-			SELECT COALESCE(status,'draft'), to_warehouse_id FROM stock_entries WHERE id=$1`, id).
+		err = tx.QueryRow(c.Context(), `
+			SELECT COALESCE(status,'draft'), to_warehouse_id FROM stock_entries WHERE id=$1 FOR UPDATE`, id).
 			Scan(&status, &toWID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "transfer not found")
@@ -519,6 +546,18 @@ func receiveTransfer(db *pgxpool.Pool) fiber.Handler {
 		}
 		if toWID == nil {
 			return shared.Err(c, fiber.StatusBadRequest, "to warehouse missing")
+		}
+
+		// Fix #13: Validate target location belongs to the correct warehouse
+		if body.TargetLocationID > 0 {
+			var targetWhID int
+			err = tx.QueryRow(c.Context(), `SELECT warehouse_id FROM warehouse_locations WHERE id=$1`, body.TargetLocationID).Scan(&targetWhID)
+			if err != nil {
+				return shared.Err(c, fiber.StatusBadRequest, "target location not found")
+			}
+			if targetWhID != *toWID {
+				return shared.Err(c, fiber.StatusBadRequest, "target location must be in the destination warehouse")
+			}
 		}
 
 		incomingID, _, err := shared.EnsureLocation(c.Context(), db, *toWID, "INCOMING-01", "incoming")
@@ -535,7 +574,7 @@ func receiveTransfer(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		rows, err := db.Query(c.Context(), `
+		rows, err := tx.Query(c.Context(), `
 			SELECT id, item_code, qty, COALESCE(batch_no,'') FROM stock_entry_items WHERE stock_entry_id=$1`, id)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -549,15 +588,17 @@ func receiveTransfer(db *pgxpool.Pool) fiber.Handler {
 			if err := rows.Scan(&lineID, &itemCode, &qty, &batch); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			_ = shared.AdjustLocationQty(c.Context(), db, itemCode, *toWID, transitID, batch, -qty)
-			if err := shared.AdjustLocationQty(c.Context(), db, itemCode, *toWID, targetID, batch, qty); err != nil {
+			_ = shared.AdjustLocationQtyTx(c.Context(), tx, itemCode, *toWID, transitID, batch, -qty)
+			if err := shared.AdjustLocationQtyTx(c.Context(), tx, itemCode, *toWID, targetID, batch, qty); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			_, _ = db.Exec(c.Context(), `UPDATE stock_entry_items SET t_location_id=$1 WHERE id=$2`, targetID, lineID)
+			_, _ = tx.Exec(c.Context(), `UPDATE stock_entry_items SET t_location_id=$1 WHERE id=$2`, targetID, lineID)
 		}
 
-		_, err = db.Exec(c.Context(), `UPDATE stock_entries SET status='completed' WHERE id=$1`, id)
-		if err != nil {
+		if _, err := tx.Exec(c.Context(), `UPDATE stock_entries SET status='completed' WHERE id=$1`, id); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		if err := tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		return shared.OK(c, fiber.Map{"id": id, "status": "completed", "target_location_id": targetID})

@@ -2,24 +2,7 @@
    Breakpoints: sm 480, md 768, lg 1024
    Tokens: 8px grid, 12px radius, accent blue #2563eb */
 
-/* ─── Design Tokens ─── */
-:root {
-  --grn-accent: #2563eb;
-  --grn-accent-hover: #1d4ed8;
-  --grn-accent-light: #dbeafe;
-  --grn-bg: #ffffff;
-  --grn-bg-2: #f9fafb;
-  --grn-bg-3: #f3f4f6;
-  --grn-border: #e5e7eb;
-  --grn-border-hover: #d1d5db;
-  --grn-text: #111827;
-  --grn-text-dim: #6b7280;
-  --grn-radius: 12px;
-  --grn-radius-sm: 8px;
-  --grn-radius-xs: 6px;
-  --grn-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --grn-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
+@import './tokens.css';
 
 /* ─── Gate Grid (Papers + Problem) ─── */
 .grn-gate-grid {

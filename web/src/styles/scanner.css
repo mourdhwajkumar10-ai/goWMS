@@ -5,59 +5,9 @@
    panes don't stretch RF UIs edge-to-edge.
    ──────────────────────────────────────────────────────────────────── */
 
-/* ─── C Tokens (oklch) + RF aliases ─── */
-:root {
-  /* C — card / foreground */
-  --background: oklch(0.955 0.008 250);
-  --foreground: oklch(0.17 0.018 258);
-  --card: oklch(0.995 0.002 250);
-  --card-foreground: oklch(0.185 0.012 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.185 0.012 260);
-  --primary: oklch(0.56 0.18 250);
-  --primary-foreground: oklch(0.99 0.004 250);
-  --secondary: oklch(0.945 0.004 250);
-  --secondary-foreground: oklch(0.185 0.012 260);
-  --muted: oklch(0.945 0.004 250);
-  --muted-foreground: oklch(0.575 0.012 258);
-  --accent: oklch(0.7 0.16 155);
-  --accent-foreground: oklch(0.99 0 0);
-  --destructive: oklch(0.6 0.198 24);
-  --destructive-foreground: oklch(0.99 0 0);
-  --warning: oklch(0.78 0.15 78);
-  --warning-foreground: oklch(0.2 0.03 78);
-  --border: oklch(0.912 0.005 250);
-  --input: oklch(0.912 0.005 250);
-  --ring: oklch(0.185 0.012 260);
-  --radius: 1rem;
-  --radius-sm: calc(var(--radius) * 0.4);
-  --radius-md: calc(var(--radius) * 0.6);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
+@import './tokens.css';
 
-  /* Shared RF content column on wide viewports (phone-ish, centered) */
-  --rf-content-max: 32.5rem; /* 520px */
-
-  /* RF aliases — all downstream uses --sm-* */
-  --sm-bg: var(--background);
-  --sm-fg: var(--foreground);
-  --sm-card: var(--card);
-  --sm-muted-fg: var(--muted-foreground);
-  --sm-accent: var(--accent);
-  --sm-accent-fg: var(--accent-foreground);
-  --sm-destructive: var(--destructive);
-  --sm-warning: var(--warning);
-  --sm-border: var(--border);
-  --sm-secondary: var(--secondary);
-  --sm-radius: var(--radius-lg);
-  --sm-radius-sm: var(--radius-md);
-  --sm-gap: 12px;
-  --sm-btn-h: 52px;
-  --sm-font: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --sm-font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
-  --sm-shadow: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
-  --sm-shadow-md: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 4px 12px oklch(0.17 0.018 258 / 0.06);
-}
+/* C motion — direct port of globals.css */
 
 /* C motion — direct port of globals.css */
 @keyframes sweep {
@@ -768,8 +718,8 @@ button.floor-drawer-head.brand-home:focus-visible {
   font-family: var(--sm-font);
 }
 .scan-badge.ok   { background: oklch(0.7 0.16 155 / 0.14); color: oklch(0.45 0.12 155); }
-.scan-badge.warn { background: oklch(0.78 0.15 78 / 0.18); color: oklch(0.55 0.14 78); }
-.scan-badge.err  { background: oklch(0.6 0.198 24 / 0.12); color: var(--destructive); }
+.scan-badge.warn { background: oklch(0.78 0.15 78 / 0.22); color: oklch(0.48 0.14 78); border: 1px solid oklch(0.78 0.15 78 / 0.35); }
+.scan-badge.err  { background: var(--destructive); color: var(--destructive-foreground); border: 1px solid oklch(0.6 0.198 24 / 0.9); box-shadow: 0 1px 6px oklch(0.6 0.198 24 / 0.25); }
 .scan-badge.info { background: oklch(0.56 0.18 250 / 0.10); color: var(--primary); }
 
 /* ─── Result card — C card (rounded-xl border shadow hover) ─── */
@@ -879,8 +829,8 @@ button.floor-drawer-head.brand-home:focus-visible {
   opacity: 0; transition: opacity 0.1s ease;
 }
 .scan-flash.show { opacity: 1; }
-.scan-flash.show.ok  { background: oklch(0.7 0.16 155 / 0.08); }
-.scan-flash.show.err { background: oklch(0.6 0.198 24 / 0.10); }
+.scan-flash.show.ok  { background: oklch(0.7 0.16 155 / 0.14); }
+.scan-flash.show.err { background: oklch(0.6 0.198 24 / 0.32); }
 /* Contain flash to shell content when RF page sits beside a sidebar */
 .content .scan-flash,
 .floor-content .scan-flash {

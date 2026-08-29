@@ -1,160 +1,6 @@
 /* goWMS — Frappe / ERPNext Desk (v14 light theme) */
 
-:root,
-[data-theme="light"] {
-  /* C core — scanmaster-main/app/globals.css:82 */
-  --background: oklch(0.955 0.008 250);
-  --foreground: oklch(0.17 0.018 258);
-  --card: oklch(0.995 0.002 250);
-  --card-foreground: oklch(0.185 0.012 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.185 0.012 260);
-  --primary: oklch(0.56 0.18 250);
-  --primary-foreground: oklch(0.99 0.004 250);
-  --secondary: oklch(0.945 0.004 250);
-  --secondary-foreground: oklch(0.185 0.012 260);
-  --muted: oklch(0.945 0.004 250);
-  --muted-foreground: oklch(0.575 0.012 258);
-  --accent: oklch(0.7 0.16 155);
-  --accent-foreground: oklch(0.99 0 0);
-  --destructive: oklch(0.6 0.198 24);
-  --destructive-foreground: oklch(0.99 0 0);
-  --warning: oklch(0.78 0.15 78);
-  --warning-foreground: oklch(0.2 0.03 78);
-  --border: oklch(0.912 0.005 250);
-  --input: oklch(0.912 0.005 250);
-  --ring: oklch(0.185 0.012 260);
-  --radius: 1rem;
-
-  /* Aliases — mapped to C so legacy vars keep working */
-  --brand-color: var(--primary);
-  --primary-color: var(--primary);
-
-  --blue-900: oklch(0.35 0.12 250);
-  --blue-800: oklch(0.42 0.14 250);
-  --blue-700: oklch(0.50 0.16 250);
-  --blue-600: oklch(0.56 0.18 250);
-  --blue-500: var(--primary);
-  --blue-400: oklch(0.62 0.14 250);
-  --blue-300: oklch(0.72 0.10 250);
-  --blue-200: oklch(0.85 0.06 250);
-  --blue-100: oklch(0.92 0.03 250);
-  --blue-50: oklch(0.97 0.01 250);
-
-  --gray-900: var(--foreground);
-  --gray-800: oklch(0.25 0.01 260);
-  --gray-700: var(--muted-foreground);
-  --gray-600: oklch(0.60 0.01 258);
-  --gray-500: oklch(0.68 0.01 258);
-  --gray-400: oklch(0.78 0.01 250);
-  --gray-300: oklch(0.88 0.005 250);
-  --gray-200: var(--border);
-  --gray-100: var(--secondary);
-  --gray-50: var(--background);
-
-  --green-700: oklch(0.45 0.12 145);
-  --green-600: oklch(0.55 0.13 145);
-  --green-500: var(--accent);
-  --green-100: oklch(0.95 0.04 145);
-  --green-50: oklch(0.97 0.02 145);
-  --dark-green-700: oklch(0.42 0.11 155);
-  --dark-green-600: oklch(0.52 0.13 155);
-  --dark-green-500: var(--accent);
-  --dark-green-50: oklch(0.95 0.03 155);
-
-  --red-600: oklch(0.52 0.17 24);
-  --red-500: var(--destructive);
-  --red-100: oklch(0.95 0.03 24);
-  --red-50: oklch(0.97 0.02 24);
-
-  --yellow-700: oklch(0.60 0.13 78);
-  --yellow-500: var(--warning);
-  --yellow-100: oklch(0.95 0.04 78);
-  --yellow-50: oklch(0.97 0.02 78);
-
-  --orange-700: oklch(0.55 0.13 35);
-  --orange-500: oklch(0.68 0.15 35);
-  --orange-50: oklch(0.97 0.02 35);
-
-  --padding-xs: 5px;
-  --padding-sm: 10px;
-  --padding-md: 15px;
-  --padding-lg: 20px;
-  --padding-xl: 30px;
-
-  --margin-xs: 5px;
-  --margin-sm: 8px;
-  --margin-md: 15px;
-  --margin-lg: 20px;
-
-  --font-stack: "Geist", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  --font-mono: "Geist Mono", "SF Mono", "Fira Code", monospace;
-
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-md: 13px;
-  --text-base: 14px;
-  --text-lg: 16px;
-  --text-xl: 18px;
-  --text-2xl: 20px;
-  --text-3xl: 22px;
-
-  --text-muted: var(--muted-foreground);
-  --text-light: oklch(0.25 0.01 260);
-  --text-color: var(--foreground);
-  --heading-color: var(--foreground);
-
-  --bg-color: var(--background);
-  --fg-color: var(--card);
-  --navbar-bg: oklch(0.995 0.002 250 / 0.95);
-  --fg-hover-color: var(--secondary);
-  --card-bg: var(--card);
-  --control-bg: var(--secondary);
-  --border-color: var(--border);
-  --dark-border-color: oklch(0.88 0.005 250);
-  --table-border-color: var(--border);
-  --sidebar-select-color: oklch(0.56 0.18 250 / 0.10);
-
-  --btn-default-bg: var(--secondary);
-  --btn-default-hover-bg: oklch(0.92 0.005 250);
-  --btn-height: 32px;
-  --input-height: 36px;
-  --navbar-height: 64px;
-
-  --shadow-xs: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
-  --shadow-sm: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 1px 3px oklch(0.17 0.018 258 / 0.04);
-  --shadow-base: 0 4px 8px oklch(0.17 0.018 258 / 0.06), 0 1px 3px oklch(0.17 0.018 258 / 0.05);
-  --shadow-md: 0 8px 24px oklch(0.17 0.018 258 / 0.08), 0 2px 6px oklch(0.17 0.018 258 / 0.04);
-
-  --border-radius-sm: calc(var(--radius) * 0.4);
-  --border-radius: calc(var(--radius) * 0.6);
-  --border-radius-md: calc(var(--radius) * 0.6);
-  --border-radius-lg: var(--radius);
-  --border-radius-full: 9999px;
-
-  --bg: var(--bg-color);
-  --bg-soft: var(--secondary);
-  --panel: var(--card);
-  --panel-2: var(--secondary);
-  --border: var(--border-color);
-  --border-soft: var(--secondary);
-  --text: var(--text-color);
-  --text-dim: var(--text-muted);
-  --accent: var(--primary);
-  --accent-2: oklch(0.62 0.14 250);
-  --green: var(--accent);
-  --amber: var(--warning);
-  --red: var(--destructive);
-  --shadow: var(--shadow-sm);
-
-  /* C motion tokens */
-  --animate-sweep: sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-  --animate-halo: halo 2.2s ease-out infinite;
-  --animate-verdict: verdict 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
-  --radius-3xl: calc(var(--radius) * 2.4);
-}
+@import './styles/tokens.css';
 
 @keyframes sweep {
   0% { transform: translateY(-46%); opacity: 0; }
@@ -1860,44 +1706,293 @@ input[type="checkbox"] { width: auto; height: auto; }
 
 .text-dim { color: var(--text-muted); }
 
-/* ─── Login (ERPNext-style) ─── */
+/* ─── Login ─── */
 .login-wrap {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  background: var(--gray-100);
   padding: 24px;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, oklch(0.56 0.18 250 / 0.12), transparent 60%),
+    radial-gradient(900px 500px at 100% 100%, oklch(0.7 0.16 155 / 0.08), transparent 55%),
+    var(--background);
+}
+
+.login-shell {
+  width: min(920px, 100%);
+  display: grid;
+  grid-template-columns: 1.05fr 0.95fr;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+.login-hero {
+  padding: 40px 36px;
+  background:
+    linear-gradient(165deg, oklch(0.42 0.14 250) 0%, oklch(0.32 0.1 250) 55%, oklch(0.28 0.08 240) 100%);
+  color: oklch(0.98 0.01 250);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.login-hero-mark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.login-hero-mark .brand-mark {
+  width: 40px;
+  height: 40px;
+  font-size: 14px;
+}
+
+.login-hero-name {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.login-hero-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  max-width: 14ch;
+}
+
+.login-hero-copy {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: oklch(0.9 0.02 250 / 0.85);
+  max-width: 32ch;
+}
+
+.login-hero-points {
+  list-style: none;
+  margin: auto 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.login-hero-points li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: oklch(0.92 0.02 250 / 0.9);
+}
+
+.login-hero-points svg {
+  flex-shrink: 0;
+  opacity: 0.9;
 }
 
 .login-card {
-  width: 360px;
-  max-width: 100%;
-  background: var(--fg-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-lg);
-  padding: 28px 28px 24px;
-  box-shadow: var(--shadow-sm);
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 36px 32px 32px;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
 }
 
 .login-brand {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 20px;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
-.login-card h1 {
-  font-size: var(--text-xl);
-  font-weight: 600;
+.login-brand h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0;
+  color: var(--foreground);
 }
+
 .login-card .sub {
-  color: var(--text-muted);
-  margin-bottom: 20px;
-  font-size: var(--text-sm);
+  color: var(--muted-foreground);
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.4;
 }
-.login-card .field { margin-bottom: 12px; }
-.login-card .btn { width: 100%; margin-top: 8px; height: 32px; }
+
+.login-brand-mobile {
+  display: none;
+}
+
+.login-mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin: 20px 0 16px;
+  padding: 4px;
+  border-radius: var(--radius-md);
+  background: var(--secondary);
+  border: 1px solid var(--border);
+}
+
+.login-mode-toggle button {
+  height: 36px;
+  margin: 0;
+  width: 100%;
+  border: none;
+  border-radius: calc(var(--radius-md) - 2px);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+
+.login-mode-toggle button[aria-pressed="true"] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--shadow-xs);
+}
+
+.login-mode-toggle button:hover:not([aria-pressed="true"]) {
+  color: var(--foreground);
+}
+
+.login-alert {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid oklch(0.6 0.198 24 / 0.25);
+  background: oklch(0.6 0.198 24 / 0.08);
+  color: oklch(0.45 0.16 24);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.login-field {
+  margin-bottom: 14px;
+}
+
+.login-field label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+}
+
+.login-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.login-input-icon {
+  position: absolute;
+  left: 12px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+}
+
+.login-input-wrap input {
+  width: 100%;
+  height: 42px;
+  padding: 0 42px 0 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.login-input-wrap input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px oklch(0.56 0.18 250 / 0.15);
+}
+
+.login-input-wrap input::placeholder {
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.login-eye {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: none;
+  background: transparent;
+  color: var(--muted-foreground);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.login-eye:hover {
+  color: var(--foreground);
+  background: var(--secondary);
+}
+
+.login-submit {
+  width: 100%;
+  margin-top: 8px;
+  height: 44px !important;
+  font-size: 14px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.login-spin {
+  animation: login-spin 0.8s linear infinite;
+}
+
+@keyframes login-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 800px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+    width: min(420px, 100%);
+  }
+
+  .login-hero {
+    display: none;
+  }
+
+  .login-brand-mobile {
+    display: grid;
+  }
+
+  .login-card {
+    padding: 28px 22px 24px;
+  }
+}
 
 /* ─── Toast ─── */
 .toast-container {

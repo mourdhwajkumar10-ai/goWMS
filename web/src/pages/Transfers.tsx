@@ -1,11 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
 
 interface Wh { id: number; code: string; name: string }
-interface Loc { id: number; code: string; warehouse_id: number }
+interface Loc { id: number; code: string; warehouse_id: number; location_type?: string }
 interface Transfer {
   id: number
   name: string
@@ -14,13 +14,19 @@ interface Transfer {
   to_warehouse: string | null
   from_warehouse_id: number | null
   to_warehouse_id: number | null
+  items?: Array<{ id: number; item_code: string; qty: number; batch_no?: string; s_location_id?: number }>
+}
+
+interface LocWithQty extends Loc {
+  available_qty?: number
+  reserved_qty?: number
 }
 
 export default function Transfers() {
   const [list, setList] = useState<Transfer[]>([])
   const [warehouses, setWarehouses] = useState<Wh[]>([])
   const [locations, setLocations] = useState<Loc[]>([])
-  const [selected, setSelected] = useState<any>(null)
+  const [selected, setSelected] = useState<Transfer | null>(null)
   const [showNew, setShowNew] = useState(false)
 
   const [fromWh, setFromWh] = useState('')
@@ -31,12 +37,70 @@ export default function Transfers() {
   const [srcLoc, setSrcLoc] = useState('')
   const [recvLoc, setRecvLoc] = useState('')
 
+  // P0: Track available qty per source location
+  const [srcLocQtys, setSrcLocQtys] = useState<Record<number, { available: number; reserved: number }>>({})
+  const [recvLocQtys, setRecvLocQtys] = useState<Record<number, { available: number; reserved: number }>>({})
+
   const load = () => api.get<Transfer[]>('/inventory/transfers').then(r => { if (r.ok) setList(r.data ?? []) })
+  
+  const loadLocations = async () => {
+    const r = await api.get<Loc[]>('/masterdata/locations')
+    if (r.ok) setLocations(r.data ?? [])
+  }
+
   useEffect(() => {
     load()
     api.warehouseList().then(r => { if (r.ok) setWarehouses(r.data ?? []) })
-    api.get<Loc[]>('/masterdata/locations').then(r => { if (r.ok) setLocations(r.data ?? []) })
+    loadLocations()
   }, [])
+  
+  // P1: Fetch available qty for source locations when fromWh/itemCode change
+  useEffect(() => {
+    if (!fromWh || !itemCode) {
+      setSrcLocQtys({})
+      return
+    }
+    // Use stockPeek to get available qty per location for this item in from warehouse
+    api.get<any>(`/masterdata/items/${encodeURIComponent(itemCode)}/inventory?warehouse_id=${fromWh}`)
+      .then(r => {
+        if (r.ok && r.data?.rows) {
+          const qtys: Record<number, { available: number; reserved: number }> = {}
+          for (const row of r.data.rows) {
+            if (row.location_id && (row.actual_qty ?? row.qty) != null) {
+              qtys[row.location_id] = {
+                available: (row.actual_qty ?? row.qty) - (row.reserved_qty ?? 0),
+                reserved: row.reserved_qty ?? 0
+              }
+            }
+          }
+          setSrcLocQtys(qtys)
+        }
+      })
+  }, [fromWh, itemCode])
+  
+  // P1: Fetch available qty for destination locations when toWh changes
+  useEffect(() => {
+    if (!toWh || !itemCode) {
+      setRecvLocQtys({})
+      return
+    }
+    api.get<any>(`/masterdata/items/${encodeURIComponent(itemCode)}/inventory?warehouse_id=${toWh}`)
+      .then(r => {
+        if (r.ok && r.data?.rows) {
+          const qtys: Record<number, { available: number; reserved: number }> = {}
+          for (const row of r.data.rows) {
+            if (row.location_id && (row.actual_qty ?? row.qty) != null) {
+              qtys[row.location_id] = {
+                available: (row.actual_qty ?? row.qty) - (row.reserved_qty ?? 0),
+                reserved: row.reserved_qty ?? 0
+              }
+            }
+          }
+          setRecvLocQtys(qtys)
+        }
+      })
+  }, [toWh, itemCode])
+  
   const pager = useClientPager(list)
 
   const create = async () => {
@@ -61,8 +125,8 @@ export default function Transfers() {
   }
 
   const open = async (id: number) => {
-    const r = await api.get(`/inventory/transfers/${id}`)
-    if (r.ok) setSelected(r.data)
+    const r = await api.get<Transfer>(`/inventory/transfers/${id}`)
+    if (r.ok && r.data) setSelected(r.data)
   }
 
   const ship = async (id: number) => {
@@ -87,8 +151,18 @@ export default function Transfers() {
     }
   }
 
-  const fromLocs = locations.filter(l => String(l.warehouse_id) === fromWh)
-  const toLocs = locations.filter(l => selected?.to_warehouse_id ? l.warehouse_id === selected.to_warehouse_id : String(l.warehouse_id) === toWh)
+  // P0: Filter source locations by from warehouse (storage/pick_face only)
+  const fromLocs = locations.filter(l => 
+    l.warehouse_id === Number(fromWh) && 
+    (l.location_type === 'storage' || l.location_type === 'pick_face')
+  )
+  
+  // P0: Filter destination locations by TO warehouse (storage/pick_face/incoming)
+  const destWarehouseId = selected?.to_warehouse_id ?? Number(toWh)
+  const toLocs = locations.filter(l => 
+    l.warehouse_id === destWarehouseId && 
+    (l.location_type === 'storage' || l.location_type === 'pick_face' || l.location_type === 'incoming')
+  )
 
   return (
     <div className="desk-page space-y-3">
@@ -121,8 +195,18 @@ export default function Transfers() {
               <label className="erpnext-label">Source location (optional)</label>
               <select className="erpnext-input" value={srcLoc} onChange={e => setSrcLoc(e.target.value)}>
                 <option value="">Auto (FEFO)</option>
-                {fromLocs.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                {fromLocs.map(l => {
+                  const q = srcLocQtys[l.id]
+                  const avail = q ? q.available : 0
+                  const reserved = q ? q.reserved : 0
+                  return <option key={l.id} value={l.id} style={{ color: avail > 0 ? 'inherit' : '#999' }}>
+                    {l.code} {avail > 0 ? `(${avail} avail)` : reserved > 0 ? `(reserved: ${reserved})` : '(empty)'}
+                  </option>
+                })}
               </select>
+              {srcLoc && srcLocQtys[Number(srcLoc)] && srcLocQtys[Number(srcLoc)].available < Number(qty) && (
+                <div className="text-xs text-red-500 mt-1">⚠ Selected location has insufficient stock ({srcLocQtys[Number(srcLoc)].available} available, need {qty})</div>
+              )}
             </div>
             <div>
               <label className="erpnext-label">Item *</label>
@@ -203,7 +287,13 @@ export default function Transfers() {
                   <label className="erpnext-label">Receive into location</label>
                   <select className="erpnext-input" value={recvLoc} onChange={e => setRecvLoc(e.target.value)}>
                     <option value="">INCOMING-01 (default)</option>
-                    {toLocs.map(l => <option key={l.id} value={l.id}>{l.code}</option>)}
+                    {toLocs.map(l => {
+                      const q = recvLocQtys[l.id]
+                      const avail = q ? q.available : 0
+                      return <option key={l.id} value={l.id} style={{ color: avail >= 0 ? 'inherit' : '#999' }}>
+                        {l.code} {avail > 0 ? `(${avail} on hand)` : avail === 0 ? '(empty)' : ''}
+                      </option>
+                    })}
                   </select>
                   <button className="erpnext-btn-primary" onClick={() => receive(selected.id)}>Receive</button>
                 </div>

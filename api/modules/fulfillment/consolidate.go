@@ -24,6 +24,11 @@ func Consolidate(ctx context.Context, tx shared.DBTX, in ConsolidateInput) (int,
 		return 0, "", fmt.Errorf("quantity > 0 required")
 	}
 
+	// Fix #2: Advisory lock to prevent concurrent Consolidate + AssignToBox on same item
+	lockKey1 := int64(in.PickListID) << 32
+	lockKey2 := int64(hashItemCode(in.ItemCode))
+	_, _ = tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, lockKey1, lockKey2)
+
 	var wolID int
 	var required, consolidated float64
 	err := tx.QueryRow(ctx, `
@@ -36,7 +41,9 @@ func Consolidate(ctx context.Context, tx shared.DBTX, in ConsolidateInput) (int,
 	if err != nil {
 		return 0, "", fmt.Errorf("no wave order line for item %s on order %d", in.ItemCode, in.SalesOrderID)
 	}
-	if consolidated+in.Quantity > required+0.0001 {
+	// Fix #9: Use relative tolerance
+	tolerance := required * 0.0001
+	if consolidated+in.Quantity > required+tolerance {
 		return 0, "", fmt.Errorf("%w: consolidating %.0f would exceed required %.0f", ErrOverPack, in.Quantity, required-consolidated)
 	}
 

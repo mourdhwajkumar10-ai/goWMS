@@ -3,31 +3,9 @@
    Scanner is the hero. Everything else supports it.
    ═══════════════════════════════════════════ */
 
-/* ─── Tokens ─── */
-:root {
-  --rw-accent: #2563eb;
-  --rw-accent-hover: #1d4ed8;
-  --rw-accent-light: #dbeafe;
-  --rw-bg: #ffffff;
-  --rw-bg-2: #f8fafc;
-  --rw-bg-3: #f1f5f9;
-  --rw-border: #e2e8f0;
-  --rw-border-hover: #cbd5e1;
-  --rw-text: #0f172a;
-  --rw-text-dim: #64748b;
-  --rw-text-muted: #94a3b8;
-  --rw-radius: 12px;
-  --rw-radius-sm: 8px;
-  --rw-shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
-  --rw-shadow-md: 0 4px 12px rgba(0,0,0,0.08);
-  --rw-shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
-  --rw-success: #10b981;
-  --rw-success-bg: #ecfdf5;
-  --rw-error: #ef4444;
-  --rw-error-bg: #fef2f2;
-  --rw-warning: #f59e0b;
-  --rw-warning-bg: #fffbeb;
-}
+@import './tokens.css';
+
+/* ─── Page ─── */
 
 /* ─── Page ─── */
 .rw-page {
@@ -2097,14 +2075,7 @@
   line-height: 1.45;
   color: var(--rw-text-dim);
 }
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--rw-text-dim);
-  white-space: nowrap;
-}
+
 .pl-live-dot {
   width: 8px;
   height: 8px;
