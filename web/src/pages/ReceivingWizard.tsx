@@ -173,16 +173,16 @@ export default function ReceivingWizard() {
   const pendingBoxes = useMemo(() => {
     const q = boxQuery.trim().toLowerCase();
     const list = phase === "item_verify"
-      ? boxes.filter(b => b.status !== "verified" && (b.status === "received" || b.status === "exception"))
-      : boxes.filter(b => b.status !== "verified" && b.status !== "received" && b.status !== "exception");
+      ? boxes.filter(b => !["verified", "item_verified", "completed"].includes(String(b.status).toLowerCase()) && (b.status === "received" || b.status === "box_verified" || b.status === "exception" || b.status === "rejected"))
+      : boxes.filter(b => !["verified", "item_verified", "completed"].includes(String(b.status).toLowerCase()) && b.status !== "received" && b.status !== "box_verified" && b.status !== "exception" && b.status !== "rejected");
     if (!q) return list;
     return list.filter(b => String(b.box_number).toLowerCase().includes(q));
   }, [boxes, phase, boxQuery]);
   const cnt = useMemo(() => {
     let verified = 0, received = 0, damaged = 0;
     for (const b of boxes) {
-      if (b.status === "verified") verified++;
-      if (b.status === "received" || b.status === "verified" || b.status === "exception") received++;
+      if (["verified", "item_verified", "completed"].includes(String(b.status).toLowerCase())) verified++;
+      if (["received", "box_verified", "item_verified", "completed", "verified", "exception", "rejected"].includes(String(b.status).toLowerCase())) received++;
       if (b.condition && b.condition !== "ok") damaged++;
     }
     return { verified, received, damaged, total: boxes.length, pendDock: boxes.length - received, pendItems: received - verified };
@@ -254,9 +254,9 @@ export default function ReceivingWizard() {
       }
       const nextAction = r.data.next_action as string;
       const nextItems: BoxItem[] = r.data.items || items;
-      const bn = r.data.box_number || snapshot.box_number;
-      if (nextAction === "already_verified") {
-        toast(r.data.message || "Already item-verified — closed for re-scan", "warning");
+      const bn = r.data.box_number || snapshot.box_number;      if (nextAction === "already_verified") {
+        toast(r.data.message || "Already counted — this box was already item-verified", "warning");
+
         refreshProg();
         return true;
       }
@@ -304,17 +304,14 @@ export default function ReceivingWizard() {
       if (!r.ok) { doFlash("error"); toast(r.error || "Box not found", "error"); return false; }
       const next = r.data.next_action as string;
       const items: BoxItem[] = r.data.items || [];
-      if (next === "already_verified") {
+      if (next === "already_verified" || next === "already_scanned") {
         doFlash("success");
-        toast(r.data.message || "Already item-verified — closed for re-scan", "warning");
+        setScanReason(r.data.message || "Already counted");
+        setScanState("warning");
+        toast(r.data.message || "Already counted", "warning");
         refreshProg();
-        return true;
-      }
-      if (next === "already_scanned") {
-        doFlash("success");
-        toast(r.data.message || "Already counted at the dock", "warning");
-        refreshProg();
-        return true;
+        setTimeout(() => { setScanState("idle"); setScanReason(undefined); }, 1400);
+        return false;
       }
       if (next === "scan_items") {
         doFlash("success");
@@ -512,6 +509,14 @@ export default function ReceivingWizard() {
     phase === "item_verify"
       ? (cnt.total > 0 ? cnt.verified : (stats?.boxes_verified ?? 0))
       : (cnt.total > 0 ? cnt.received : (stats?.boxes_received ?? 0));
+  const boxStatus = (status: string, condition?: string) => {
+    const st = String(status || "").toLowerCase();
+    if (st === "item_verified" || st === "verified" || st === "completed") return { label: "Item verified", tone: "verified" };
+    if (st === "box_verified") return { label: "Box verified", tone: "box-verified" };
+    if (st === "exception" || st === "rejected" || st === "excess" || (condition && condition !== "ok")) return { label: "Exception", tone: "exception" };
+    if (st === "received" || st === "accounted") return { label: "Counted", tone: "counted" };
+    return { label: "Awaiting", tone: "awaiting" };
+  };
   const itemsComplete = phase === "item_verify" && totalBoxes > 0 && counted >= totalBoxes;
 
   const finalizeForPutaway = useCallback(async () => {
@@ -563,11 +568,11 @@ export default function ReceivingWizard() {
         units: b.total_qty || 0,
         scannedUnits: Number(b.scanned_qty) || 0,
         status:
-          b.status === "verified"
+          ["verified", "item_verified", "completed"].includes(String(b.status).toLowerCase())
             ? ("counted" as const)
             : b.condition && b.condition !== "ok"
               ? ("damaged" as const)
-              : b.status === "received" || b.status === "exception"
+              : ["received", "box_verified", "exception", "rejected"].includes(String(b.status).toLowerCase())
                 ? ("counted" as const)
                 : ("pending" as const),
       })),
@@ -872,22 +877,22 @@ export default function ReceivingWizard() {
           <div className="rw-sheet-header"><div className="rw-sheet-title">All Boxes ({cnt.received}/{cnt.total} counted · {cnt.verified} item-checked)</div><button className="rw-sheet-close" onClick={() => setShowAll(false)}>✕</button></div>
           <div className="rw-sheet-body">
             {boxes.map((box: any) => {
-              const isVerified = box.status === "verified";
-              const isReceived = box.status === "received" || box.status === "exception";
-              const damaged = box.condition && box.condition !== "ok";
-              const st = isVerified ? "verified" : damaged ? "excess" : isReceived ? "scanning" : "expected";
-              const badge = isVerified ? "Done" : damaged ? "Damaged" : isReceived ? "Counted" : "Scan";
+              const state = boxStatus(box.status, box.condition);
+              const isVerified = state.tone === "verified";
+              const isReceived = ["received", "box_verified", "exception", "rejected", "item_verified", "verified", "completed"].includes(String(box.status).toLowerCase());
+              const st = state.tone;
+              const badge = state.label;
               return <div key={box.id || box.box_number} className="rw-box-row" data-status={st} onClick={() => {
                 setShowAll(false);
                 if (isVerified) {
-                  toast("Already item-verified — closed for re-scan", "warning");
+                  toast("Already counted — this box was already item-verified", "warning");
                   return;
                 }
                 void handleBoxScan(box.box_number);
               }}>
-                <div className="rw-box-row-dot" />
+                <div className={`rw-box-row-dot rw-box-row-dot-${state.tone}`} />
                 <div className="rw-box-row-info"><div className="rw-box-row-num">{cut(box.box_number, 24)}</div><div className="rw-box-row-meta">{box.item_count || 0} items · {box.scanned_qty || 0}/{box.total_qty || 0} units</div></div>
-                <span className="rw-box-row-badge">{badge}</span>
+                <span className={`rw-box-row-badge rw-box-row-badge-${state.tone}`}>{badge}</span>
                 {!isVerified && !transporterSignedOff && (
                   <button type="button" className="rw-box-row-dmg" onClick={(e) => { e.stopPropagation(); setShowAll(false); void markBoxDamaged(box.box_number); }}>Damaged</button>
                 )}

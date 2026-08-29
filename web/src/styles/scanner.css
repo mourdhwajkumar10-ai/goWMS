@@ -719,6 +719,21 @@ button.floor-drawer-head.brand-home:focus-visible {
 }
 .scan-badge.ok   { background: oklch(0.7 0.16 155 / 0.14); color: oklch(0.45 0.12 155); }
 .scan-badge.warn { background: oklch(0.78 0.15 78 / 0.22); color: oklch(0.48 0.14 78); border: 1px solid oklch(0.78 0.15 78 / 0.35); }
+.scan-duplicate-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border: 1px solid oklch(0.78 0.15 78 / 0.55);
+  border-radius: var(--radius-lg);
+  background: var(--warning);
+  color: var(--warning-foreground);
+  font-size: 14px;
+  font-weight: 700;
+  font-family: var(--sm-font);
+  animation: verdict 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
 .scan-badge.err  { background: var(--destructive); color: var(--destructive-foreground); border: 1px solid oklch(0.6 0.198 24 / 0.9); box-shadow: 0 1px 6px oklch(0.6 0.198 24 / 0.25); }
 .scan-badge.info { background: oklch(0.56 0.18 250 / 0.10); color: var(--primary); }
 

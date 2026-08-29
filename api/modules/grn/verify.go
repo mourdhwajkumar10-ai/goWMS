@@ -134,13 +134,27 @@ func openBoxForVerify(db *pgxpool.Pool) fiber.Handler {
 		if st == "missing" || st == "expected" || st == "pending" {
 			return shared.Err(c, fiber.StatusBadRequest, "box not received yet — scan during box receiving first")
 		}
-		if st == "verified" {
-			return shared.OK(c, fiber.Map{"id": cartonID, "carton_no": cNo, "status": status, "already_verified": true})
+		if st == "item_verified" || st == "verified" || st == "completed" {
+			return shared.Err(c, fiber.StatusConflict, "box already item verified")
+		}
+		if st == "exception" || st == "rejected" || st == "excess" {
+			return shared.Err(c, fiber.StatusConflict, "box requires review before verification")
+		}
+		if st != "received" && st != "box_verified" {
+			return shared.Err(c, fiber.StatusConflict, "box is not ready for item verification")
+		}
+		if st == "received" {
+			if _, err := db.Exec(c.Context(), `
+				UPDATE grn_cartons SET status='box_verified', verified_at=NULL, verified_by=NULL
+				WHERE id=$1 AND grn_session_id=$2 AND status='received'`, cartonID, sessionID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			status = "box_verified"
 		}
 		_, _ = db.Exec(c.Context(), `
 			UPDATE grn_sessions SET active_verify_carton_id=$2, status='item_verification', updated_at=now()
 			WHERE id=$1 AND status NOT IN ('closed','completed')`, sessionID, cartonID)
-		writeEvent(db, c, sessionID, "BOX_OPENED_FOR_VERIFY", fiber.Map{"box_no": cNo})
+		writeEvent(db, c, sessionID, "BOX_OPENED_FOR_VERIFY", fiber.Map{"box_no": cNo, "result": "box_verified"})
 		contents, _ := loadBoxContents(db, c, cartonID)
 		return shared.OK(c, fiber.Map{
 			"id": cartonID, "carton_no": cNo, "status": status, "lines": contents,
@@ -607,7 +621,7 @@ func tryAutoCloseBox(db *pgxpool.Pool, c *fiber.Ctx, sessionID, cartonID int, bo
 		return false, ""
 	}
 	_, _ = db.Exec(c.Context(), `
-		UPDATE grn_cartons SET status='verified', verified_at=now(), verified_by=$2 WHERE id=$1`,
+		UPDATE grn_cartons SET status='item_verified', verified_at=now(), verified_by=$2 WHERE id=$1 AND status IN ('box_verified','received')`,
 		cartonID, userID(c))
 	_, _ = db.Exec(c.Context(), `
 		UPDATE grn_sessions SET active_verify_carton_id=NULL WHERE id=$1 AND active_verify_carton_id=$2`,
@@ -779,7 +793,7 @@ func forceCloseBox(db *pgxpool.Pool) fiber.Handler {
 		empty := reason == "empty" || reason == "empty_box"
 		status := "exception"
 		if !hasPL && !empty {
-			status = "verified"
+			status = "item_verified"
 		}
 		_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status=$3, verified_at=now(), verified_by=$2 WHERE id=$1`, body.CartonID, userID(c), status)
 		_, _ = db.Exec(c.Context(), `UPDATE grn_sessions SET active_verify_carton_id=NULL WHERE id=$1`, sessionID)

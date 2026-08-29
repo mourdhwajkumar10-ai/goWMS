@@ -1,4 +1,4 @@
-export type ScanState = 'idle' | 'accepted' | 'rejected' | 'timeout'
+export type ScanState = 'idle' | 'accepted' | 'warning' | 'rejected' | 'timeout'
 
 type Props = {
   state: ScanState

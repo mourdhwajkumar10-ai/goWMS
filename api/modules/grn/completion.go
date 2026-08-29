@@ -1,6 +1,7 @@
 package grn
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -211,6 +212,19 @@ func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "cannot complete verification from draft status — activate the session first")
 		}
 		healFalsePOExcess(c, db, sessionID)
+
+		var incompleteBoxes, blockedBoxes int
+		_ = db.QueryRow(c.Context(), `
+			SELECT
+				COUNT(*) FILTER (WHERE status IN ('received','box_verified')),
+				COUNT(*) FILTER (WHERE status IN ('exception','rejected','excess','missing'))
+			FROM grn_cartons
+			WHERE grn_session_id=$1 AND carton_no <> 'CONSOLIDATED'`, sessionID).
+			Scan(&incompleteBoxes, &blockedBoxes)
+		if incompleteBoxes > 0 || blockedBoxes > 0 {
+			return shared.Err(c, fiber.StatusBadRequest,
+				fmt.Sprintf("cannot complete verification: %d boxes still need item verification, %d boxes require review", incompleteBoxes, blockedBoxes))
+		}
 
 		rows, err := db.Query(c.Context(), `
 			SELECT gl.id, COALESCE(gc.carton_no,''), gl.item_code, COALESCE(gl.invoice_no,''),
@@ -459,10 +473,10 @@ func finalizeGRN(db *pgxpool.Pool) fiber.Handler {
 		var boxExp, boxRecv, boxMiss, boxExcess int
 		_ = db.QueryRow(c.Context(), `
 			SELECT
-			  COUNT(*) FILTER (WHERE COALESCE(is_expected,false) OR status IN ('expected','missing','received','accounted','verified','exception')),
-			  COUNT(*) FILTER (WHERE status IN ('received','accounted','verified','exception')),
+			  COUNT(*) FILTER (WHERE COALESCE(is_expected,false) OR status IN ('expected','missing','received','accounted','box_verified','item_verified','completed','verified','exception','rejected')),
+			  COUNT(*) FILTER (WHERE status IN ('received','accounted','box_verified','item_verified','completed','verified','exception','rejected')),
 			  COUNT(*) FILTER (WHERE status='missing'),
-			  COUNT(*) FILTER (WHERE status='excess')
+			  COUNT(*) FILTER (WHERE status IN ('excess','exception','rejected'))
 			FROM grn_cartons WHERE grn_session_id=$1 AND carton_no <> 'CONSOLIDATED'`, sessionID).
 			Scan(&boxExp, &boxRecv, &boxMiss, &boxExcess)
 

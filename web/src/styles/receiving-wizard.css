@@ -715,7 +715,17 @@
 
 .rw-toast-success { background: var(--rw-success); color: white; }
 .rw-toast-error { background: var(--rw-error); color: white; }
-.rw-toast-warning { background: var(--rw-warning); color: white; }
+.rw-toast-warning { background: var(--warning, #f5c542); color: var(--warning-foreground, #3b2f00); }
+
+/* Duplicate/already-counted boxes are warnings, not successful blue counts. */
+.rw-box-row-badge-counted { background: var(--warning, #f5c542); color: var(--warning-foreground, #3b2f00); }
+.rw-box-row-badge-box-verified { background: var(--warning, #f5c542); color: var(--warning-foreground, #3b2f00); }
+.rw-box-row-badge-verified { background: var(--accent, #22c55e); color: var(--accent-foreground, #fff); }
+.rw-box-row-badge-exception { background: var(--destructive, #ef4444); color: var(--destructive-foreground, #fff); }
+.rw-box-row-dot-counted,
+.rw-box-row-dot-box-verified { background: var(--warning, #f5c542); }
+.rw-box-row-dot-verified { background: var(--accent, #22c55e); }
+.rw-box-row-dot-exception { background: var(--destructive, #ef4444); }
 
 @keyframes rw-toast-in {
   from { opacity: 0; transform: translateY(16px) scale(0.95); }

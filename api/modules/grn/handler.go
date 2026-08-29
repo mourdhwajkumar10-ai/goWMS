@@ -220,7 +220,7 @@ func listSessions(db *pgxpool.Pool) fiber.Handler {
 				COALESCE(s.delivery_no,''),
 				COALESCE(s.packing_list_no,''), COALESCE(s.packing_list_filename,''), COALESCE(s.purchase_order_id,0),
 				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id) AS box_count,
-				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id AND c.status IN ('verified','received')) AS boxes_received,
+				(SELECT COUNT(*) FROM grn_cartons c WHERE c.grn_session_id = s.id AND c.status IN ('received','box_verified','item_verified','completed','verified')) AS boxes_received,
 				(SELECT COUNT(*) FROM grn_lines l JOIN grn_cartons c ON c.id = l.grn_carton_id WHERE c.grn_session_id = s.id) AS item_count,
 				(SELECT COALESCE(SUM(l.scanned_qty),0) FROM grn_lines l JOIN grn_cartons c ON c.id = l.grn_carton_id WHERE c.grn_session_id = s.id) AS items_scanned,
 				(SELECT COUNT(*) FROM grn_exceptions e WHERE e.grn_session_id = s.id AND e.status = 'open') AS exceptions_open
@@ -535,7 +535,7 @@ func doScanCarton(c *fiber.Ctx, db *pgxpool.Pool, sessionID int, cartonNo, condi
 		SELECT
 			EXISTS(SELECT 1 FROM grn_cartons WHERE grn_session_id=$1 AND COALESCE(is_expected,false)=true),
 			COALESCE((SELECT expected_boxes FROM grn_sessions WHERE id=$1),0),
-			(SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1 AND status IN ('received','accounted','verified','exception','excess'))
+			(SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1 AND status IN ('received','accounted','box_verified','item_verified','completed','verified','exception','excess'))
 	`, sessionID).Scan(&hasExpectedList, &expectedBoxes, &alreadyReceived)
 
 	newStatus, excess := classifyNewBox(hasExpectedList, expectedBoxes, alreadyReceived)

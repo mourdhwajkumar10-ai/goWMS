@@ -17,7 +17,9 @@ export default function ScanVerdict({ state, code, reason }: Props) {
       ? { cls: 'ok', label: 'Counted', Icon: Check }
       : state === 'rejected'
         ? { cls: 'err', label: 'Rejected', Icon: X }
-        : { cls: 'warn', label: 'Try again', Icon: RotateCcw }
+        : state === 'warning'
+          ? { cls: 'warn', label: 'Already counted', Icon: RotateCcw }
+          : { cls: 'warn', label: 'Try again', Icon: RotateCcw }
   const { cls, label, Icon } = tone
   return (
     <div className={`scan-verdict ${cls}`} aria-live="assertive">

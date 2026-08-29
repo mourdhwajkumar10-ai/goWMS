@@ -136,7 +136,7 @@ export default function PutawayWizard() {
   const [selectedToteItemId, setSelectedToteItemId] = useState<number | null>(null)
   const [scannedLocation, setScannedLocation] = useState<{ id: number; code: string } | null>(null)
   const [placedAtBin, setPlacedAtBin] = useState(0)
-  const [scanState, setScanState] = useState<'idle' | 'accepted' | 'rejected'>('idle')
+  const [scanState, setScanState] = useState<'idle' | 'accepted' | 'warning' | 'rejected'>('idle')
   const [scanReason, setScanReason] = useState<string | undefined>()
   const [lastScanCode, setLastScanCode] = useState('')
   const [cameraKey, setCameraKey] = useState(0)
@@ -236,10 +236,10 @@ export default function PutawayWizard() {
     const existing = toteItems.find(t => t.item_code.toLowerCase() === clean && t.status === 'picked')
     const currentQty = existing ? existing.qty : 0
     if (currentQty + 1 > match.qty) {
-      setScanState('rejected')
-      setScanReason(`Already picked max ${match.qty}`)
+      setScanState('warning')
+      setScanReason(`Already counted: ${match.item_code} is already picked to its maximum`)
       fb.warn()
-      toast(`Already picked max ${match.qty}`, 'warn')
+      toast(`Already counted: ${match.item_code} max ${match.qty}`, 'warn')
       return false
     }
 
@@ -257,7 +257,9 @@ export default function PutawayWizard() {
     })
     if (!r.ok || !r.data?.id) {
       fb.err()
-      toast(r.error || 'Pick failed', 'err')
+      setScanState('warning')
+      setScanReason(r.error || 'Already counted or pick failed')
+      toast(r.error || 'Already counted or pick failed', 'warn')
       return false
     }
 

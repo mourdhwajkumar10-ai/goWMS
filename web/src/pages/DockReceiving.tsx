@@ -56,7 +56,7 @@ export default function DockReceiving() {
     const entry: ScanLog = { box_number: clean, message: r.ok ? r.data?.message ?? clean : r.error ?? 'err', status: 'ok', timestamp: Date.now() }
     if (r.ok) {
       const msg = r.data?.message?.toUpperCase() ?? ''
-      if (msg.includes('ALREADY') || r.data?.duplicate) { entry.status = 'warn'; fb.warn(); toast(`Duplicate: ${clean}`, 'warn'); setScanState('rejected') }
+      if (msg.includes('ALREADY') || r.data?.duplicate) { entry.status = 'warn'; fb.warn(); toast(`Already counted: ${clean}`, 'warn'); setScanState('warning'); setLastCode(clean) }
       else if (msg.includes('EXCESS')) { entry.status = 'warn'; fb.warn(); toast(`Excess box: ${clean}`, 'warn'); setScanState('rejected') }
       else { fb.ok(); setBoxesDone(d => d + 1); toast(`Box ${clean}`, 'ok'); setScanState('accepted') }
       const fresh = await api.receivingStats(sid)

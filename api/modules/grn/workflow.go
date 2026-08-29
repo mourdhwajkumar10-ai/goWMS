@@ -14,6 +14,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// nextBoxVerificationStatus returns the only allowed forward transitions in
+// the box verification workflow. Terminal and unknown states are fail-closed.
+func boxStatusesPermitSessionCompletion(statuses []string) bool {
+	for _, status := range statuses {
+		switch strings.ToLower(strings.TrimSpace(status)) {
+		case "item_verified", "completed", "verified":
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func nextBoxVerificationStatus(from, action string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(from)) {
+	case "received":
+		if strings.EqualFold(strings.TrimSpace(action), "open") {
+			return "box_verified", true
+		}
+	case "box_verified":
+		if strings.EqualFold(strings.TrimSpace(action), "item_complete") {
+			return "item_verified", true
+		}
+	}
+	return "", false
+}
+
 func canonicalStatus(status string) string {
 	s := strings.ToLower(strings.TrimSpace(status))
 	switch s {

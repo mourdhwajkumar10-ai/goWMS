@@ -40,7 +40,7 @@ func classifyNewBox(hasExpectedList bool, expectedBoxes, alreadyReceived int) (s
 // Expected / pending / missing boxes can still be received for the first time.
 func isDuplicateBoxStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "received", "accounted", "verified", "exception", "excess":
+	case "received", "accounted", "verified", "box_verified", "item_verified", "completed", "rejected", "exception", "excess":
 		return true
 	default:
 		return false

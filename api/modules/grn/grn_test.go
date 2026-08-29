@@ -187,6 +187,40 @@ func TestIsDuplicateBoxStatus(t *testing.T) {
 	}
 }
 
+func TestNextBoxVerificationStatus(t *testing.T) {
+	cases := []struct {
+		from, action, want string
+		allowed       bool
+	}{
+		{"received", "open", "box_verified", true},
+		{"box_verified", "item_complete", "item_verified", true},
+		{"item_verified", "open", "", false},
+		{"exception", "open", "", false},
+		{"rejected", "open", "", false},
+	}
+	for _, tc := range cases {
+		got, ok := nextBoxVerificationStatus(tc.from, tc.action)
+		if ok != tc.allowed || got != tc.want {
+			t.Fatalf("nextBoxVerificationStatus(%q, %q) = %q, %v; want %q, %v", tc.from, tc.action, got, ok, tc.want, tc.allowed)
+		}
+	}
+}
+
+func TestBoxStatusesPermitSessionCompletion(t *testing.T) {
+	if !boxStatusesPermitSessionCompletion([]string{"item_verified", "item_verified", "completed"}) {
+		t.Fatal("item-verified terminal boxes should permit completion")
+	}
+	if boxStatusesPermitSessionCompletion([]string{"item_verified", "received"}) {
+		t.Fatal("received box should block completion")
+	}
+	if boxStatusesPermitSessionCompletion([]string{"item_verified", "exception"}) {
+		t.Fatal("exception box should block completion")
+	}
+	if boxStatusesPermitSessionCompletion([]string{"item_verified", "rejected"}) {
+		t.Fatal("rejected box should block completion")
+	}
+}
+
 func TestRollupPartReconciliation(t *testing.T) {
 	got := rollupPartReconciliation([]partBoxQty{
 		{PartNo: "12345", BoxNo: "BOX-001", Expected: 20, Scanned: 20},

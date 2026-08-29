@@ -29,6 +29,7 @@ export default function BoxVerification() {
   const [cameraKey, setCameraKey] = useState(0)
 
   const counted = boxes.filter((b) => b.status === 'counted').length
+  const [warning, setWarning] = useState('')
   const total = boxes.length
   const nextBox = boxes.find((b) => b.status === 'pending')
 
@@ -47,6 +48,7 @@ export default function BoxVerification() {
         fb.warn()
         setScanState('rejected')
         setReason('Already counted')
+        setWarning(`Already counted: ${code}`)
         setTimeout(() => setScanState('idle'), 1200)
         return
       }
@@ -54,6 +56,7 @@ export default function BoxVerification() {
       setScanState('accepted')
       setBoxes((prev) => prev.map((b) => (b.id === code ? { ...b, status: 'counted' as const } : b)))
       setReason(undefined)
+      setWarning('')
       setTimeout(() => setScanState('idle'), 900)
     },
     [boxes, fb],
@@ -92,6 +95,12 @@ export default function BoxVerification() {
         tab={tab}
         onTabChange={setTab}
       />
+
+      {warning && (
+        <div className="scan-duplicate-warning" role="alert">
+          <span aria-hidden="true">⚠</span> {warning}
+        </div>
+      )}
 
       {tab === 'boxes' ? (
         <>
