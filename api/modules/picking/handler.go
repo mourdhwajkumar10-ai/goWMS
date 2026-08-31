@@ -473,6 +473,14 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			})
 		}
 
+		// Lock the pick list row so concurrent scans on the same list serialize.
+		// This mirrors fulfillment.ConfirmPick's FOR UPDATE on pick_lists and
+		// prevents two operators from reading the same picked_qty simultaneously.
+		var lockWH int
+		_ = tx.QueryRow(c.Context(),
+			`SELECT warehouse_id FROM pick_lists WHERE id=$1 FOR UPDATE`,
+			body.PickListID).Scan(&lockWH)
+
 		var (
 			itemID                     int
 			itemCode, locCode, status  string
@@ -483,7 +491,8 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 			err = tx.QueryRow(c.Context(), `
 				SELECT id, item_code, COALESCE(location_code,''), COALESCE(status,'pending'),
 				       COALESCE(ordered_qty,0), COALESCE(picked_qty,0), COALESCE(allocated_qty,0), balance_id
-				FROM pick_list_items WHERE id=$1 AND pick_list_id=$2`,
+				FROM pick_list_items WHERE id=$1 AND pick_list_id=$2
+				FOR UPDATE`,
 				body.PickListItemID, body.PickListID).
 				Scan(&itemID, &itemCode, &locCode, &status, &ordered, &picked, &allocated, &balanceID)
 		} else {
@@ -497,7 +506,8 @@ func logPickScan(db *pgxpool.Pool) fiber.Handler {
 				ORDER BY
 				  CASE WHEN location_code = $3 THEN 0 ELSE 1 END,
 				  expiry_date NULLS LAST, id
-				LIMIT 1`,
+				LIMIT 1
+				FOR UPDATE`,
 				body.PickListID, body.ItemCode, body.ScannedBin).
 				Scan(&itemID, &itemCode, &locCode, &status, &ordered, &picked, &allocated, &balanceID)
 		}
