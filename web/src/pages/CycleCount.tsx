@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Plus, ScanLine, Search } from 'lucide-react'
+import { ArrowLeft, Plus, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
@@ -252,49 +252,35 @@ export default function CycleCount() {
               </button>
             )}
 
-            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-              <CameraScanner
-                open
-                embedded
-                minimal
-                continuous
-                onClose={() => {}}
-                onScan={(code) => {
-                  const packed = parsePackedItemQR(String(code || '').trim())
-                  setAddItemCode(packed ? packed.itemCode : String(code || '').trim())
-                }}
-              />
-            </div>
+            <ScanCard
+              state="idle"
+              code={addItemCode}
+              onManualEntry={(raw) => {
+                const packed = parsePackedItemQR(raw)
+                setAddItemCode(packed ? packed.itemCode : raw)
+              }}
+              onMarkDamaged={() => {}}
+              canMarkDamaged={false}
+              showMarkDamaged={false}
+              onRestart={() => setAddItemCode('')}
+              showActionRow={false}
+              placeholder="Item code…"
+              readyTitle="Add count line"
+              readySubtitle={selectedSheet.sheet_no}
+            />
 
-            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-              <div className="scan-input-chip">
-                <ScanLine size={16} strokeWidth={1.8} />
-                <input
-                  value={addItemCode}
-                  onChange={e => {
-                    const packed = parsePackedItemQR(e.target.value)
-                    setAddItemCode(packed ? packed.itemCode : e.target.value)
-                  }}
-                  placeholder="Item code…"
-                  autoComplete="off"
-                />
-                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan item">
-                  <ScanLine size={16} />
-                </button>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input
-                  className="scan-count-input"
-                  style={{ width: 88 }}
-                  type="number"
-                  value={addSystemQty}
-                  onChange={e => setAddSystemQty(e.target.value)}
-                  placeholder="Sys qty"
-                />
-                <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={() => void addLine()}>
-                  Add line
-                </button>
-              </div>
+            <div style={{ display: 'flex', gap: 8, padding: '0 var(--scan-pad-x, 16px)' }}>
+              <input
+                className="scan-count-input"
+                style={{ width: 88 }}
+                type="number"
+                value={addSystemQty}
+                onChange={e => setAddSystemQty(e.target.value)}
+                placeholder="Sys qty"
+              />
+              <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={() => void addLine()}>
+                Add line
+              </button>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>

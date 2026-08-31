@@ -16,7 +16,7 @@ import { PageHead } from '../components/desktop/PageHead'
 import { Badge, statusToVariant } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import '../styles/scanner.css'
 
 interface PickList {
@@ -457,43 +457,31 @@ export default function Pick() {
               </div>
             </div>
 
-            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
-              <CameraScanner
-                open
-                embedded
-                minimal
-                continuous
-                onClose={() => {}}
-                onScan={(code) => {
-                  const clean = String(code || '').trim()
-                  if (!clean) return
-                  setScanTarget('item')
-                  setScanItem(clean)
-                  const line = selectedList.items?.find((x: PickItem) => x.id === scanLineId)
-                    || selectedList.items?.find((x: PickItem) => x.item_code.toUpperCase() === clean.toUpperCase() && x.status !== 'picked')
-                  if (line) {
-                    setScanLineId(line.id)
-                    setScanBin(line.location_code || line.bin_location || scanBin)
-                    setScanQty(String(Math.max(1, (line.allocated_qty || line.qty) - line.picked_qty)))
-                  }
-                }}
-              />
-            </div>
+            <ScanCard
+              state="idle"
+              code={scanItem}
+              onManualEntry={(itemCode) => {
+                setScanTarget('item')
+                setScanItem(itemCode)
+                const line = selectedList.items?.find((x: PickItem) => x.id === scanLineId)
+                  || selectedList.items?.find((x: PickItem) => x.item_code.toUpperCase() === itemCode.toUpperCase() && x.status !== 'picked')
+                if (line) {
+                  setScanLineId(line.id)
+                  setScanBin(line.location_code || line.bin_location || scanBin)
+                  setScanQty(String(Math.max(1, (line.allocated_qty || line.qty) - line.picked_qty)))
+                }
+              }}
+              onMarkDamaged={() => {}}
+              canMarkDamaged={false}
+              showMarkDamaged={false}
+              onRestart={() => setScanItem('')}
+              showActionRow={false}
+              placeholder="Item code…"
+              readyTitle="Scan item"
+              readySubtitle={selectedList.name}
+            />
 
             <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-              <div className="scan-input-chip">
-                <CheckSquare size={16} strokeWidth={1.8} />
-                <input
-                  value={scanItem}
-                  onChange={e => setScanItem(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void logScan() } }}
-                  placeholder="Item code…"
-                  autoComplete="off"
-                />
-                <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => { setScanTarget('item'); setShowScanner(true) }} aria-label="Scan item">
-                  <ScanLine size={16} />
-                </button>
-              </div>
               <div className="scan-input-chip">
                 <MapPin size={16} strokeWidth={1.8} />
                 <input

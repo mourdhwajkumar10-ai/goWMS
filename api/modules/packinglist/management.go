@@ -159,11 +159,15 @@ func getPackingList(db *pgxpool.Pool) fiber.Handler {
 		if boxTotal == 0 && poName != "" {
 			tx, terr := db.Begin(c.Context())
 			if terr == nil {
-				boxes, _ := backfillBoxesFromPO(c.Context(), tx, id, poName)
-				if boxes > 0 {
+				boxes, _, backfillErr := backfillBoxesFromPO(c.Context(), tx, id, poName)
+				if backfillErr != nil {
+					_ = tx.Rollback(c.Context())
+				} else if boxes > 0 {
 					_, _ = tx.Exec(c.Context(), `UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1`, id, boxes)
+					_ = tx.Commit(c.Context())
+				} else {
+					_ = tx.Rollback(c.Context())
 				}
-				_ = tx.Commit(c.Context())
 			}
 		}
 

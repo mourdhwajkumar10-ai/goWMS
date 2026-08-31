@@ -78,6 +78,7 @@ export const NAV_CATALOG: NavItemDef[] = [
 
   // ── Inbound ──
   { to: '/receiving-management', label: 'Receiving', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
+  { to: '/driver-checkin', label: 'Driver Check-in', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
   { to: '/receiving', label: 'RF Scanner', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
   { to: '/exceptions', label: 'Exceptions', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'], floor: true },
   { to: '/follow-up', label: 'Follow-Up Receipts', section: 'inbound', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['receiving.view'] },
@@ -151,7 +152,7 @@ export const FLOOR_NAV: Record<string, string[]> = {
 
 /** Per-role subset of handheld / floor pages. Desk roles get all floor:true paths. */
 export const HANDHELD_BY_ROLE: Record<string, string[]> = {
-  qi: ['/receiving', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
+  qi: ['/receiving', '/driver-checkin', '/dock-receiving', '/item-verifier', '/box-verification', '/putaway-runner', '/qi', '/exceptions', '/notifications'],
   picker: ['/pick', '/stock-scan', '/cycle-count', '/quick-count', '/notifications'],
   packer: ['/pack', '/consolidate', '/notifications'],
   dispatcher: ['/dispatch', '/notifications'],

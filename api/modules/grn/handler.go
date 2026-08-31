@@ -886,23 +886,22 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		return shared.Err(c, fiber.StatusInternalServerError, "damaged location: "+err.Error())
 	}
 
-	claim, err := db.Exec(c.Context(),
+	_, err = db.Exec(c.Context(),
 		`UPDATE grn_sessions SET stock_posted_at=now()
 		 WHERE id=$1 AND stock_posted_at IS NULL AND status NOT IN ('closed','completed')`, sessionID)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
-	if claim.RowsAffected() == 0 {
-		return shared.Err(c, fiber.StatusBadRequest, "stock already posted")
-	}
 
-	// Per-line posting so batch / damage / QI routing is preserved.
+	// Per-line posting (delta when stock_posted_qty is set from a prior partial close).
 	rows, err := db.Query(c.Context(), `
 		SELECT gl.id, gl.item_code, COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0),
-		       COALESCE(gl.damaged_qty,0), COALESCE(gl.batch_no,''), COALESCE(gl.requires_qi,false), gl.status
+		       COALESCE(gl.damaged_qty,0), COALESCE(gl.batch_no,''), COALESCE(gl.requires_qi,false), gl.status,
+		       COALESCE(gl.stock_posted_qty,0)
 		FROM grn_lines gl
 		JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
-		WHERE gc.grn_session_id = $1 AND COALESCE(gl.scanned_qty,0) > 0
+		WHERE gc.grn_session_id = $1
+		  AND COALESCE(gl.scanned_qty,0) > COALESCE(gl.stock_posted_qty,0)
 		ORDER BY gl.id`, sessionID)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -918,11 +917,12 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		batch      string
 		requiresQI bool
 		status     string
+		posted     float64
 	}
 	var lines []line
 	for rows.Next() {
 		var l line
-		if err := rows.Scan(&l.id, &l.itemCode, &l.expected, &l.scanned, &l.damaged, &l.batch, &l.requiresQI, &l.status); err != nil {
+		if err := rows.Scan(&l.id, &l.itemCode, &l.expected, &l.scanned, &l.damaged, &l.batch, &l.requiresQI, &l.status, &l.posted); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		lines = append(lines, l)
@@ -939,13 +939,20 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	variances := []fiber.Map{}
 
 	for _, l := range lines {
+		delta := l.scanned - l.posted
+		if delta <= 0 {
+			continue
+		}
 		// Fix #3: Use min(scanned, damaged) for DAMAGED location to prevent phantom stock
 		// when damaged_qty > scanned_qty (e.g. manual edit or data entry error).
-		dmgPost := l.damaged
-		if dmgPost > l.scanned {
-			dmgPost = l.scanned
+		dmgPost := l.damaged - l.posted
+		if dmgPost < 0 {
+			dmgPost = 0
 		}
-		goodQty := l.scanned - dmgPost
+		if dmgPost > delta {
+			dmgPost = delta
+		}
+		goodQty := delta - dmgPost
 		if goodQty < 0 {
 			goodQty = 0
 		}
@@ -959,7 +966,6 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 
 		// Damaged → DAMAGED location (not sellable, not putaway queue for storage).
-		// Fix #3: Post min(scanned, damaged) to avoid phantom stock.
 		if dmgPost > 0 {
 			if err := shared.AdjustLocationQty(c.Context(), db, l.itemCode, wid, dmgID, l.batch, dmgPost); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -1021,9 +1027,10 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		if _, err := db.Exec(c.Context(), `
 			INSERT INTO stock_ledger_entries (item_code, warehouse, actual_qty, qty_after_transaction, voucher_type, voucher_no, posting_date, creation, batch_no)
 			VALUES ($1,$2,$3,$4,'GRN',$5,CURRENT_DATE,NOW(),$6)`,
-			l.itemCode, whCode, l.scanned, runningBal, voucherNo, batchArg); err != nil {
+			l.itemCode, whCode, delta, runningBal, voucherNo, batchArg); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
+		_, _ = db.Exec(c.Context(), `UPDATE grn_lines SET stock_posted_qty=$2 WHERE id=$1`, l.id, l.scanned)
 	}
 
 	// Backfill item weight from packing-list "Calculated Part Weight" where the
@@ -1043,17 +1050,20 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	// Update linked Purchase Order (purchase_receipt_no stores PO name).
 	// Fix #1: Only update PO received_qty when stock was just posted (not on re-entry).
 	poUpdate := fiber.Map{}
-	if claim.RowsAffected() > 0 && poName != nil && *poName != "" {
+	if len(lines) > 0 && poName != nil && *poName != "" {
 		var poID int
 		var perBilled float64
 		err = db.QueryRow(c.Context(),
 			`SELECT id, COALESCE(per_billed,0) FROM purchase_orders WHERE name=$1`, *poName).
 			Scan(&poID, &perBilled)
 		if err == nil {
-			// Aggregate received by item for PO update.
+			// Aggregate delta received by item for PO update.
 			agg := map[string]float64{}
 			for _, l := range lines {
-				agg[l.itemCode] += l.scanned
+				d := l.scanned - l.posted
+				if d > 0 {
+					agg[l.itemCode] += d
+				}
 			}
 			for itemCode, qty := range agg {
 				if _, err := db.Exec(c.Context(), `
@@ -1112,7 +1122,16 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 	if v, ok := c.Locals("grnCloseStatus").(string); ok && v != "" {
 		finalStatus = v
 	}
-	if _, err := db.Exec(c.Context(),
+	partialClose, _ := c.Locals("grnClosePartial").(bool)
+	if partialClose {
+		if _, err := db.Exec(c.Context(), `
+			UPDATE grn_sessions SET status=$2, putaway_status='deferred',
+				stock_posted_at=COALESCE(stock_posted_at,NOW()),
+				warehouse_id=COALESCE(warehouse_id,$3), active_verify_carton_id=NULL, updated_at=now()
+			WHERE id=$1`, sessionID, finalStatus, wid); err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+	} else if _, err := db.Exec(c.Context(),
 		`UPDATE grn_sessions SET status=$3, closed_at=NOW(), stock_posted_at=COALESCE(stock_posted_at,NOW()),
 		 warehouse_id=COALESCE(warehouse_id,$2), updated_at=now() WHERE id=$1`,
 		sessionID, wid, finalStatus); err != nil {
@@ -1124,18 +1143,24 @@ func doCloseSession(c *fiber.Ctx, db *pgxpool.Pool, sessionID int) error {
 		}
 	}
 
-	var supplierName string
-	_ = db.QueryRow(c.Context(), `SELECT COALESCE(supplier_name,'') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&supplierName)
-	notifications.EmitGRNClosed(c.Context(), db, sessionID, supplierName)
+	if !partialClose {
+		var supplierName string
+		_ = db.QueryRow(c.Context(), `SELECT COALESCE(supplier_name,'') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&supplierName)
+		notifications.EmitGRNClosed(c.Context(), db, sessionID, supplierName)
 
-	// Alert open backorders for items just received
-	for _, l := range lines {
-		var openQty float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(SUM(qty),0) FROM backorder_lines_v2
-			WHERE status='pending' AND item_code=$1`, l.itemCode).Scan(&openQty)
-		if openQty > 0 {
-			notifications.EmitOpenBOsForItem(c.Context(), db, l.itemCode, openQty)
+		// Alert open backorders for items just received
+		for _, l := range lines {
+			delta := l.scanned - l.posted
+			if delta <= 0 {
+				continue
+			}
+			var openQty float64
+			_ = db.QueryRow(c.Context(), `
+				SELECT COALESCE(SUM(qty),0) FROM backorder_lines_v2
+				WHERE status='pending' AND item_code=$1`, l.itemCode).Scan(&openQty)
+			if openQty > 0 {
+				notifications.EmitOpenBOsForItem(c.Context(), db, l.itemCode, openQty)
+			}
 		}
 	}
 

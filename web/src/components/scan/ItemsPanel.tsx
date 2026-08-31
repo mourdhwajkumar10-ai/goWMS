@@ -10,6 +10,9 @@ type Props = {
   receivedOverride?: number
   onFinalizePutaway?: () => void
   finalizing?: boolean
+  onPartialClose?: () => void
+  partialClosing?: boolean
+  canPartialClose?: boolean
 }
 
 export default function ItemsPanel({
@@ -20,6 +23,9 @@ export default function ItemsPanel({
   receivedOverride,
   onFinalizePutaway,
   finalizing = false,
+  onPartialClose,
+  partialClosing = false,
+  canPartialClose = false,
 }: Props) {
   const counted = boxes.filter((b) => b.status === 'counted')
   const damaged = boxes.filter((b) => b.status === 'damaged')
@@ -30,6 +36,7 @@ export default function ItemsPanel({
   const fromBoxesReceived = itemMode ? scanned(boxes) : units(counted)
   const expected = expectedOverride != null && expectedOverride > 0 ? expectedOverride : fromBoxesExpected
   const received = receivedOverride != null && receivedOverride > 0 ? receivedOverride : fromBoxesReceived
+  const shortUnits = Math.max(0, expected - received)
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       {complete && (
@@ -54,7 +61,18 @@ export default function ItemsPanel({
       <Row label="Received" value={received} tone="accent" />
       <Row label="Damaged" value={units(damaged)} tone="destructive" />
       <Row label="Rejected" value={units(flagged)} tone="destructive" />
-      <Row label="Short" value={Math.max(0, expected - received)} />
+      <Row label="Short" value={shortUnits} />
+      {canPartialClose && onPartialClose && (
+        <button
+          type="button"
+          className="scan-btn scan-btn-outline"
+          style={{ marginTop: 8, width: '100%', minHeight: 48 }}
+          disabled={partialClosing}
+          onClick={onPartialClose}
+        >
+          {partialClosing ? 'Closing GRN…' : 'Close with shortages'}
+        </button>
+      )}
       {complete && onFinalizePutaway && (
         <button
           type="button"

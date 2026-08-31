@@ -2,7 +2,6 @@ import React, { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { createPortal } from "react-dom";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
-import CameraScanner from "../components/CameraScanner";
 import ScannerLayout from "../components/ScannerLayout";
 import VerificationHeader, { type Tab as ScanTab } from "../components/scan/VerificationHeader";
 import ScanCard from "../components/scan/ScanCard";
@@ -32,6 +31,9 @@ type Step = "select_po" | "scan_box" | "scan_items" | "complete";
 const boxItemsMatched = (items: BoxItem[]) =>
   items.length > 0 && items.every(it => it.status === "damage" || (it.status !== "excess" && Number(it.scanned_qty) >= Number(it.expected_qty)));
 
+const boxHasShortages = (items: BoxItem[]) =>
+  items.some(it => it.status !== "damage" && it.status !== "excess" && Number(it.scanned_qty) < Number(it.expected_qty));
+
 export default function ReceivingWizard() {
   const navigate = useNavigate();
   const [sp] = useSearchParams();
@@ -58,6 +60,8 @@ export default function ReceivingWizard() {
   const [phase, setPhase] = useState<Phase>("box_verify");
   const [lastOkBox, setLastOkBox] = useState<PendingBox | null>(null);
   const [showSignOff, setShowSignOff] = useState(false);
+  const [showLateArrival, setShowLateArrival] = useState(false);
+  const [lateArrivalBox, setLateArrivalBox] = useState<PendingBox | null>(null);
   const [boxQuery, setBoxQuery] = useState("");
   const [poQuery, setPoQuery] = useState("");
   const [uiTab, setUiTab] = useState<ScanTab>("boxes");
@@ -66,6 +70,10 @@ export default function ReceivingWizard() {
   const [lastScanCode, setLastScanCode] = useState("");
   const [cameraKey, setCameraKey] = useState(0);
   const [finalizing, setFinalizing] = useState(false);
+  const [showBoxCloseConfirm, setShowBoxCloseConfirm] = useState(false);
+  const [pendingBoxClose, setPendingBoxClose] = useState<string | null>(null);
+  const [showPartialClose, setShowPartialClose] = useState(false);
+  const [partialClosing, setPartialClosing] = useState(false);
   const autoClosedRef = useRef<string | null>(null);
   const DR = "INCOMING-01";
 
@@ -133,7 +141,7 @@ export default function ReceivingWizard() {
 
   const transporterSignedOff =
     stats?.phase === "item_verify" ||
-    ["item_verification", "item_verification_complete", "exception_pending"].includes(
+    ["item_verification", "item_verification_complete", "exception_pending", "partially_received", "putaway_pending", "putaway_in_progress"].includes(
       String(stats?.session_status || ""),
     );
 
@@ -313,6 +321,16 @@ export default function ReceivingWizard() {
         setTimeout(() => { setScanState("idle"); setScanReason(undefined); }, 1400);
         return false;
       }
+      if (next === "late_arrival") {
+        doFlash("error");
+        setScanReason(r.data.message || "Marked missing");
+        setScanState("warning");
+        setLateArrivalBox({ box_number: r.data.box_number, item_count: r.data.item_count || items.length, items });
+        setShowLateArrival(true);
+        toast(r.data.message || "Box was marked missing at sign-off", "warning");
+        refreshProg();
+        return false;
+      }
       if (next === "scan_items") {
         doFlash("success");
         setCurBox({
@@ -418,10 +436,31 @@ export default function ReceivingWizard() {
           : prev,
       );
       const already = !!r.data.already_signed;
-      toast(r.data.message || "Transporter signed off", already ? "warning" : "success");
+      const mayGo = !!r.data.transporter_may_go;
+      toast(
+        r.data.message ||
+          (mayGo
+            ? "Transporter signed off — they may leave. Continue item verification."
+            : "Transporter signed off"),
+        already ? "warning" : "success",
+      );
       refreshProg();
     } catch (e: any) { setLoading(false); toast(e.message || "Failed", "error"); }
   }, [sid, toast, refreshProg, transporterSignedOff]);
+
+  const acceptLateArrival = useCallback(async () => {
+    if (!lateArrivalBox) return;
+    setShowLateArrival(false);
+    const snapshot = lateArrivalBox;
+    setLateArrivalBox(null);
+    setLoading(true);
+    const ok = await confirmBoxSnapshot(snapshot, "ok");
+    setLoading(false);
+    if (ok) {
+      doFlash("success");
+      toast(`Late arrival accepted — ${snapshot.box_number}`, "warning");
+    }
+  }, [lateArrivalBox, confirmBoxSnapshot, doFlash, toast]);
 
   const completeBox = useCallback(async (boxNo?: string) => {
     const bn = boxNo || curBox?.box_number;
@@ -454,6 +493,25 @@ export default function ReceivingWizard() {
     }
   }, [sid, curBox, phase, toast, refreshProg, transporterSignedOff]);
 
+  const requestCompleteBox = useCallback((boxNo?: string, items?: BoxItem[]) => {
+    const bn = boxNo || curBox?.box_number;
+    if (!sid || !bn) return;
+    const lineItems = items ?? (curBox?.box_number === bn ? curBox.items : []);
+    if (lineItems.length > 0 && boxHasShortages(lineItems)) {
+      setPendingBoxClose(bn);
+      setShowBoxCloseConfirm(true);
+      return;
+    }
+    void completeBox(bn);
+  }, [sid, curBox, completeBox]);
+
+  const confirmCompleteBox = useCallback(() => {
+    const bn = pendingBoxClose || curBox?.box_number;
+    setShowBoxCloseConfirm(false);
+    setPendingBoxClose(null);
+    if (bn) void completeBox(bn);
+  }, [pendingBoxClose, curBox, completeBox]);
+
   const handleItemScan = async (rawOverride?: string): Promise<boolean> => {
     const raw = (rawOverride ?? scanIn).trim();
     if (!raw || !sid || !curBox) return false;
@@ -475,7 +533,7 @@ export default function ReceivingWizard() {
       setCurBox({ ...curBox, items: upd });
       toast(m.message, m.status === "excess" ? "warning" : "success");
       if (shouldClose) {
-        await completeBox(curBox.box_number);
+        requestCompleteBox(curBox.box_number, upd);
       }
       return m.status !== "excess";
     } catch (e: any) { setLoading(false); toast(e.message || "Failed", "error"); return false; }
@@ -500,8 +558,8 @@ export default function ReceivingWizard() {
     if (!boxItemsMatched(curBox.items)) return;
     if (autoClosedRef.current === curBox.box_number) return;
     autoClosedRef.current = curBox.box_number;
-    void completeBox(curBox.box_number);
-  }, [step, curBox, loading, completeBox]);
+    requestCompleteBox(curBox.box_number, curBox.items);
+  }, [step, curBox, loading, requestCompleteBox]);
 
   const emptyBoxList = boxes.length === 0;
   const totalBoxes = cnt.total || stats?.total_boxes || 0;
@@ -513,11 +571,43 @@ export default function ReceivingWizard() {
     const st = String(status || "").toLowerCase();
     if (st === "item_verified" || st === "verified" || st === "completed") return { label: "Item verified", tone: "verified" };
     if (st === "box_verified") return { label: "Box verified", tone: "box-verified" };
+    if (st === "missing") return { label: "Missing", tone: "exception" };
     if (st === "exception" || st === "rejected" || st === "excess" || (condition && condition !== "ok")) return { label: "Exception", tone: "exception" };
     if (st === "received" || st === "accounted") return { label: "Counted", tone: "counted" };
     return { label: "Awaiting", tone: "awaiting" };
   };
   const itemsComplete = phase === "item_verify" && totalBoxes > 0 && counted >= totalBoxes;
+  const shortUnits = Math.max(0, (Number(stats?.total_qty_expected) || 0) - (Number(stats?.total_qty_scanned) || 0));
+  const scannedUnits = Number(stats?.total_qty_scanned) || 0;
+  const canPartialClose =
+    phase === "item_verify" &&
+    transporterSignedOff &&
+    !itemsComplete &&
+    scannedUnits > 0 &&
+    (shortUnits > 0 || counted < totalBoxes);
+
+  const partialCloseGRN = useCallback(async () => {
+    if (!sid || partialClosing) return;
+    setPartialClosing(true);
+    try {
+      const r = await api.grnPartialClose(sid);
+      setPartialClosing(false);
+      if (!r.ok) { toast(r.error || "Failed", "error"); return; }
+      setShowPartialClose(false);
+      const shortages = Number(r.data?.shortages_recorded) || 0;
+      const missing = Number(r.data?.missing_boxes) || 0;
+      const posted = Number((r.data?.posted as { posted_incoming?: number })?.posted_incoming ?? 0);
+      toast(
+        `Partially received · ${shortages} shortage${shortages === 1 ? "" : "s"} logged${missing > 0 ? ` · ${missing} missing box${missing === 1 ? "" : "es"}` : ""}${posted > 0 ? ` · ${posted} units posted` : ""}`,
+        "success",
+      );
+      refreshProg();
+      navigate("/putaway-runner");
+    } catch (e: unknown) {
+      setPartialClosing(false);
+      toast(e instanceof Error ? e.message : "Failed", "error");
+    }
+  }, [sid, partialClosing, toast, refreshProg, navigate]);
 
   const finalizeForPutaway = useCallback(async () => {
     if (!sid || finalizing) return;
@@ -689,17 +779,7 @@ export default function ReceivingWizard() {
                   onRestart={restartScanner}
                   onManualEntry={(code) => { void onBoxScan(code); }}
                   placeholder={phase === "item_verify" ? "Type box number to verify items" : "Type box number"}
-                  viewport={
-                    <div className="scan-live-viewport">
-                      <CameraScanner
-                        key={`${uiTab}-${cameraKey}`}
-                        embedded
-                        open
-                        onClose={() => {}}
-                        onScan={(code) => onBoxScan(code)}
-                      />
-                    </div>
-                  }
+                  cameraKey={`${uiTab}-${cameraKey}`}
                 />
               )}
 
@@ -747,7 +827,7 @@ export default function ReceivingWizard() {
               )}
 
               {exc.length > 0 && (
-                <div className="scan-badge warn" style={{ alignSelf: "center" }}>
+                <div className="scan-badge warn scan-rf-block" style={{ textAlign: 'center' }}>
                   ⚠ {exc.length} open exception{exc.length !== 1 ? "s" : ""}
                 </div>
               )}
@@ -763,6 +843,9 @@ export default function ReceivingWizard() {
               receivedOverride={stats?.total_qty_scanned}
               onFinalizePutaway={itemsComplete ? () => { void finalizeForPutaway(); } : undefined}
               finalizing={finalizing}
+              canPartialClose={canPartialClose}
+              onPartialClose={canPartialClose ? () => setShowPartialClose(true) : undefined}
+              partialClosing={partialClosing}
             />
           )}
         </ScannerLayout>
@@ -803,24 +886,14 @@ export default function ReceivingWizard() {
               onRestart={restartScanner}
               onManualEntry={(code) => { void onItemScanUi(code); }}
               placeholder="Type item QR"
-              viewport={
-                <div className="scan-live-viewport">
-                  <CameraScanner
-                      key={`item-${cameraKey}-${curBox.box_number}`}
-                      embedded
-                      open
-                      onClose={() => {}}
-                      onScan={(code) => onItemScanUi(code)}
-                    />
-                </div>
-              }
+              cameraKey={`item-${cameraKey}-${curBox.box_number}`}
             />
 
             <div style={{ display: "flex", gap: 8 }}>
-              <button className="scan-btn scan-btn-outline" style={{ flex: 1 }} type="button" onClick={() => { void completeBox(); }} disabled={loading}>
+              <button className="scan-btn scan-btn-outline" style={{ flex: 1 }} type="button" onClick={() => requestCompleteBox()} disabled={loading}>
                 Close box
               </button>
-              <button className="scan-btn scan-btn-primary" style={{ flex: 1 }} type="button" disabled={(!curBox.damaged && !isComplete) || loading} onClick={() => { void completeBox(); }}>
+              <button className="scan-btn scan-btn-primary" style={{ flex: 1 }} type="button" disabled={(!curBox.damaged && !isComplete) || loading} onClick={() => requestCompleteBox()}>
                 {curBox.damaged && !isComplete ? "Finish inspection" : "Complete"}
               </button>
             </div>
@@ -918,6 +991,56 @@ export default function ReceivingWizard() {
               : <p className="rw-confirm-q">All expected boxes are counted. Sign off and tell the transporter the shipment is accepted?</p>}
             <button type="button" className="rw-confirm-ok" disabled={loading} onClick={() => { void signOffBoxes(); }}>Sign off transporter</button>
             <button type="button" className="rw-confirm-cancel" disabled={loading} onClick={() => setShowSignOff(false)}>Keep scanning</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showLateArrival && lateArrivalBox && createPortal(
+        <div className="rw-confirm-overlay" onClick={() => !loading && (setShowLateArrival(false), setLateArrivalBox(null))} role="presentation">
+          <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="rw-confirm-kicker">Late arrival</div>
+            <div className="rw-confirm-boxno">{lateArrivalBox.box_number}</div>
+            <div className="rw-confirm-meta">marked missing at transporter sign-off</div>
+            <p className="rw-confirm-q">
+              This box was not scanned before the transporter left and was logged as a missing-box exception. Accept it as a late arrival and continue item verification?
+            </p>
+            <button type="button" className="rw-confirm-ok" disabled={loading} onClick={() => { void acceptLateArrival(); }}>Accept late arrival</button>
+            <button type="button" className="rw-confirm-cancel" disabled={loading} onClick={() => { setShowLateArrival(false); setLateArrivalBox(null); }}>Cancel</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showBoxCloseConfirm && curBox && createPortal(
+        <div className="rw-confirm-overlay" onClick={() => !loading && setShowBoxCloseConfirm(false)} role="presentation">
+          <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="rw-confirm-kicker">Close box with shortages</div>
+            <div className="rw-confirm-boxno">{pendingBoxClose || curBox.box_number}</div>
+            <div className="rw-confirm-meta">item verification</div>
+            <p className="rw-confirm-q">
+              {curBox.items.filter(it => it.status !== "damage" && it.status !== "excess" && Number(it.scanned_qty) < Number(it.expected_qty)).length}
+              line{curBox.items.filter(it => it.status !== "damage" && it.status !== "excess" && Number(it.scanned_qty) < Number(it.expected_qty)).length === 1 ? "" : "s"}
+              with shortages will be written to Exceptions. Continue?
+            </p>
+            <button type="button" className="rw-confirm-ok" disabled={loading} onClick={() => { void confirmCompleteBox(); }}>Close box &amp; log shortages</button>
+            <button type="button" className="rw-confirm-cancel" disabled={loading} onClick={() => { setShowBoxCloseConfirm(false); setPendingBoxClose(null); }}>Keep scanning</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {showPartialClose && createPortal(
+        <div className="rw-confirm-overlay" onClick={() => !partialClosing && setShowPartialClose(false)} role="presentation">
+          <div className="rw-confirm-card" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+            <div className="rw-confirm-kicker">Close GRN with shortages</div>
+            <div className="rw-confirm-boxno">{scannedUnits} scanned</div>
+            <div className="rw-confirm-meta">{shortUnits > 0 ? `${shortUnits} units short` : `${totalBoxes - counted} box${totalBoxes - counted === 1 ? "" : "es"} not verified`}</div>
+            <p className="rw-confirm-q">
+              This posts stock for scanned units, sets the GRN to partially received so you can receive the rest later, and writes shortages to Exceptions. Continue?
+            </p>
+            <button type="button" className="rw-confirm-ok" disabled={partialClosing} onClick={() => { void partialCloseGRN(); }}>Close with shortages</button>
+            <button type="button" className="rw-confirm-cancel" disabled={partialClosing} onClick={() => setShowPartialClose(false)}>Keep scanning</button>
           </div>
         </div>,
         document.body

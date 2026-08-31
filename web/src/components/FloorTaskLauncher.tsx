@@ -20,6 +20,7 @@ import { canUseDevice } from '../utils/permissions'
 
 const TILE_ICONS: Record<string, LucideIcon> = {
   '/receiving': PackageOpen,
+  '/driver-checkin': Truck,
   '/dock-receiving': Box,
   '/item-verifier': CheckSquare,
   '/box-verification': ScanLine,

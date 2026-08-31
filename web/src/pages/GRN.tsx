@@ -19,6 +19,7 @@ function specStatusLabel(status?: string) {
     item_verification: "ITEM_VERIFICATION",
     exception_pending: "EXCEPTION_PENDING",
     item_verification_complete: "ITEM_VERIFICATION_COMPLETE",
+    partially_received: "PARTIALLY_RECEIVED",
     putaway_pending: "PUTAWAY_PENDING",
     putaway_in_progress: "PUTAWAY_IN_PROGRESS",
     closed: "COMPLETED",
@@ -34,7 +35,7 @@ function statusBadge(status: string) {
       ? "erpnext-badge-blue"
       : s === "exception_pending" || s === "stuck" || s === "shortage" || s === "damage"
         ? "erpnext-badge-red"
-        : s === "receiving" || s === "open" || s === "ready_to_receive"
+        : s === "receiving" || s === "open" || s === "ready_to_receive" || s === "partially_received"
           ? "erpnext-badge-green"
           : "erpnext-badge-yellow";
   return <span className={`erpnext-badge ${cls}`}>{specStatusLabel(status)}</span>;
@@ -373,12 +374,12 @@ export default function GRN() {
                           Approve
                         </button>
                       )}
-                      {(s.status === "receiving" || s.status === "open") && (
+                      {(s.status === "receiving" || s.status === "open" || s.status === "partially_received" || s.status === "item_verification") && (
                         <button
                           onClick={() => handleStartReceiving(s.id)}
                           className="erpnext-btn-primary text-xs"
                         >
-                          Start Receiving
+                          {s.status === "partially_received" ? "Continue receiving" : "Start Receiving"}
                         </button>
                       )}
                     </div>

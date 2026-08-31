@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { ArrowRight } from 'lucide-react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
-import CameraScanner from '../components/CameraScanner'
 import { useHaptic } from '../hooks/useHaptic'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
 import VerificationHeader from '../components/scan/VerificationHeader'
@@ -579,18 +578,7 @@ export default function PutawayWizard() {
           onRestart={restartScanner}
           onManualEntry={onItemScan}
           placeholder="Scan item barcode..."
-          viewport={
-            <div className="scan-live-viewport">
-              <CameraScanner
-                key={cameraKey}
-                open={true}
-                embedded
-                continuous
-                onClose={restartScanner}
-                onScan={onItemScan}
-              />
-            </div>
-          }
+          cameraKey={cameraKey}
         />
         <div style={{ padding: '0 16px 8px' }}>
           {toteItems.length > 0 && (
@@ -699,18 +687,7 @@ export default function PutawayWizard() {
               onRestart={restartScanner}
               onManualEntry={onLocationScan}
               placeholder="Scan destination bin..."
-              viewport={
-                <div className="scan-live-viewport">
-                  <CameraScanner
-                    key={cameraKey}
-                    open={true}
-                    embedded
-                    continuous
-                    onClose={restartScanner}
-                    onScan={onLocationScan}
-                  />
-                </div>
-              }
+              cameraKey={cameraKey}
             />
           </>
         ) : (
@@ -766,18 +743,7 @@ export default function PutawayWizard() {
           onRestart={restartScanner}
           onManualEntry={onItemConfirm}
           placeholder={`Scan ${cti.item_code} to place...`}
-          viewport={
-            <div className="scan-live-viewport">
-              <CameraScanner
-                key={cameraKey}
-                open={true}
-                embedded
-                continuous
-                onClose={restartScanner}
-                onScan={onItemConfirm}
-              />
-            </div>
-          }
+          cameraKey={cameraKey}
         />
         <div className="scan-progress-bar" style={{ marginTop: 8 }}>
           <div className="scan-progress-fill" style={{ width: `${displayTotal > 0 ? (placedAtBin / displayTotal) * 100 : 0}%` }} />

@@ -29,46 +29,24 @@ export default function VerificationHeader({
 }: Props) {
   const pct = Math.round((counted / total) * 100)
   return (
-    <header
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 20,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 12,
-        borderBottom: '1px solid var(--border)',
-        background: 'var(--background)',
-        padding: '16px 16px 12px',
-        margin: '-20px -16px 0',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-          <button
-            type="button"
-            onClick={onBack}
-            style={{
-              width: 36,
-              height: 36,
-              display: 'grid',
-              placeItems: 'center',
-              borderRadius: 9999,
-              background: 'var(--card)',
-              border: '1px solid var(--border)',
-              color: 'var(--muted-foreground)',
-            }}
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            <span style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0,0,0,0)' }}>Back</span>
-          </button>
-          <h1 style={{ fontSize: 18, fontWeight: 600, letterSpacing: '-0.02em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {title}
-          </h1>
+    <header className="scan-verification-header">
+      <div className="scan-verification-header-top">
+        <div className="scan-verification-header-title-wrap">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="scan-verification-back"
+              aria-label="Back"
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            </button>
+          )}
+          <h1 className="scan-verification-title">{title}</h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 4, flexShrink: 0 }}>
-          <span style={{ fontSize: 36, fontWeight: 600, lineHeight: 1, letterSpacing: '-0.025em', fontVariantNumeric: 'tabular-nums' }}>{counted}</span>
-          <span style={{ fontSize: 20, fontWeight: 500, color: 'var(--muted-foreground)', fontVariantNumeric: 'tabular-nums' }}>/{total}</span>
+        <div className="scan-verification-counter">
+          <span className="scan-verification-counted">{counted}</span>
+          <span className="scan-verification-total">/{total}</span>
         </div>
       </div>
       <div className="scan-progress-bar" role="img" aria-label={`${counted} of ${total} boxes counted, ${pct} percent`}>

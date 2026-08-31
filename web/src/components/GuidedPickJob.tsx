@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import CameraScanner from './CameraScanner'
 import ScanPrompt from './scan/ScanPrompt'
 import { api } from '../services/api'
 import { notify } from './Notifications'
@@ -80,9 +79,9 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, onProgre
     setQty(Math.max(1, Math.ceil((current.allocated_qty || current.ordered_qty) - current.picked_qty)))
   }, [current?.id])
 
-  const submit = async (opts?: { override?: boolean }) => {
+  const submit = async (opts?: { override?: boolean; code?: string }) => {
     if (!current || busy) return
-    const scanned = scanValue.trim()
+    const scanned = (opts?.code ?? scanValue).trim()
     if (!scanned) return
     setBusy(true)
     try {
@@ -226,27 +225,13 @@ export default function GuidedPickJob({ pickListId, onExit, onComplete, onProgre
         value={scanValue}
         onChange={setScanValue}
         onSubmit={() => void submit()}
+        onScan={(code) => void submit({ code })}
         showQty={phase === 'item'}
         qty={qty}
         onQtyChange={setQty}
         verdict={verdict}
         reason={reason}
-        viewport={
-          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
-            <CameraScanner
-              open
-              embedded
-              minimal
-              continuous
-              onClose={() => {}}
-              onScan={(code) => {
-                const clean = String(code || '').trim()
-                if (!clean) return
-                setScanValue(clean)
-              }}
-            />
-          </div>
-        }
+        idlePrompt={phase === 'location' ? 'Scan location label' : 'Hold over the label'}
         footer={
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {overrideOpen && (

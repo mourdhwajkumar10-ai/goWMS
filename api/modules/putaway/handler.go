@@ -707,7 +707,7 @@ func buildPutawayQueueQueries() (incomingQuery, unpostedGRNQuery string) {
 		-- Join to the actual source location from GRN line's route_location
 		LEFT JOIN warehouse_locations src_wl ON src_wl.warehouse_id = COALESCE(gs.warehouse_id, 1)
 			AND src_wl.code = gl.route_location
-		WHERE gs.status IN ('putaway_pending','putaway_in_progress')
+		WHERE gs.status IN ('putaway_pending','putaway_in_progress','partially_received')
 		  AND COALESCE(gl.scanned_qty,0) > 0
 		  AND COALESCE(gs.stock_posted_at) IS NULL
 		  AND src_wl.id IS NOT NULL

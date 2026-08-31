@@ -17,6 +17,7 @@ func registerCompletionRoutes(r fiber.Router, db *pgxpool.Pool) {
 	r.Get("/session/:id/item-summary", itemSummary(db))
 	registerDocCompare(r, db)
 	r.Post("/session/:id/complete-verification", completeItemVerification(db))
+	r.Post("/session/:id/partial-close", partialCloseWithShortages(db))
 	r.Post("/session/:id/finalize", finalizeGRN(db))
 	r.Get("/exceptions", listAllExceptions(db))
 	r.Get("/follow-ups", listAllFollowUps(db))
@@ -192,6 +193,116 @@ func itemSummary(db *pgxpool.Pool) fiber.Handler {
 		sum["pod_attachment_id"] = podID
 		return shared.OK(c, sum)
 	}
+}
+
+func partialCloseWithShortages(db *pgxpool.Pool) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		sessionID, err := strconv.Atoi(c.Params("id"))
+		if err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
+		}
+		var status string
+		if err := db.QueryRow(c.Context(), `SELECT status FROM grn_sessions WHERE id=$1`, sessionID).Scan(&status); err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if !sessionWritable(status) {
+			return shared.Err(c, fiber.StatusBadRequest, "session is closed")
+		}
+		if strings.ToLower(strings.TrimSpace(status)) == "draft" {
+			return shared.Err(c, fiber.StatusBadRequest, "activate the session before closing")
+		}
+		healFalsePOExcess(c, db, sessionID)
+
+		var scannedUnits float64
+		_ = db.QueryRow(c.Context(), `
+			SELECT COALESCE(SUM(COALESCE(scanned_qty,0)),0) FROM grn_lines WHERE grn_session_id=$1`, sessionID).Scan(&scannedUnits)
+		if scannedUnits <= 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "scan at least one item before closing with shortages")
+		}
+
+		shortCount, missingBoxes := recordPendingShortagesForPartialClose(db, c, sessionID)
+
+		c.Locals("grnClosePartial", true)
+		c.Locals("grnCloseStatus", "partially_received")
+		if err := doCloseSession(c, db, sessionID); err != nil {
+			return err
+		}
+		posted, _ := c.Locals("grnCloseResult").(fiber.Map)
+		writeEvent(db, c, sessionID, "GRN_PARTIALLY_RECEIVED", fiber.Map{
+			"result": "partially_received",
+			"payload": fiber.Map{
+				"shortages_recorded": shortCount,
+				"missing_boxes":      missingBoxes,
+				"posted":             posted,
+			},
+		})
+		out := fiber.Map{
+			"id":                 sessionID,
+			"status":             "partially_received",
+			"shortages_recorded": shortCount,
+			"missing_boxes":      missingBoxes,
+		}
+		if posted != nil {
+			out["posted"] = posted
+		}
+		return shared.OK(c, out)
+	}
+}
+
+func recordPendingShortagesForPartialClose(db *pgxpool.Pool, c *fiber.Ctx, sessionID int) (shortCount, missingBoxes int) {
+	rows, err := db.Query(c.Context(), `
+		SELECT gl.id, COALESCE(gc.carton_no,''), gl.item_code, COALESCE(gl.invoice_no,''),
+		       COALESCE(gl.expected_qty,0), COALESCE(gl.scanned_qty,0)
+		FROM grn_lines gl
+		LEFT JOIN grn_cartons gc ON gc.id = gl.grn_carton_id
+		WHERE gl.grn_session_id=$1
+		  AND COALESCE(gl.expected_qty,0) > 0
+		  AND COALESCE(gl.scanned_qty,0) < COALESCE(gl.expected_qty,0)`, sessionID)
+	if err == nil {
+		for rows.Next() {
+			var lid int
+			var box, part, inv string
+			var exp, scan float64
+			if err := rows.Scan(&lid, &box, &part, &inv, &exp, &scan); err != nil {
+				continue
+			}
+			_, _ = db.Exec(c.Context(), `
+				UPDATE grn_lines SET status='shortage',
+					qty_short = GREATEST(COALESCE(expected_qty,0)-COALESCE(scanned_qty,0),0)
+				WHERE id=$1`, lid)
+			ensureShortageException(db, c, sessionID, inv, box, part, exp, scan)
+			writeEvent(db, c, sessionID, "ITEM_SHORT_RECORDED", fiber.Map{
+				"invoice_no": inv, "box_no": box, "part_no": part, "quantity": exp - scan, "result": "shortage",
+			})
+			shortCount++
+		}
+		rows.Close()
+	}
+
+	missRows, _ := db.Query(c.Context(), `
+		SELECT id, carton_no FROM grn_cartons
+		WHERE grn_session_id=$1 AND COALESCE(is_expected,false)=true
+		  AND status IN ('expected','pending') AND carton_no <> 'CONSOLIDATED'`, sessionID)
+	if missRows != nil {
+		defer missRows.Close()
+		for missRows.Next() {
+			var cid int
+			var cno string
+			if err := missRows.Scan(&cid, &cno); err != nil {
+				continue
+			}
+			missingBoxes++
+			writeException(db, c, sessionID, "missing_box", fiber.Map{
+				"box_no": cno, "expected_qty": 1, "scanned_qty": 0, "variance": -1,
+			})
+			writeEvent(db, c, sessionID, "BOX_MISSING", fiber.Map{"box_no": cno, "result": "missing"})
+			_, _ = db.Exec(c.Context(), `UPDATE grn_cartons SET status='missing' WHERE id=$1`, cid)
+		}
+	}
+
+	_, _ = db.Exec(c.Context(), `
+		UPDATE grn_sessions SET active_verify_carton_id=NULL, updated_at=now() WHERE id=$1`, sessionID)
+	return shortCount, missingBoxes
 }
 
 func completeItemVerification(db *pgxpool.Pool) fiber.Handler {
@@ -439,7 +550,7 @@ func finalizeGRN(db *pgxpool.Pool) fiber.Handler {
 
 		st := strings.ToLower(status)
 		okStatus := st == "item_verification_complete" || st == "exception_pending" ||
-			st == "putaway_pending" || st == "item_verification"
+			st == "putaway_pending" || st == "item_verification" || st == "partially_received"
 		if !okStatus && !body.Force {
 			return shared.Err(c, fiber.StatusBadRequest,
 				"complete item verification first")

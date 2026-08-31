@@ -38,7 +38,10 @@ func listTransports(db *pgxpool.Pool) fiber.Handler {
 			WHERE disabled=false`
 		args := []any{}
 		if q != "" {
-			sql += ` AND (truck_no ILIKE $1 OR COALESCE(name,'') ILIKE $1 OR COALESCE(transporter,'') ILIKE $1)`
+			sql += ` AND (
+				truck_no ILIKE $1 OR COALESCE(name,'') ILIKE $1 OR COALESCE(transporter,'') ILIKE $1
+				OR COALESCE(driver_name,'') ILIKE $1 OR COALESCE(driver_phone,'') ILIKE $1
+			)`
 			args = append(args, "%"+q+"%")
 		}
 		sql += ` ORDER BY updated_at DESC, id DESC LIMIT 50`

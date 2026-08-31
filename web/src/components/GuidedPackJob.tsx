@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import CameraScanner from './CameraScanner'
 import ScanPrompt from './scan/ScanPrompt'
 import { api } from '../services/api'
 import { notify } from './Notifications'
@@ -53,14 +52,14 @@ export default function GuidedPackJob({ pickListId, onExit }: Props) {
     }
   }
 
-  const packItem = async () => {
+  const packItem = async (code?: string) => {
     if (!box || busy) return
-    const code = scanValue.trim()
-    if (!code) return
+    const itemCode = (code ?? scanValue).trim()
+    if (!itemCode) return
     setBusy(true)
     try {
       const r = await api.post(`/packing/${box.id}/item`, {
-        item_code: code,
+        item_code: itemCode,
         quantity: qty,
       })
       if (!r.ok) {
@@ -88,7 +87,6 @@ export default function GuidedPackJob({ pickListId, onExit }: Props) {
     }))
     .filter((x: any) => x.left > 0.0001)
 
-  // packed_qty may not be on API yet — fall back to comparing box totals later
   const openPickQty = (pick?.items || []).reduce(
     (s: number, i: any) => s + Math.max(0, (i.picked_qty || 0)), 0)
   const boxedQty = (box?.items || []).reduce((s: number, i: any) => s + (i.quantity || 0), 0)
@@ -103,13 +101,14 @@ export default function GuidedPackJob({ pickListId, onExit }: Props) {
         value={scanValue || label}
         onChange={(v) => { setScanValue(v); setLabel(v) }}
         onSubmit={() => void openOrCreateBox(scanValue || label)}
+        onScan={(code) => {
+          setScanValue(code)
+          setLabel(code)
+          void openOrCreateBox(code)
+        }}
         verdict={verdict}
         reason={reason}
-        viewport={
-          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-            <CameraScanner open embedded minimal continuous onClose={() => {}} onScan={(c) => setScanValue(String(c || '').trim())} />
-          </div>
-        }
+        placeholder="Box label…"
         footer={onExit ? <button type="button" className="scan-btn scan-btn-outline" onClick={onExit}>Back</button> : null}
       />
     )
@@ -129,11 +128,6 @@ export default function GuidedPackJob({ pickListId, onExit }: Props) {
       onQtyChange={setQty}
       verdict={verdict}
       reason={reason}
-      viewport={
-        <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-          <CameraScanner open embedded minimal continuous onClose={() => {}} onScan={(c) => setScanValue(String(c || '').trim())} />
-        </div>
-      }
       footer={
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button

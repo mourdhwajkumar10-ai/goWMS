@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Box, MapPin, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import RfShell from '../components/RfShell'
 import { notify } from '../components/Notifications'
 import ItemAutocomplete from '../components/ItemAutocomplete'
@@ -93,61 +93,23 @@ export default function StockScan() {
           ))}
         </div>
 
-        <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
-          <CameraScanner
-            open
-            embedded
-            minimal
-            continuous
-            onClose={() => {}}
-            onScan={(scanned) => {
-              const clean = String(scanned || '').trim()
-              if (!clean) return
-              applyScanned(clean)
-            }}
-          />
-        </div>
-
-        <div className="scan-bottom-bar">
-          <div className="scan-input-chip">
-            {mode === 'item' ? (
-              <Box size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-            ) : mode === 'location' ? (
-              <MapPin size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-            ) : (
-              <Search size={16} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-            )}
-            <input
-              type="text"
-              value={code}
-              onChange={e => setCode(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void lookup() } }}
-              placeholder={
-                mode === 'item' ? 'Scan item…' : mode === 'location' ? 'Scan location…' : 'Scan anything…'
-              }
-              autoFocus
-              autoComplete="off"
-            />
-            <button
-              type="button"
-              className="scan-icon-btn"
-              style={{ width: 36, height: 36 }}
-              onClick={() => setShowScanner(true)}
-              aria-label="Open camera"
-            >
-              <ScanLine size={16} />
-            </button>
-          </div>
-          <button
-            type="button"
-            className="scan-icon-btn primary"
-            onClick={() => void lookup()}
-            disabled={!code.trim() || loading}
-            aria-label="Lookup"
-          >
-            {loading ? '…' : <ArrowRight size={16} strokeWidth={1.8} />}
-          </button>
-        </div>
+        <ScanCard
+          state="idle"
+          code={code}
+          onManualEntry={(scanned) => applyScanned(scanned)}
+          onMarkDamaged={() => {}}
+          canMarkDamaged={false}
+          showMarkDamaged={false}
+          onRestart={() => { setCode(''); setResult(null) }}
+          showActionRow={false}
+          placeholder={
+            mode === 'item' ? 'Scan item…' : mode === 'location' ? 'Scan location…' : 'Scan anything…'
+          }
+          idlePrompt={
+            mode === 'item' ? 'Scan item label' : mode === 'location' ? 'Scan location label' : 'Scan any barcode'
+          }
+          readyTitle={mode === 'item' ? 'Item lookup' : mode === 'location' ? 'Location lookup' : 'Stock scan'}
+        />
 
         {result?.kind === 'item' && (
           <>

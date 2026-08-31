@@ -398,6 +398,31 @@ button.floor-drawer-head.brand-home:focus-visible {
   line-height: 1.4;
 }
 
+.scan-signoff-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 20;
+  margin-top: 8px;
+  padding: 12px 0 20px;
+  background: linear-gradient(to top, var(--background) 60%, transparent);
+  box-sizing: border-box;
+}
+.scan-signoff-btn {
+  width: 100%;
+  min-height: 56px;
+  font-size: 16px;
+  gap: 10px;
+  box-sizing: border-box;
+}
+.scan-signoff-pill {
+  border-radius: 9999px;
+  background: oklch(1 0 0 / 0.15);
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ─── Scanner Layout (shared page shell) — C ScanHeader language ───
    Phone (≤768): full-bleed content with padding (RF thumb reach).
    Desktop (≥769): centered phone-ish column via --rf-content-max. */
@@ -407,8 +432,9 @@ button.floor-drawer-head.brand-home:focus-visible {
   margin: 0 auto;
   width: 100%;
   max-width: 100%;
-  padding: 16px 12px 24px;
-  gap: var(--sm-gap);
+  --scan-pad-x: 16px;
+  padding: 0 var(--scan-pad-x) 24px;
+  gap: 12px;
   box-sizing: border-box;
 }
 
@@ -422,7 +448,7 @@ button.floor-drawer-head.brand-home:focus-visible {
 
 @media (min-width: 481px) and (max-width: 768px) {
   .scanner-root {
-    padding: 20px 16px 24px;
+    padding-bottom: 24px;
   }
 }
 
@@ -434,7 +460,7 @@ button.floor-drawer-head.brand-home:focus-visible {
     max-width: min(var(--rf-content-max), 100%);
     margin-left: auto;
     margin-right: auto;
-    padding: 16px 12px 24px;
+    padding: 0 var(--scan-pad-x) 24px;
   }
   .floor-launcher {
     max-width: min(56rem, 100%);
@@ -447,6 +473,81 @@ button.floor-drawer-head.brand-home:focus-visible {
   .floor-launcher-grid {
     grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   }
+}
+
+.scan-verification-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: calc(100% + 2 * var(--scan-pad-x, 16px));
+  margin-left: calc(-1 * var(--scan-pad-x, 16px));
+  margin-right: calc(-1 * var(--scan-pad-x, 16px));
+  margin-top: 0;
+  padding: 16px var(--scan-pad-x, 16px) 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 95%, transparent);
+  backdrop-filter: blur(8px);
+  box-sizing: border-box;
+}
+.scan-verification-header-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.scan-verification-header-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.scan-verification-back {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.scan-verification-title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.scan-verification-counter {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.scan-verification-counted {
+  font-size: 36px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.025em;
+  font-variant-numeric: tabular-nums;
+  color: var(--foreground);
+}
+.scan-verification-total {
+  font-size: 20px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
 }
 
 .scanner-header {
@@ -590,11 +691,343 @@ button.floor-drawer-head.brand-home:focus-visible {
   animation: sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
 }
 
+/* ─── Scan dock (scanmaster new_scanner_ui) ─── */
+.scan-rf-block {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.scan-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+.scan-capture-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.scan-ready-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 16px;
+  border: 1px solid oklch(0.912 0.005 250 / 0.7);
+  background: var(--card);
+  padding: 12px;
+}
+.scan-ready-icon {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  background: color-mix(in oklch, var(--primary) 12%, transparent);
+  color: var(--primary);
+}
+.scan-ready-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.scan-ready-text {
+  min-width: 0;
+  flex: 1;
+}
+.scan-ready-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--foreground);
+  margin: 0;
+  line-height: 1.3;
+}
+.scan-ready-sub {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin: 0;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.scan-use-camera-btn {
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.scan-use-camera-btn:active { transform: scale(0.95); }
+.scan-hardware-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--radius-lg);
+  background: var(--muted);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.scan-hardware-bar-icon {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.scan-hardware-bar-text {
+  flex: 1;
+  min-width: 0;
+}
+.scan-manual-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--card);
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  box-shadow: var(--sm-shadow);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.scan-manual-toggle:active { transform: scale(0.95); }
+.scan-camera-expanded {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 16px;
+  border: 1px solid oklch(0.912 0.005 250 / 0.7);
+  background: var(--card);
+  padding: 8px;
+}
+.scan-camera-expanded-view {
+  position: relative;
+  width: 100%;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.scan-camera-expanded-view .scan-live-viewport {
+  aspect-ratio: 4 / 3;
+  max-height: 42vh;
+}
+.scan-close-camera-btn {
+  height: 36px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+.scan-close-camera-btn:hover { background: var(--muted); }
+.scan-close-camera-btn:active { transform: scale(0.98); }
+.scan-manual-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 16px;
+  border: 1px solid color-mix(in oklch, var(--primary) 15%, transparent);
+  background: var(--card);
+  padding: 8px;
+}
+.scan-mark-damaged-btn {
+  flex: 1;
+  min-width: 0;
+  color: var(--destructive) !important;
+  border-color: oklch(0.912 0.005 250 / 0.7) !important;
+}
+
+/* Box queue — aligned with scan dock */
+.box-queue-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding-bottom: 4px;
+}
+.box-queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+  padding-top: 4px;
+}
+.box-queue-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+.box-queue-count {
+  margin-left: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.box-queue-filter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: 9.5rem;
+  padding: 0 12px;
+  border-radius: var(--radius-lg);
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xs);
+  box-sizing: border-box;
+}
+.box-queue-filter input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--foreground);
+}
+.box-queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+}
+.box-queue-list .scan-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  cursor: default;
+  min-height: 52px;
+}
+.box-queue-list .scan-row-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.box-queue-list .scan-row-code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.box-queue-list .scan-row-desc {
+  display: block;
+  font-size: 12px;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+.box-queue-empty {
+  justify-content: center;
+  padding: 32px 16px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+  cursor: default;
+}
+.box-queue-view-all {
+  width: 100%;
+  padding: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  border: 0;
+  background: transparent;
+  text-align: center;
+  cursor: pointer;
+}
+.box-queue-scanning-badge {
+  flex-shrink: 0;
+  border-radius: 9999px;
+  background: oklch(0.7 0.16 155 / 0.12);
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.box-queue-damaged-btn {
+  flex-shrink: 0;
+  width: auto;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--sm-font);
+  border-radius: 9999px;
+  background: var(--muted);
+  color: var(--destructive);
+  border: none;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+  box-shadow: none;
+}
+.box-queue-damaged-btn:active {
+  transform: scale(0.95);
+}
+.box-queue-section .scan-btn-outline {
+  width: 100%;
+  box-sizing: border-box;
+}
+
 /* ─── Status prompt — C ScanVerdict idle (h-24 bg-muted) ─── */
 .scan-prompt {
   display: flex; align-items: center; justify-content: center; gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
   border-radius: var(--radius-lg); background: var(--muted);
-  padding: 16px; min-height: 96px; /* h-24 */
+  padding: 11px 16px;
+  min-height: 68px; /* 70% of h-24 (96px) */
   border: 1px solid oklch(0.912 0.005 250 / 0.6);
 }
 .scan-prompt-text {
@@ -611,6 +1044,8 @@ button.floor-drawer-head.brand-home:focus-visible {
 /* Verdict cards — C scan-verdict (h-24 rounded-xl animate-verdict) */
 .scan-verdict {
   display: flex; align-items: center; gap: 16px;
+  width: 100%;
+  box-sizing: border-box;
   border-radius: var(--radius-lg); padding: 0 20px; min-height: 96px;
   animation: verdict 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -628,6 +1063,8 @@ button.floor-drawer-head.brand-home:focus-visible {
   align-items: stretch;
   gap: 6px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .scan-doc-chip {
   min-width: 0;
@@ -681,6 +1118,8 @@ button.floor-drawer-head.brand-home:focus-visible {
   align-items: stretch;
   gap: 8px;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .scan-action-row .scan-btn,
 .scan-action-row .scan-icon-btn,
@@ -948,7 +1387,10 @@ button.floor-drawer-head.brand-home:focus-visible {
 
 /* ─── Mode tabs — C pill toggle (rounded-full bg-muted p-1) ─── */
 .scan-tabs {
-  display: flex; background: var(--muted); border-radius: 9999px;
+  display: flex;
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--muted); border-radius: 9999px;
   padding: 4px; gap: 2px;
 }
 .scan-tab {

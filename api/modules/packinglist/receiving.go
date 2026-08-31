@@ -79,7 +79,10 @@ func startReceivingSession(db *pgxpool.Pool) fiber.Handler {
 			Scan(&sessionID, &sessionNo, &boxesTotal)
 		if err == nil && sessionID > 0 {
 			if boxesTotal == 0 {
-				n, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+				n, _, backfillErr := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+				if backfillErr != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, "failed to prepare boxes: "+backfillErr.Error())
+				}
 				if n > 0 {
 					boxesTotal = n
 					_, _ = tx.Exec(c.Context(),
@@ -87,6 +90,7 @@ func startReceivingSession(db *pgxpool.Pool) fiber.Handler {
 						sessionID, n)
 				}
 			}
+			_ = shared.EnsureSessionPackingListNo(c.Context(), tx, sessionID, sessionNo)
 			if err = tx.Commit(c.Context()); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
@@ -120,16 +124,16 @@ func startReceivingSession(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to create session: "+err.Error())
 		}
 
-		createdBoxes, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+		createdBoxes, _, backfillErr := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+		if backfillErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, "failed to prepare boxes: "+backfillErr.Error())
+		}
 		if createdBoxes > 0 {
 			boxesTotal = createdBoxes
 			_, _ = tx.Exec(c.Context(), `UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1`, sessionID, createdBoxes)
 		}
 
-		plNo := strings.Replace(sessionNo, "GRN-", "PL-", 1)
-		_, _ = tx.Exec(c.Context(), `
-			UPDATE grn_sessions SET packing_list_no = COALESCE(NULLIF(packing_list_no,''), $2) WHERE id=$1`,
-			sessionID, plNo)
+		_ = shared.EnsureSessionPackingListNo(c.Context(), tx, sessionID, sessionNo)
 
 		if err = tx.Commit(c.Context()); err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -335,7 +339,10 @@ func importReceiving(db *pgxpool.Pool) fiber.Handler {
 		// If no file uploaded, auto-create expected boxes from the linked PO items
 		// (so RF workers have box numbers to scan and the wizard can suggest top boxes)
 		if !hasFile {
-			createdBoxes, createdLines := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+			createdBoxes, createdLines, backfillErr := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+			if backfillErr != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, "failed to prepare boxes: "+backfillErr.Error())
+			}
 			if createdBoxes == 0 {
 				if createdNew {
 					_, _ = tx.Exec(c.Context(), `DELETE FROM grn_sessions WHERE id=$1`, sessionID)
@@ -801,8 +808,10 @@ func listReceivingBoxes(db *pgxpool.Pool) fiber.Handler {
 			FROM grn_sessions gs WHERE gs.id=$1`, sessionID).Scan(&poName, &cartonCount)
 		if cartonCount == 0 && poName != "" {
 			if tx, txErr := db.Begin(c.Context()); txErr == nil {
-				n, _ := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
-				if n > 0 {
+				n, _, backfillErr := backfillBoxesFromPO(c.Context(), tx, sessionID, poName)
+				if backfillErr != nil {
+					_ = tx.Rollback(c.Context())
+				} else if n > 0 {
 					_, _ = tx.Exec(c.Context(), `UPDATE grn_sessions SET boxes_total=$2 WHERE id=$1 AND COALESCE(boxes_total,0) < $2`, sessionID, n)
 					_ = tx.Commit(c.Context())
 				} else {
@@ -981,9 +990,23 @@ func listDrivers(db *pgxpool.Pool) fiber.Handler {
 
 func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
-		rows, err := db.Query(c.Context(), `
+		q := strings.TrimSpace(c.Query("q"))
+		limit := 100
+		if q != "" {
+			limit = 50
+		}
+
+		searchClause := ""
+		var args []any
+		if q != "" {
+			searchClause = ` AND (po.name ILIKE $1 OR po.supplier_name ILIKE $1)`
+			args = append(args, "%"+q+"%")
+		}
+
+		query := `
 			SELECT
 				po.id, po.name, po.supplier_name, po.status,
+				COALESCE(po.per_received, 0) AS per_received,
 				COALESCE(po.grand_total, 0) AS grand_total,
 				COALESCE(po.schedule_date::text, '') AS schedule_date,
 				(SELECT COUNT(*) FROM purchase_order_items WHERE purchase_order_id = po.id) AS item_count,
@@ -1018,13 +1041,33 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 				  LIMIT 1) AS boxes_total
 			FROM purchase_orders po
 			WHERE po.status IN ('draft','submitted','To Receive and Bill','To Receive','Partially Received','open')
+			  AND po.status NOT IN ('Completed','To Bill','closed','cancelled')
 			  AND COALESCE(po.per_received, 0) < 100
 			  AND EXISTS (
 				SELECT 1 FROM purchase_order_items poi
 				WHERE poi.purchase_order_id = po.id AND COALESCE(poi.qty,0) > 0
 			  )
-			ORDER BY po.schedule_date ASC NULLS LAST, po.name ASC
-			LIMIT 100`)
+			  AND (
+				NOT EXISTS (
+				  SELECT 1 FROM grn_sessions gs
+				  WHERE gs.purchase_order_id = po.id OR gs.purchase_receipt_no = po.name
+				)
+				OR EXISTS (
+				  SELECT 1 FROM grn_sessions gs
+				  WHERE (gs.purchase_order_id = po.id OR gs.purchase_receipt_no = po.name)
+				    AND gs.status NOT IN ('closed','completed','cancelled')
+				)
+				OR po.status = 'Partially Received'
+				OR (
+				  (SELECT COALESCE(SUM(poi.received_qty),0) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id) > 0
+				  AND (SELECT COALESCE(SUM(poi.qty),0) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id)
+				    > (SELECT COALESCE(SUM(poi.received_qty),0) FROM purchase_order_items poi WHERE poi.purchase_order_id = po.id)
+				)
+			  )` + searchClause + `
+			ORDER BY po.id DESC
+			LIMIT ` + strconv.Itoa(limit)
+
+		rows, err := db.Query(c.Context(), query, args...)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -1035,6 +1078,7 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 			Name            string  `json:"name"`
 			SupplierName    string  `json:"supplier_name"`
 			Status          string  `json:"status"`
+			PerReceived     float64 `json:"per_received"`
 			GrandTotal      float64 `json:"grand_total"`
 			ScheduleDate    string  `json:"schedule_date"`
 			ItemCount       int     `json:"item_count"`
@@ -1052,7 +1096,7 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 			var p poInfo
 			var sessionNo, packingListNo *string
 			var boxesTotal *int
-			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.GrandTotal,
+			if err := rows.Scan(&p.ID, &p.Name, &p.SupplierName, &p.Status, &p.PerReceived, &p.GrandTotal,
 				&p.ScheduleDate, &p.ItemCount, &p.TotalQty, &p.ReceivedQty, &p.OpenSessions, &p.ResumeSessionID,
 				&sessionNo, &packingListNo, &boxesTotal); err != nil {
 				continue
@@ -1077,21 +1121,22 @@ func listPendingPOs(db *pgxpool.Pool) fiber.Handler {
 
 // backfillBoxesFromPO creates one expected carton per PO item for sessions that
 // were started from a PO without a packing-list file. It is idempotent: sessions
-// that already have cartons are left untouched. Returns (createdBoxes, createdLines).
-func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName string) (int, int) {
+// that already have cartons are left untouched. Returns (createdBoxes, createdLines, err).
+func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName string) (int, int, error) {
 	var existingCartons int
-	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&existingCartons)
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM grn_cartons WHERE grn_session_id=$1`, sessionID).Scan(&existingCartons); err != nil {
+		return 0, 0, err
+	}
 	if existingCartons > 0 {
-		return existingCartons, 0
+		return existingCartons, 0, nil
 	}
 	if poName == "" {
-		return 0, 0
+		return 0, 0, nil
 	}
 	var poID int
 	if err := tx.QueryRow(ctx, `SELECT id FROM purchase_orders WHERE name=$1`, poName).Scan(&poID); err != nil {
-		// Fix #10: Log the error so failures are visible.
 		log.Printf("GRN [backfill] PO lookup failed for '%s': %v", poName, err)
-		return 0, 0
+		return 0, 0, nil
 	}
 
 	itemRows, err := tx.Query(ctx, `
@@ -1100,8 +1145,7 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 		WHERE purchase_order_id=$1 AND qty > 0
 		ORDER BY id`, poID)
 	if err != nil {
-		log.Printf("GRN [backfill] PO items query failed for poID=%d: %v", poID, err)
-		return 0, 0
+		return 0, 0, err
 	}
 	type poItem struct {
 		code, name string
@@ -1111,13 +1155,17 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 	for itemRows.Next() {
 		var it poItem
 		if err := itemRows.Scan(&it.code, &it.name, &it.qty); err != nil {
-			continue
+			itemRows.Close()
+			return 0, 0, err
 		}
 		items = append(items, it)
 	}
 	itemRows.Close()
-	if err := itemRows.Err(); err != nil || len(items) == 0 {
-		return 0, 0
+	if err := itemRows.Err(); err != nil {
+		return 0, 0, err
+	}
+	if len(items) == 0 {
+		return 0, 0, nil
 	}
 
 	createdBoxes, createdLines := 0, 0
@@ -1132,7 +1180,7 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 				VALUES ($1,$2,'expected',true) RETURNING id`,
 				sessionID, boxNo).Scan(&cartonID)
 			if err != nil {
-				continue
+				return createdBoxes, createdLines, fmt.Errorf("carton %s: %w", boxNo, err)
 			}
 		}
 		tag, err := tx.Exec(ctx, `
@@ -1140,25 +1188,30 @@ func backfillBoxesFromPO(ctx context.Context, tx pgx.Tx, sessionID int, poName s
 				grn_carton_id, item_code, expected_qty, scanned_qty, status,
 				verification_method, grn_session_id, part_name
 			)
-			SELECT $1,$2,$3,0,'pending','po-import',$4,$5
+			SELECT $1::int, $2::text, $3::numeric, 0, 'pending', 'po-import', $4::int, $5::text
 			WHERE NOT EXISTS (
-				SELECT 1 FROM grn_lines WHERE grn_carton_id=$1 AND UPPER(item_code)=UPPER($2)
-			)`, cartonID, it.code, it.qty, sessionID, it.name)
+				SELECT 1 FROM grn_lines gl
+				WHERE gl.grn_carton_id = $1::int AND UPPER(gl.item_code) = UPPER($6::text)
+			)`, cartonID, it.code, it.qty, sessionID, it.name, it.code)
 		if err != nil {
 			tag, err = tx.Exec(ctx, `
 				INSERT INTO grn_lines (
 					grn_carton_id, item_code, expected_qty, scanned_qty, status,
 					verification_method, grn_session_id
 				)
-				SELECT $1,$2,$3,0,'pending','po-import',$4
+				SELECT $1::int, $2::text, $3::numeric, 0, 'pending', 'po-import', $4::int
 				WHERE NOT EXISTS (
-					SELECT 1 FROM grn_lines WHERE grn_carton_id=$1 AND UPPER(item_code)=UPPER($2)
-				)`, cartonID, it.code, it.qty, sessionID)
+					SELECT 1 FROM grn_lines gl
+					WHERE gl.grn_carton_id = $1::int AND UPPER(gl.item_code) = UPPER($5::text)
+				)`, cartonID, it.code, it.qty, sessionID, it.code)
 		}
-		if err == nil && tag.RowsAffected() > 0 {
+		if err != nil {
+			return createdBoxes, createdLines, fmt.Errorf("line %s in %s: %w", it.code, boxNo, err)
+		}
+		if tag.RowsAffected() > 0 {
 			createdLines++
 		}
 		createdBoxes++
 	}
-	return createdBoxes, createdLines
+	return createdBoxes, createdLines, nil
 }

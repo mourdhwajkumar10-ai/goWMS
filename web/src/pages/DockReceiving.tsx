@@ -1,11 +1,10 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Box, ClipboardList, ArrowRight, RefreshCw } from 'lucide-react'
+import { Box, ClipboardList } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
-import CameraScanner from '../components/CameraScanner'
 import { useScanFeedback } from '../hooks/useScanFeedback'
 import { useLoadMore } from '../hooks/useLoadMore'
-import ScanVerdict from '../components/scan/ScanVerdict'
+import ScanCard from '../components/scan/ScanCard'
 import type { ScanState } from '../components/scan/ScanViewport'
 import '../styles/scanner.css'
 
@@ -20,7 +19,6 @@ export default function DockReceiving() {
   const [pendingPOs, setPendingPOs] = useState<POInfo[]>([])
   const [selPO, setSelPO] = useState<POInfo | null>(null)
   const [sid, setSid] = useState<number | null>(null)
-  const [scanIn, setScanIn] = useState('')
   const [logs, setLogs] = useState<ScanLog[]>([])
   const [boxesDone, setBoxesDone] = useState(0)
   const [boxesTotal, setBoxesTotal] = useState(0)
@@ -67,7 +65,6 @@ export default function DockReceiving() {
       setScanState('rejected')
     }
     setLogs(p => [entry, ...p].slice(0, 50))
-    setScanIn('')
     setTimeout(() => setScanState('idle'), 1200)
   }, [sid, fb, toast, boxesTotal])
 
@@ -126,53 +123,22 @@ export default function DockReceiving() {
 
       {step === 'scanning' && (
         <>
-          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-            <CameraScanner
-              key={cameraKey}
-              embedded
-              minimal
-              open
-              continuous
-              onClose={() => {}}
-              onScan={(code) => {
-                const clean = String(code || '').trim()
-                if (clean) void handleScan(clean)
-              }}
-            />
-          </div>
-          <ScanVerdict state={scanState} code={lastCode} reason={logs[0]?.message} />
-
-          <div className="scan-bottom-bar">
-            <div className="scan-input-chip">
-              <Box size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-              <input
-                type="text"
-                value={scanIn}
-                onChange={e => setScanIn(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void handleScan(scanIn) } }}
-                placeholder="Box label…"
-                autoFocus
-                autoComplete="off"
-              />
-            </div>
-            <button
-              className="scan-icon-btn"
-              onClick={() => void handleScan(scanIn)}
-              disabled={!scanIn.trim()}
-              aria-label="Confirm"
-            >
-              <ArrowRight size={18} strokeWidth={1.8} />
-            </button>
-            <button
-              type="button"
-              className="scan-icon-btn primary"
-              aria-label="Restart camera"
-              title="Restart camera"
-              onClick={() => setCameraKey((k) => k + 1)}
-            >
-              <RefreshCw size={18} strokeWidth={1.8} />
-            </button>
-          </div>
+          <ScanCard
+            state={scanState}
+            code={lastCode}
+            reason={logs[0]?.message}
+            onManualEntry={(code) => void handleScan(code)}
+            onMarkDamaged={() => {}}
+            canMarkDamaged={false}
+            showMarkDamaged={false}
+            onRestart={() => {
+              setScanState('idle')
+              setLastCode('')
+              setCameraKey((k) => k + 1)
+            }}
+            placeholder="Box label…"
+            cameraKey={cameraKey}
+          />
 
           {logs.length > 0 && (
             <div style={{ marginTop: 8 }}>

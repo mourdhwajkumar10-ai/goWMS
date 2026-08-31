@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import CameraScanner from '../components/CameraScanner'
 import ScanPrompt from '../components/scan/ScanPrompt'
 import ScannerLayout, { ScannerToastBar, useScannerToasts } from '../components/ScannerLayout'
 import { api } from '../services/api'
@@ -68,9 +67,9 @@ export default function Consolidate() {
     }
   }
 
-  const place = async () => {
+  const place = async (code?: string) => {
     if (!instruction || !waveId || busy) return
-    const label = scanValue.trim()
+    const label = (code ?? scanValue).trim()
     if (!label && !instruction.suggested_box_id) {
       setVerdict('error')
       setReason('Scan box label')
@@ -241,13 +240,9 @@ export default function Consolidate() {
       value={scanValue}
       onChange={setScanValue}
       onSubmit={() => void scanItem(scanValue)}
+      onScan={(code) => void scanItem(code)}
       verdict={verdict}
       reason={reason}
-      viewport={
-        <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-          <CameraScanner open embedded minimal continuous onClose={() => {}} onScan={(c) => setScanValue(String(c || '').trim())} />
-        </div>
-      }
       footer={board}
     />
   ) : (
@@ -263,11 +258,6 @@ export default function Consolidate() {
       onQtyChange={setQty}
       verdict={verdict}
       reason={reason}
-      viewport={
-        <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160 }}>
-          <CameraScanner open embedded minimal continuous onClose={() => {}} onScan={(c) => setScanValue(String(c || '').trim())} />
-        </div>
-      }
       footer={
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <button type="button" className="scan-btn scan-btn-outline" onClick={() => { setPhase('item'); setInstruction(null); setScanValue('') }}>

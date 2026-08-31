@@ -12,6 +12,8 @@ export type TransportSuggestion = {
   driver_phone?: string
 }
 
+export type TransportMatchField = 'truck_no' | 'name' | 'driver_name' | 'driver_phone' | 'transporter'
+
 type Props = {
   value: string
   onChangeText: (text: string) => void
@@ -20,11 +22,71 @@ type Props = {
   className?: string
   id?: string
   ariaLabel?: string
-  matchField?: 'truck_no' | 'name'
+  matchField?: TransportMatchField
+  /** When true, blur with an exact master match auto-fills via onSelect */
+  autoFillOnExactMatch?: boolean
+}
+
+function fieldValue(row: TransportSuggestion, field: TransportMatchField) {
+  switch (field) {
+    case 'name':
+      return row.name || ''
+    case 'driver_name':
+      return row.driver_name || ''
+    case 'driver_phone':
+      return row.driver_phone || ''
+    case 'transporter':
+      return row.transporter || ''
+    default:
+      return row.truck_no || ''
+  }
+}
+
+function primaryLabel(row: TransportSuggestion, field: TransportMatchField) {
+  const v = fieldValue(row, field)
+  if (v) return v
+  if (field !== 'truck_no' && row.truck_no) return row.truck_no
+  return row.driver_name || row.transporter || 'Saved transport'
+}
+
+function secondaryLabel(row: TransportSuggestion, field: TransportMatchField) {
+  const parts: string[] = []
+  if (field !== 'truck_no' && row.truck_no) parts.push(row.truck_no)
+  if (field !== 'driver_name' && row.driver_name) parts.push(row.driver_name)
+  if (field !== 'driver_phone' && row.driver_phone) parts.push(row.driver_phone)
+  if (field !== 'transporter' && row.transporter) parts.push(row.transporter)
+  if (field !== 'name' && row.name) parts.unshift(row.name)
+  return parts.filter(Boolean).join(' · ') || 'Saved transport'
+}
+
+export function applyTransportMaster(
+  row: TransportSuggestion,
+  base: {
+    truck_no?: string
+    driver_name?: string
+    driver_phone?: string
+    transporter?: string
+  } = {},
+) {
+  return {
+    ...base,
+    truck_no: row.truck_no || base.truck_no || '',
+    driver_name: row.driver_name || base.driver_name || '',
+    driver_phone: row.driver_phone || base.driver_phone || '',
+    transporter: row.transporter || base.transporter || '',
+  }
 }
 
 export default function TruckAutocomplete({
-  value, onChangeText, onSelect, placeholder, className, id, ariaLabel, matchField = 'truck_no',
+  value,
+  onChangeText,
+  onSelect,
+  placeholder,
+  className,
+  id,
+  ariaLabel,
+  matchField = 'truck_no',
+  autoFillOnExactMatch = true,
 }: Props) {
   const [results, setResults] = useState<TransportSuggestion[]>([])
   const [open, setOpen] = useState(false)
@@ -32,6 +94,7 @@ export default function TruckAutocomplete({
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const selectedFromMenu = useRef(false)
   const { anchorRef, rect } = useAnchoredMenu(open, [results.length])
 
   useEffect(() => {
@@ -69,9 +132,32 @@ export default function TruckAutocomplete({
   }
 
   const handleSelect = (row: TransportSuggestion) => {
-    onChangeText(matchField === 'name' ? (row.name || row.truck_no) : row.truck_no)
+    selectedFromMenu.current = true
+    onChangeText(fieldValue(row, matchField) || row.truck_no)
     setOpen(false)
     onSelect?.(row)
+  }
+
+  const tryExactMatch = useCallback(async (text: string) => {
+    if (!autoFillOnExactMatch || !onSelect) return
+    const q = text.trim()
+    if (q.length < 2) return
+    const r = await api.transportsList(q)
+    if (!r.ok || !r.data?.length) return
+    const needle = q.toLowerCase()
+    const exact = (r.data as TransportSuggestion[]).find((row) => {
+      const v = fieldValue(row, matchField).trim().toLowerCase()
+      return v && v === needle
+    })
+    if (exact) onSelect(exact)
+  }, [autoFillOnExactMatch, matchField, onSelect])
+
+  const handleBlur = () => {
+    if (selectedFromMenu.current) {
+      selectedFromMenu.current = false
+      return
+    }
+    void tryExactMatch(value)
   }
 
   const menu = open && rect ? createPortal(
@@ -92,22 +178,22 @@ export default function TruckAutocomplete({
       {results.length > 0 ? (
         results.slice(0, 12).map((row) => (
           <button
-            key={row.id ?? row.truck_no}
+            key={row.id ?? `${row.truck_no}-${row.driver_name}`}
             type="button"
             className="w-full text-left px-3 py-2 text-sm border-b last:border-0"
             style={{ borderColor: 'var(--border)' }}
             onMouseDown={() => handleSelect(row)}
           >
-            <div className="font-medium">{row.truck_no}</div>
+            <div className="font-medium">{primaryLabel(row, matchField)}</div>
             <div className="text-xs" style={{ color: 'var(--text-dim)' }}>
-              {[row.name, row.transporter, row.driver_name].filter(Boolean).join(' · ') || 'Saved truck'}
+              {secondaryLabel(row, matchField)}
             </div>
           </button>
         ))
       ) : (
         !loading && (
           <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
-            No saved trucks yet — type a number or add one under Masters → Transport
+            No saved transport — add under Masters → Transport
           </div>
         )
       )}
@@ -125,6 +211,7 @@ export default function TruckAutocomplete({
         onChange={e => handleChange(e.target.value)}
         onFocus={() => search(value, true)}
         onClick={() => search(value, true)}
+        onBlur={handleBlur}
         placeholder={placeholder}
         autoComplete="off"
         aria-label={ariaLabel || placeholder}

@@ -46,7 +46,7 @@ type rfItemSummary struct {
 func rfPhaseFromStatus(sessionStatus, requested string) string {
 	switch canonicalStatus(sessionStatus) {
 	case "item_verification", "item_verification_complete", "exception_pending",
-		"putaway_pending", "putaway_in_progress", "completed", "closed":
+		"putaway_pending", "putaway_in_progress", "partially_received", "completed", "closed":
 		return "item_verify"
 	}
 	req := strings.ToLower(strings.TrimSpace(requested))
@@ -60,7 +60,7 @@ func rfPhaseFromStatus(sessionStatus, requested string) string {
 func transporterAlreadySignedOff(sessionStatus string) bool {
 	switch canonicalStatus(sessionStatus) {
 	case "item_verification", "item_verification_complete", "exception_pending",
-		"putaway_pending", "putaway_in_progress", "completed", "closed":
+		"putaway_pending", "putaway_in_progress", "partially_received", "completed", "closed":
 		return true
 	default:
 		return false
@@ -251,6 +251,7 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 
 		next := "confirm_condition"
 		msg := fmt.Sprintf("%s — confirm if the box is fine", body.BoxNumber)
+		wasMissing := strings.EqualFold(strings.TrimSpace(status), "missing")
 		if status == "verified" {
 			next = "already_verified"
 			msg = fmt.Sprintf("%s already item-verified", body.BoxNumber)
@@ -260,6 +261,10 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		} else if already {
 			next = "already_scanned"
 			msg = fmt.Sprintf("%s already counted at the dock", body.BoxNumber)
+		} else if wasMissing {
+			// Marked missing at transporter sign-off — require explicit late-arrival confirm.
+			next = "late_arrival"
+			msg = fmt.Sprintf("%s was marked missing at transporter sign-off. Confirm to accept as late arrival?", body.BoxNumber)
 		}
 
 		if err = tx.Commit(c.Context()); err != nil {
@@ -279,6 +284,7 @@ func scanBoxHandler(db *pgxpool.Pool) fiber.Handler {
 			"duplicate":      already,
 			"phase":          phase,
 			"next_action":    next,
+			"late_arrival":   wasMissing,
 			"message":        msg,
 		})
 	}
@@ -364,6 +370,7 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		uid := nullableUserID(c)
+		wasMissing := strings.EqualFold(strings.TrimSpace(status), "missing")
 		_, err = tx.Exec(c.Context(), `
 			UPDATE grn_cartons SET
 				status = 'received',
@@ -380,8 +387,11 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		if damaged {
 			eventType = "BOX_DAMAGE_REPORTED"
 			result = "damage"
+		} else if wasMissing {
+			eventType = "BOX_LATE_ARRIVAL"
+			result = "late_arrival"
 		}
-		payloadBytes, _ := json.Marshal(map[string]any{"condition": condition, "result": result})
+		payloadBytes, _ := json.Marshal(map[string]any{"condition": condition, "result": result, "was_missing": wasMissing})
 		_, err = tx.Exec(c.Context(), `
 			INSERT INTO grn_events (grn_session_id, event_type, box_no, actor_id, device, payload)
 			VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
@@ -389,6 +399,15 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to log box confirm: "+err.Error())
+		}
+
+		if wasMissing {
+			_, _ = tx.Exec(c.Context(), `
+				UPDATE grn_exceptions SET status='resolved', resolution='Late arrival accepted after transporter sign-off',
+					resolved_at=now(), resolved_by=$3
+				WHERE grn_session_id=$1 AND exception_type='missing_box' AND status='open'
+				  AND lower(btrim(COALESCE(box_no,'')))=lower(btrim($2))`,
+				body.SessionID, strings.TrimSpace(body.BoxNumber), uid)
 		}
 
 		received, verified, cartonTotal, syncErr := syncSessionBoxCounts(c.Context(), tx, body.SessionID)
@@ -420,6 +439,9 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		if damaged {
 			next = "scan_items"
 			msg = fmt.Sprintf("%s damaged — scan items now", cartonNo)
+		} else if wasMissing {
+			next = "scan_items"
+			msg = fmt.Sprintf("%s accepted as late arrival — scan item QR codes", cartonNo)
 		}
 
 		progressPct := 0
@@ -428,14 +450,15 @@ func confirmBoxHandler(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		return shared.OK(c, fiber.Map{
-			"box_number":  cartonNo,
-			"box_status":  "received",
-			"condition":   condition,
-			"damaged":     damaged,
-			"items":       items,
-			"item_count":  len(items),
-			"next_action": next,
-			"message":     msg,
+			"box_number":   cartonNo,
+			"box_status":   "received",
+			"condition":    condition,
+			"damaged":      damaged,
+			"late_arrival": wasMissing,
+			"items":        items,
+			"item_count":   len(items),
+			"next_action":  next,
+			"message":      msg,
 			"delivery_progress": fiber.Map{
 				"boxes_received": received,
 				"boxes_verified": verified,
@@ -510,11 +533,27 @@ func signOffBoxesHandler(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		payload := fmt.Sprintf(`{"boxes_received":%d,"boxes_total":%d,"missing":%d}`, received, cartonTotal, missing)
+		// Mark unscanned expected boxes as missing + open missing_box exceptions.
+		// Without this, a later scan of C0002 (etc.) is accepted as a normal dock
+		// receive with no warning that the transporter already left.
+		missingBoxes, markErr := markUnsignedBoxesMissingTx(c.Context(), tx, body.SessionID, nullableUserID(c), requestDevice(c))
+		if markErr != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, markErr.Error())
+		}
+		if len(missingBoxes) > missing {
+			missing = len(missingBoxes)
+		}
+
+		payloadBytes, _ := json.Marshal(map[string]any{
+			"boxes_received": received,
+			"boxes_total":    cartonTotal,
+			"missing":        missing,
+			"missing_boxes":  missingBoxes,
+		})
 		_, err = tx.Exec(c.Context(), `
 			INSERT INTO grn_events (grn_session_id, event_type, actor_id, device, payload)
 			VALUES ($1, 'TRANSPORT_SIGNED', $2, $3, $4::jsonb)`,
-			body.SessionID, nullableUserID(c), requestDevice(c), payload)
+			body.SessionID, nullableUserID(c), requestDevice(c), string(payloadBytes))
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, "failed to log sign-off: "+err.Error())
 		}
@@ -523,22 +562,131 @@ func signOffBoxesHandler(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 
-		msg := fmt.Sprintf("Transporter signed off — %d of %d boxes received", received, cartonTotal)
+		// Driver check-in board: transporter may leave once dock boxes are signed off.
+		markDriverVisitSignedOff(db, c.Context(), body.SessionID)
+
+		msg := fmt.Sprintf("Transporter signed off — they may leave. %d of %d boxes received", received, cartonTotal)
 		if missing > 0 {
-			msg = fmt.Sprintf("Transporter signed off — %d boxes missing. Continue with item verification.", missing)
+			msg = fmt.Sprintf("Transporter signed off — they may leave. %d boxes missing and logged to Exceptions. Continue with item verification.", missing)
 		}
 
 		return shared.OK(c, fiber.Map{
-			"session_id":     body.SessionID,
-			"status":         "item_verification",
-			"phase":          "item_verify",
-			"boxes_received": received,
-			"boxes_verified": verified,
-			"boxes_total":    cartonTotal,
-			"missing":        missing,
-			"message":        msg,
+			"session_id":         body.SessionID,
+			"status":             "item_verification",
+			"phase":              "item_verify",
+			"boxes_received":     received,
+			"boxes_verified":     verified,
+			"boxes_total":        cartonTotal,
+			"missing":            missing,
+			"missing_boxes":      missingBoxes,
+			"transporter_may_go": true,
+			"message":            msg,
 		})
 	}
+}
+
+// markDriverVisitSignedOff advances linked driver check-in visits to signed_off
+// so the dock board shows the truck may leave after transporter sign-off.
+func markDriverVisitSignedOff(db *pgxpool.Pool, ctx context.Context, grnSessionID int) {
+	if db == nil || grnSessionID < 1 {
+		return
+	}
+	_, _ = db.Exec(ctx, `
+		UPDATE driver_visits SET
+			status = 'signed_off',
+			signed_off_at = COALESCE(signed_off_at, NOW()),
+			box_verification_at = COALESCE(box_verification_at, NOW()),
+			unloading_at = COALESCE(unloading_at, NOW()),
+			dock_at = COALESCE(dock_at, NOW()),
+			grn_session_id = COALESCE(grn_session_id, $1),
+			updated_at = NOW()
+		WHERE status NOT IN ('signed_off', 'cancelled')
+		  AND (
+			grn_session_id = $1
+			OR (
+			  EXISTS (
+			    SELECT 1 FROM grn_sessions gs
+			    WHERE gs.id = $1
+			      AND (
+			        (driver_visits.purchase_order_id IS NOT NULL AND driver_visits.purchase_order_id = gs.purchase_order_id)
+			        OR (
+			          NULLIF(btrim(COALESCE(driver_visits.purchase_receipt_no,'')),'') IS NOT NULL
+			          AND lower(btrim(driver_visits.purchase_receipt_no)) = lower(btrim(COALESCE(gs.purchase_receipt_no,'')))
+			        )
+			      )
+			      AND (
+			        NULLIF(btrim(COALESCE(driver_visits.truck_no,'')),'') IS NULL
+			        OR NULLIF(btrim(COALESCE(gs.truck_no,'')),'') IS NULL
+			        OR lower(btrim(driver_visits.truck_no)) = lower(btrim(gs.truck_no))
+			      )
+			  )
+			)
+		  )`, grnSessionID)
+}
+
+// markUnsignedBoxesMissingTx sets expected/pending cartons to missing and inserts
+// open missing_box exceptions. Returns the carton numbers marked.
+func markUnsignedBoxesMissingTx(ctx context.Context, tx pgx.Tx, sessionID int, actorID any, device string) ([]string, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, carton_no FROM grn_cartons
+		WHERE grn_session_id=$1 AND COALESCE(is_expected,false)=true
+		  AND status IN ('expected','pending') AND carton_no <> 'CONSOLIDATED'
+		ORDER BY carton_no FOR UPDATE`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	type miss struct {
+		id int
+		no string
+	}
+	var list []miss
+	for rows.Next() {
+		var m miss
+		if err := rows.Scan(&m.id, &m.no); err != nil {
+			return nil, err
+		}
+		list = append(list, m)
+	}
+	rows.Close()
+
+	out := make([]string, 0, len(list))
+	var deviceVal any
+	if strings.TrimSpace(device) != "" {
+		deviceVal = device
+	}
+	for _, m := range list {
+		if _, err := tx.Exec(ctx, `UPDATE grn_cartons SET status='missing' WHERE id=$1`, m.id); err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO grn_exceptions (
+				grn_session_id, exception_type, box_no, expected_qty, scanned_qty, variance, status, actor_id, device
+			) VALUES ($1,'missing_box',$2,1,0,-1,'open',$3,$4)`,
+			sessionID, m.no, actorID, deviceVal); err != nil {
+			// Older DBs may lack device column — retry without it.
+			if strings.Contains(err.Error(), "device") {
+				if _, err2 := tx.Exec(ctx, `
+					INSERT INTO grn_exceptions (
+						grn_session_id, exception_type, box_no, expected_qty, scanned_qty, variance, status, actor_id
+					) VALUES ($1,'missing_box',$2,1,0,-1,'open',$3)`,
+					sessionID, m.no, actorID); err2 != nil {
+					return nil, err2
+				}
+			} else {
+				return nil, err
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO grn_events (grn_session_id, event_type, box_no, actor_id, device, payload)
+			VALUES ($1,'BOX_MISSING',$2,$3,$4,'{"result":"missing"}'::jsonb)`,
+			sessionID, m.no, actorID, deviceVal); err != nil {
+			return nil, err
+		}
+		out = append(out, m.no)
+	}
+	return out, nil
 }
 
 func scanItemHandler(db *pgxpool.Pool) fiber.Handler {
@@ -1191,6 +1339,12 @@ func getStatsHandler(db *pgxpool.Pool) fiber.Handler {
 		).Scan(&deliveryNo, &sessionNo, &boxesTotal, &boxesReceived, &createdAt, &poName, &packingListNo, &packingListFile, &sessStatus)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "session not found")
+		}
+		if strings.TrimSpace(packingListNo) == "" {
+			packingListNo = shared.DerivePackingListNo(sessionNo)
+			if packingListNo != "" {
+				_ = shared.EnsureSessionPackingListNo(c.Context(), db, sessionID, sessionNo)
+			}
 		}
 		var cartonCount, boxesVerified, boxesDamaged int
 		_ = db.QueryRow(c.Context(), `

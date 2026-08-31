@@ -1,14 +1,14 @@
 import { Check, RotateCcw, X } from 'lucide-react'
 import type { ScanState } from './ScanViewport'
 
-type Props = { state: ScanState; code?: string; reason?: string }
+type Props = { state: ScanState; code?: string; reason?: string; idlePrompt?: string }
 
-export default function ScanVerdict({ state, code, reason }: Props) {
+export default function ScanVerdict({ state, code, reason, idlePrompt = 'Hold over the label' }: Props) {
   if (state === 'idle') {
     return (
       <div className="scan-prompt">
         <span className="scan-prompt-dot" />
-        <span className="scan-prompt-text">Hold over the label</span>
+        <span className="scan-prompt-text">{idlePrompt}</span>
       </div>
     )
   }

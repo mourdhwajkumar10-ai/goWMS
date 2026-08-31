@@ -1,8 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
-import { Search, Box, Flag, ArrowRight, Inbox } from 'lucide-react'
+import { Search, Box, Flag, Inbox } from 'lucide-react'
 import api from '../services/api'
 import ScannerLayout, { useScannerToasts, ScannerToastBar } from '../components/ScannerLayout'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import { useScanFeedback } from '../hooks/useScanFeedback'
 import { useLoadMore } from '../hooks/useLoadMore'
 import { canonicalBoxNo } from '../utils/boxQr'
@@ -16,9 +16,7 @@ export default function ItemVerifier() {
   const { toasts, toast } = useScannerToasts()
   const [flash, setFlash] = useState<'ok' | 'err' | null>(null)
   const [sid, setSid] = useState<number | null>(null)
-  const [box, setBox] = useState('')
   const [activeBox, setActiveBox] = useState<ActiveBox | null>(null)
-  const [itemScan, setItemScan] = useState('')
   const [damageMode, setDamageMode] = useState(false)
   const [sessions, setSessions] = useState<any[]>([])
   const [cameraKey, setCameraKey] = useState(0)
@@ -33,14 +31,13 @@ export default function ItemVerifier() {
   const boxItems = activeBox?.items ?? []
   const itemMore = useLoadMore(boxItems, 10, activeBox?.box_number ?? '')
 
-  const openBox = useCallback(async (code?: string) => {
-    const raw = (code ?? box).trim()
+  const openBox = useCallback(async (code: string) => {
+    const raw = code.trim()
     const carton = canonicalBoxNo(raw) || raw
     if (!sid || !carton) return
     const r: any = await api.post(`/grn/session/${sid}/open-box`, { carton_no: carton })
     if (r.ok) {
       setActiveBox(r.data as ActiveBox)
-      setBox('')
       setCameraKey((k) => k + 1)
       fb.ok()
       toast(`Box ${r.data.carton_no} opened`, 'ok')
@@ -50,7 +47,7 @@ export default function ItemVerifier() {
       setFlash('err')
       setTimeout(() => setFlash(null), 300)
     }
-  }, [sid, box, fb, toast])
+  }, [sid, fb, toast])
 
   const verifyItem = useCallback(async (code: string) => {
     if (!sid || !activeBox || !code.trim()) return
@@ -73,7 +70,6 @@ export default function ItemVerifier() {
     } else {
       fb.warn(); toast(r.error ?? 'Scan failed', 'warn')
     }
-    setItemScan('')
   }, [sid, activeBox, fb, toast])
 
   return (
@@ -111,40 +107,19 @@ export default function ItemVerifier() {
 
       {sid && !activeBox && (
         <>
-          <div className="scan-prompt">
-            <span className="scan-prompt-text">
-              <span className="scan-prompt-dot" />
-              Scan box to open
-            </span>
-          </div>
-          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160, marginBottom: 8 }}>
-            <CameraScanner
-              key={`box-${cameraKey}`}
-              embedded
-              open
-              continuous
-              onClose={() => {}}
-              onScan={(code) => {
-                const clean = String(code || '').trim()
-                if (clean) void openBox(clean)
-              }}
-            />
-          </div>
-          <div className="scan-bottom-bar">
-            <div className="scan-input-chip">
-              <Box size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-              <input
-                type="text" value={box}
-                onChange={e => setBox(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void openBox() } }}
-                placeholder="Box number…"
-                autoFocus autoComplete="off"
-              />
-            </div>
-            <button className="scan-icon-btn primary" onClick={() => void openBox()} disabled={!box.trim()} aria-label="Open">
-              <ArrowRight size={18} strokeWidth={1.8} />
-            </button>
-          </div>
+          <ScanCard
+            state="idle"
+            onManualEntry={(code) => void openBox(code)}
+            onMarkDamaged={() => {}}
+            canMarkDamaged={false}
+            showMarkDamaged={false}
+            onRestart={() => setCameraKey((k) => k + 1)}
+            placeholder="Box number…"
+            cameraKey={`box-${cameraKey}`}
+            idlePrompt="Scan box to open"
+            readyTitle="Open box"
+            readySubtitle="Scan carton label to verify contents"
+          />
         </>
       )}
 
@@ -161,19 +136,18 @@ export default function ItemVerifier() {
             </button>
           </div>
 
-          <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 160, marginBottom: 8 }}>
-            <CameraScanner
-              key={`item-${cameraKey}-${activeBox.box_number}`}
-              embedded
-              open
-              continuous
-              onClose={() => {}}
-              onScan={(code) => {
-                const clean = String(code || '').trim()
-                if (clean) void verifyItem(clean)
-              }}
-            />
-          </div>
+          <ScanCard
+            state="idle"
+            onManualEntry={(code) => void verifyItem(code)}
+            onMarkDamaged={() => {}}
+            canMarkDamaged={false}
+            showMarkDamaged={false}
+            onRestart={() => setCameraKey((k) => k + 1)}
+            placeholder="Scan item barcode…"
+            cameraKey={`item-${cameraKey}-${activeBox.box_number}`}
+            readyTitle={activeBox.box_number}
+            readySubtitle={`${activeBox.items.length} line(s) to verify`}
+          />
 
           {itemMore.visible.map((it, i) => {
             const done = it.status === 'full_match' || Number(it.scanned_qty) >= Number(it.expected_qty)
@@ -198,22 +172,6 @@ export default function ItemVerifier() {
               Load more ({itemMore.remaining} left)
             </button>
           )}
-
-          <div className="scan-bottom-bar" style={{ marginTop: 4 }}>
-            <div className="scan-input-chip">
-              <Search size={18} strokeWidth={1.8} style={{ flexShrink: 0, color: 'var(--muted-foreground)' }} />
-              <input
-                type="text" value={itemScan}
-                onChange={e => setItemScan(e.target.value)}
-                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void verifyItem(itemScan) } }}
-                placeholder="Scan item barcode…"
-                autoFocus autoComplete="off"
-              />
-            </div>
-            <button className="scan-icon-btn primary" onClick={() => void verifyItem(itemScan)} disabled={!itemScan.trim()} aria-label="Verify">
-              <ArrowRight size={18} strokeWidth={1.8} />
-            </button>
-          </div>
 
           <button
             className={`scan-btn-outline scan-btn-sm`}

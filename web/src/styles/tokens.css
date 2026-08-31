@@ -97,10 +97,24 @@
   --navbar-height: 64px;
   --navbar-bg: var(--card);
   --btn-height: 32px;
+  --input-height: 40px;
   --card-bg: var(--card);
   --control-bg: var(--secondary);
   --fg-hover-color: var(--secondary);
   --fg-color: var(--card);
+
+  /* Light ERPNext gray scale (used by desk forms / bordered inputs) */
+  --gray-50: #f8f8f8;
+  --gray-100: #f3f3f3;
+  --gray-200: #ededed;
+  --gray-300: #d1d8dd;
+  --gray-400: #c0c6cc;
+  --gray-500: #8d99a6;
+  --gray-600: #74808b;
+  --gray-700: #4c5a67;
+  --gray-800: #313b44;
+  --gray-900: #192734;
+  --blue-100: #dce7f3;
 
   /* Motion tokens (from index.css) */
   --animate-sweep: sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;

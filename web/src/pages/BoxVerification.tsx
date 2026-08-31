@@ -1,6 +1,5 @@
 import { useState, useCallback } from 'react'
 import ScannerLayout from '../components/ScannerLayout'
-import CameraScanner from '../components/CameraScanner'
 import VerificationHeader, { type Tab } from '../components/scan/VerificationHeader'
 import ScanCard from '../components/scan/ScanCard'
 import BoxQueue, { type Box } from '../components/scan/BoxQueue'
@@ -112,19 +111,7 @@ export default function BoxVerification() {
             canMarkDamaged={!!nextBox && scanState === 'idle'}
             onRestart={handleRestart}
             onManualEntry={handleManualEntry}
-            viewport={
-              <div className="scan-live-viewport">
-                <CameraScanner
-                  key={cameraKey}
-                  embedded
-                  open
-                  onClose={() => {}}
-                  onScan={(code) => {
-                    handleManualEntry(String(code || '').trim())
-                  }}
-                />
-              </div>
-            }
+            cameraKey={cameraKey}
           />
           <BoxQueue boxes={boxes} onDamaged={handleDamaged} />
           <SignoffBar remaining={remaining} onSignoff={() => fb.ok()} />

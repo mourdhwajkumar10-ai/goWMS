@@ -58,6 +58,7 @@ const ICONS: Record<string, LucideIcon> = {
   "/": Home,
   "/analytics": BarChart3,
   "/receiving-management": PackageOpen,
+  "/driver-checkin": Truck,
   "/receiving": Box,
   "/exceptions": AlertTriangle,
   "/follow-up": RefreshCw,

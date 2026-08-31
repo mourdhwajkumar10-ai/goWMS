@@ -1,5 +1,15 @@
 import type { ReactNode } from 'react'
-import { MapPin, Package, ScanLine } from 'lucide-react'
+import { MapPin, Package } from 'lucide-react'
+import ScanCard from './ScanCard'
+import type { ScanState } from './ScanViewport'
+
+type Verdict = 'idle' | 'ok' | 'error' | 'blocked'
+
+function mapVerdict(verdict: Verdict): ScanState {
+  if (verdict === 'ok') return 'accepted'
+  if (verdict === 'error' || verdict === 'blocked') return 'rejected'
+  return 'idle'
+}
 
 type Props = {
   title: string
@@ -9,14 +19,18 @@ type Props = {
   value: string
   onChange: (v: string) => void
   onSubmit: () => void
+  /** Preferred for wedge/camera — avoids stale state on submit */
+  onScan?: (code: string) => void
   qty?: number
   onQtyChange?: (n: number) => void
   showQty?: boolean
-  verdict?: 'idle' | 'ok' | 'error' | 'blocked'
+  verdict?: Verdict
   reason?: string
-  viewport?: ReactNode
   footer?: ReactNode
   icon?: 'location' | 'item'
+  cameraKey?: number | string
+  idlePrompt?: string
+  placeholder?: string
 }
 
 export default function ScanPrompt({
@@ -27,16 +41,28 @@ export default function ScanPrompt({
   value,
   onChange,
   onSubmit,
+  onScan,
   qty,
   onQtyChange,
   showQty,
   verdict = 'idle',
   reason,
-  viewport,
   footer,
   icon = 'item',
+  cameraKey = 0,
+  idlePrompt,
+  placeholder,
 }: Props) {
   const Icon = icon === 'location' ? MapPin : Package
+  const scanPlaceholder = placeholder ?? (icon === 'location' ? 'Scan location…' : 'Scan item…')
+
+  function handleScan(code: string) {
+    onChange(code)
+    if (showQty) return
+    if (onScan) onScan(code)
+    else onSubmit()
+  }
+
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {progressLabel && (
@@ -57,54 +83,40 @@ export default function ScanPrompt({
         )}
       </div>
 
-      {viewport}
+      <ScanCard
+        state={mapVerdict(verdict)}
+        code={value}
+        reason={reason}
+        onManualEntry={handleScan}
+        onMarkDamaged={() => {}}
+        canMarkDamaged={false}
+        showMarkDamaged={false}
+        onRestart={() => onChange('')}
+        placeholder={scanPlaceholder}
+        cameraKey={cameraKey}
+        readyTitle={title}
+        readySubtitle={subtitle}
+        idlePrompt={idlePrompt ?? (icon === 'location' ? 'Scan location label' : 'Hold over the label')}
+        showActionRow={false}
+      />
 
-      {verdict !== 'idle' && (
-        <div
-          className="scan-section-card"
-          style={{
-            borderColor: verdict === 'ok' ? 'var(--success, #2e7d32)' : 'var(--danger, #c62828)',
-            color: verdict === 'ok' ? 'var(--success, #2e7d32)' : 'var(--danger, #c62828)',
-          }}
-        >
-          {verdict === 'ok' ? 'OK' : reason || 'Blocked'}
+      {showQty && (
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            className="scan-count-input"
+            style={{ width: 88 }}
+            type="number"
+            min={1}
+            value={qty ?? 1}
+            onChange={e => onQtyChange?.(Math.max(1, Number(e.target.value) || 1))}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSubmit() } }}
+          />
+          <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={onSubmit}>
+            Confirm
+          </button>
         </div>
       )}
 
-      <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-        <div className="scan-input-chip">
-          <ScanLine size={16} strokeWidth={1.8} />
-          <input
-            value={value}
-            onChange={e => onChange(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSubmit() } }}
-            placeholder={icon === 'location' ? 'Scan location…' : 'Scan item…'}
-            autoComplete="off"
-            autoFocus
-          />
-        </div>
-        {showQty && (
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input
-              className="scan-count-input"
-              style={{ width: 88 }}
-              type="number"
-              min={1}
-              value={qty ?? 1}
-              onChange={e => onQtyChange?.(Math.max(1, Number(e.target.value) || 1))}
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); onSubmit() } }}
-            />
-            <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={onSubmit}>
-              Confirm
-            </button>
-          </div>
-        )}
-        {!showQty && (
-          <button type="button" className="scan-btn scan-btn-primary" onClick={onSubmit}>
-            Confirm scan
-          </button>
-        )}
-      </div>
       {footer}
     </section>
   )

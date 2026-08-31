@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { ArrowLeft, Package, Plus, ScanLine } from 'lucide-react'
+import { ArrowLeft, Plus } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import Comments from '../components/Comments'
 import GuidedPackJob from '../components/GuidedPackJob'
 import RfShell from '../components/RfShell'
@@ -279,41 +279,21 @@ export default function Pack() {
               </div>
             </div>
 
-            <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 200 }}>
-              <CameraScanner
-                open
-                embedded
-                minimal
-                continuous
-                onClose={() => {}}
-                onScan={(code) => {
-                  const clean = String(code || '').trim()
-                  if (!clean) return
-                  setPackItem(clean)
-                }}
-              />
-            </div>
+            <ScanCard
+              state="idle"
+              code={packItem}
+              onManualEntry={(itemCode) => setPackItem(itemCode)}
+              onMarkDamaged={() => {}}
+              canMarkDamaged={false}
+              showMarkDamaged={false}
+              onRestart={() => setPackItem('')}
+              showActionRow={false}
+              placeholder="Item code…"
+              readyTitle="Scan item"
+              readySubtitle={selectedBox.label}
+            />
 
-            <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-              <div className="scan-input-chip">
-                <Package size={16} strokeWidth={1.8} />
-                <input
-                  value={packItem}
-                  onChange={e => setPackItem(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void packIntoBox() } }}
-                  placeholder="Item code…"
-                  autoComplete="off"
-                />
-                <button
-                  type="button"
-                  className="scan-icon-btn"
-                  style={{ width: 36, height: 36 }}
-                  onClick={() => setShowScanner(true)}
-                  aria-label="Scan item"
-                >
-                  <ScanLine size={16} />
-                </button>
-              </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '0 var(--scan-pad-x, 16px)' }}>
               <div style={{ display: 'flex', gap: 8 }}>
                 <input
                   className="scan-count-input"

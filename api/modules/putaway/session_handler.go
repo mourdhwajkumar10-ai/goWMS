@@ -305,7 +305,7 @@ func pickSessionItem(db *pgxpool.Pool) fiber.Handler {
 			 JOIN grn_sessions gs ON gs.id = gc.grn_session_id
 			 WHERE UPPER(gl.item_code) = UPPER($1)
 			   AND COALESCE(gl.scanned_qty,0) > 0
-			   AND gs.status IN ('putaway_pending','putaway_in_progress','completed','closed')
+			   AND gs.status IN ('putaway_pending','putaway_in_progress','partially_received','completed','closed')
 			   AND COALESCE(gs.stock_posted_at) IS NULL
 			   AND (
 			     UPPER(COALESCE(gl.route_location,'')) IN ('','INCOMING-01','HOLD-01','STAGING-01')
@@ -779,7 +779,7 @@ var warehouseWarning string
 					  AND EXISTS (
 					    SELECT 1 FROM grn_sessions gs
 					    WHERE gs.id = gl.grn_session_id
-					      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
+					      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','partially_received','item_verification_complete')
 					  )
 					FOR UPDATE OF gl`, itemCode)
 				if qErr != nil {
@@ -873,7 +873,7 @@ remaining := sessionQty - qty
 			_, _ = tx.Exec(c.Context(), `
 				UPDATE grn_sessions
 				SET putaway_status='in_progress',
-				    status = CASE WHEN status IN ('putaway_pending','item_verification_complete')
+				    status = CASE WHEN status IN ('putaway_pending','item_verification_complete','partially_received')
 				                  THEN 'putaway_in_progress' ELSE status END,
 				    updated_at = now()
 				WHERE id=$1

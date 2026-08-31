@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Package, Plus, ScanLine, Search } from 'lucide-react'
+import { Plus, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
-import CameraScanner from '../components/CameraScanner'
+import ScanCard from '../components/scan/ScanCard'
 import Comments from '../components/Comments'
 import { notify } from '../components/Notifications'
 import TruckAutocomplete from '../components/TruckAutocomplete'
@@ -51,11 +51,6 @@ export default function Dispatch() {
   const [podSig, setPodSig] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
 
-  // Ref mirror so the continuous CameraScanner onScan always reads the latest
-  // loadBoxId without capturing a stale closure value.
-  const loadBoxIdRef = useRef(loadBoxId)
-  loadBoxIdRef.current = loadBoxId
-
   const loadTrips = () => api.dispatchTrips().then(r => { if (r.ok) setTrips(r.data ?? []) })
   useEffect(() => {
     loadTrips()
@@ -95,18 +90,19 @@ export default function Dispatch() {
     setLoadBoxId(code)
   }
 
-  const loadBox = async () => {
-    if (!loadBoxId || !selectedTrip || actionBusy) return
+  const loadBox = async (code?: string) => {
+    const label = (code ?? loadBoxId).trim()
+    if (!label || !selectedTrip || actionBusy) return
     setActionBusy(true)
     try {
-      const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { label: loadBoxId })
+      const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { label })
       if (r.ok) {
         notify({
           type: 'success',
           title: 'Box Loaded',
           message: r.data?.stock_consumed
-            ? `Box ${loadBoxId} loaded — reserved stock consumed`
-            : `Box ${loadBoxId} loaded`,
+            ? `Box ${label} loaded — reserved stock consumed`
+            : `Box ${label} loaded`,
         })
         setLoadBoxId('')
         openTrip(selectedTrip.id)
@@ -331,44 +327,19 @@ export default function Dispatch() {
             </div>
 
             {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled') && (
-              <>
-                <div className="scan-live-viewport" style={{ borderRadius: 12, overflow: 'hidden', minHeight: 180 }}>
-                  <CameraScanner
-                    open
-                    embedded
-                    minimal
-                    continuous
-                    onClose={() => {}}
-                    onScan={useCallback((code: string) => {
-                      const clean = String(code || '').trim()
-                      if (!clean) return
-                      // Avoid clobbering a value the operator is mid-editing.
-                      if (!loadBoxIdRef.current || loadBoxIdRef.current === clean) {
-                        setLoadBoxId(clean)
-                      }
-                    }, [])}
-                  />
-                </div>
-
-                <div className="scan-bottom-bar" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 8 }}>
-                  <div className="scan-input-chip">
-                    <Package size={16} strokeWidth={1.8} />
-                    <input
-                      value={loadBoxId}
-                      onChange={e => setLoadBoxId(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void loadBox() } }}
-                      placeholder="Scan box label…"
-                      autoComplete="off"
-                    />
-                    <button type="button" className="scan-icon-btn" style={{ width: 36, height: 36 }} onClick={() => setShowScanner(true)} aria-label="Scan box">
-                      <ScanLine size={16} />
-                    </button>
-                  </div>
-                  <button type="button" className="scan-btn scan-btn-primary" disabled={actionBusy} onClick={() => void loadBox()}>
-                  {actionBusy ? 'Loading…' : 'Load box'}
-                </button>
-                </div>
-              </>
+              <ScanCard
+                state="idle"
+                code={loadBoxId}
+                onManualEntry={(code) => void loadBox(code)}
+                onMarkDamaged={() => {}}
+                canMarkDamaged={false}
+                showMarkDamaged={false}
+                onRestart={() => setLoadBoxId('')}
+                placeholder="Scan box label…"
+                readyTitle="Load box"
+                readySubtitle={selectedTrip.trip_no}
+                idlePrompt="Scan box label"
+              />
             )}
 
             {(selectedTrip.status === 'draft' || selectedTrip.status === 'scheduled') && (
@@ -591,7 +562,7 @@ export default function Dispatch() {
             <div className="flex gap-2">
               <input className="erpnext-input" value={loadBoxId} onChange={e => setLoadBoxId(e.target.value)} placeholder="Box ID" />
               <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
-              <button onClick={loadBox} className="erpnext-btn-primary">Load</button>
+              <button onClick={() => void loadBox()} className="erpnext-btn-primary">Load</button>
             </div>
 
             {selectedTrip.boxes && selectedTrip.boxes.length > 0 && (

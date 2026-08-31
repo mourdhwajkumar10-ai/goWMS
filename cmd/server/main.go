@@ -146,6 +146,7 @@ func main() {
 	dispatch.Register(api.Group("/dispatch"), pool)
 	employee.Register(api.Group("/employees"), pool)
 	grn.Register(api.Group("/grn"), pool)
+	grn.RegisterDriverVisits(api.Group("/driver-visits"), pool)
 	inventory.Register(api.Group("/inventory"), pool)
 	notifications.Register(api.Group("/notifications"), pool)
 	packing.Register(api.Group("/packing"), pool)

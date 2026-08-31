@@ -77,6 +77,7 @@ func TestSessionAcceptsBoxReceive(t *testing.T) {
 		{"box_reconciliation", true},
 		{"item_verification", true},
 		{"exception_pending", true},
+		{"partially_received", true},
 		{"completed", false},
 		{"closed", false},
 		{"", false},
@@ -184,6 +185,16 @@ func TestIsDuplicateBoxStatus(t *testing.T) {
 	}
 	if isDuplicateBoxStatus("expected") || isDuplicateBoxStatus("pending") || isDuplicateBoxStatus("missing") {
 		t.Fatal("expected/pending/missing can still be received")
+	}
+}
+
+func TestMissingBoxIsReceivableAfterSignOff(t *testing.T) {
+	// Contract: missing is NOT a duplicate — confirm-box may accept late arrival.
+	if isDuplicateBoxStatus("missing") {
+		t.Fatal("missing boxes must remain receivable as late arrivals")
+	}
+	if isDuplicateBoxStatus("MISSING") {
+		t.Fatal("missing status check must be case-insensitive")
 	}
 }
 

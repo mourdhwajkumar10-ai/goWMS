@@ -247,6 +247,23 @@ export const api = {
   transportCreate: (data: any) => post<any>("/masterdata/transports", data),
   transportUpdate: (id: number, data: any) => put<any>(`/masterdata/transports/${id}`, data),
 
+  // Driver check-in board
+  driverVisitsList: (params?: { status?: string; active?: boolean; q?: string }) => {
+    const p = new URLSearchParams()
+    if (params?.status) p.set("status", params.status)
+    if (params?.active) p.set("active", "1")
+    if (params?.q) p.set("q", params.q)
+    const qs = p.toString()
+    return get<any[]>(`/driver-visits${qs ? `?${qs}` : ""}`)
+  },
+  driverVisitGet: (id: number) => get<any>(`/driver-visits/${id}`),
+  driverVisitCreate: (data: any) => post<any>("/driver-visits", data),
+  driverVisitUpdate: (id: number, data: any) => patch<any>(`/driver-visits/${id}`, data),
+  driverVisitAdvance: (id: number, data?: { status?: string; next?: boolean }) =>
+    post<any>(`/driver-visits/${id}/advance`, data ?? { next: true }),
+  driverVisitLinkGRN: (id: number, grnSessionId: number) =>
+    post<any>(`/driver-visits/${id}/link-grn`, { grn_session_id: grnSessionId }),
+
   // PO
   poList: () => get<any[]>("/po/list"),
   poCreate: (data: any) => post<any>("/po/", data),
@@ -311,6 +328,7 @@ export const api = {
   grnScanSupplier: (id: number, barcode: string) =>
     post<any>(`/grn/session/${id}/supplier-scan`, { barcode }),
   grnCompleteVerification: (id: number) => post<any>(`/grn/session/${id}/complete-verification`, {}),
+  grnPartialClose: (id: number) => post<any>(`/grn/session/${id}/partial-close`, {}),
   grnFinalize: (id: number, force?: boolean) =>
     post<any>(`/grn/session/${id}/finalize`, { force: !!force }),
   grnAllExceptions: (status = 'open') =>
@@ -539,7 +557,12 @@ export const api = {
   receivingRouteException: (data: { session_id: number; routes: { grn_line_id: number; location: string }[] }) => post<any>("/receiving/route-exception", data),
   receivingStats: (sessionId: number) => get<any>(`/receiving/stats?session_id=${sessionId}`),
   receivingDrivers: (q?: string) => get<any[]>(`/receiving/drivers${q ? `?q=${encodeURIComponent(q)}` : ""}`),
-  receivingPendingPOs: () => get<any[]>("/receiving/pending-pos"),
+  receivingPendingPOs: (q?: string) => {
+    const qs = q?.trim() ? `?q=${encodeURIComponent(q.trim())}` : ""
+    return get<any[]>(`/receiving/pending-pos${qs}`)
+  },
+  receivingStart: (purchaseOrderId: number, receivingMode = "packing_list") =>
+    post<any>("/receiving/start", { purchase_order_id: purchaseOrderId, receiving_mode: receivingMode }),
   receivingOverrideRoute: (data: { session_id: number; box_number: string; new_route: string; line_ids?: number[] }) => post<any>("/receiving/override-route", data),
   receivingExceptions: (sessionId: number) => get<any[]>(`/receiving/exceptions?session_id=${sessionId}`),
 };

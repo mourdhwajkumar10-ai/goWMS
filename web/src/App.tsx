@@ -27,6 +27,7 @@ import Warehouses from "./pages/Warehouses";
 import Customers from "./pages/Customers";
 import Suppliers from "./pages/Suppliers";
 import Transports from "./pages/Transports";
+import DriverCheckIn from "./pages/DriverCheckIn";
 import Notifications from "./pages/Notifications";
 import Qi from "./pages/Qi";
 import Serial from "./pages/Serial";
@@ -125,6 +126,7 @@ export default function App() {
         <Route path="customers" element={<Customers />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="transports" element={<Transports />} />
+        <Route path="driver-checkin" element={<DriverCheckIn />} />
         <Route path="notifications" element={<Notifications />} />
         <Route path="qi" element={<Qi />} />
         <Route path="serial" element={<Serial />} />
