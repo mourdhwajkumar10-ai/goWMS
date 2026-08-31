@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { ArrowLeft, CheckSquare, MapPin, Plus, ScanLine, Search } from 'lucide-react'
+import { ArrowLeft, Boxes, CheckCircle2, Hash, MapPin, Package, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
 import Comments from '../components/Comments'
@@ -741,17 +741,17 @@ export default function Pick() {
               <div
                 key={l.id}
                 className="erpnext-card"
-                style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+                style={{ cursor: 'pointer', transition: 'box-shadow 0.15s, border-color 0.15s' }}
                 onClick={() => openListDesk(l.id)}
-                onMouseEnter={e => e.currentTarget.style.boxShadow = 'var(--md-shadow)'}
-                onMouseLeave={e => e.currentTarget.style.boxShadow = ''}
+                onMouseEnter={e => { e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.08)'; e.currentTarget.style.borderColor = 'var(--accent)' }}
+                onMouseLeave={e => { e.currentTarget.style.boxShadow = ''; e.currentTarget.style.borderColor = 'var(--border)' }}
               >
-                <div className="px-4 py-3 flex items-start justify-between">
-                  <div>
-                    <div className="font-semibold text-sm" style={{ color: 'var(--accent)' }}>{l.name}</div>
+                <div className="px-4 py-3 flex items-start justify-between gap-2">
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div className="font-semibold text-sm" style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{l.name}</div>
                     <div className="text-xs mt-0.5" style={{ color: 'var(--text-dim)' }}>{l.sales_order_no || '—'} · {l.customer || 'No customer'}</div>
                   </div>
-                  {statusBadge(l.status || 'pending')}
+                  <div style={{ flexShrink: 0 }}>{statusBadge(l.status || 'pending')}</div>
                 </div>
                 <div className="px-4 py-2 flex items-center justify-between" style={{ borderTop: '1px solid var(--border)', background: 'var(--muted, #f8f9fa)' }}>
                   <span className="text-xs" style={{ color: 'var(--text-dim)' }}>
@@ -770,14 +770,20 @@ export default function Pick() {
           </div>
 
           {pager.total === 0 && (
-            <div className="erpnext-card text-center py-10">
-              <p className="font-medium mb-1">No pick lists yet</p>
-              <p className="text-xs mb-3" style={{ color: 'var(--text-dim)' }}>
-                Confirm a sales order, then use <strong>Create Pick</strong>.
+            <div className="erpnext-card text-center py-12" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+              <Package size={32} strokeWidth={1.5} style={{ color: 'var(--muted-foreground)', opacity: 0.5 }} />
+              <p className="font-medium" style={{ marginBottom: 2 }}>No pick lists yet</p>
+              <p className="text-xs mb-4" style={{ color: 'var(--text-dim)', maxWidth: 340 }}>
+                Confirm a sales order, then use <strong>Create Pick</strong> to allocate stock via FEFO.
               </p>
-              <Link to="/sales-orders" className="erpnext-btn-primary text-xs" style={{ textDecoration: 'none' }}>
-                Sales Orders
-              </Link>
+              <div className="flex gap-2">
+                <Link to="/sales-orders" className="erpnext-btn-primary text-xs" style={{ textDecoration: 'none' }}>
+                  Go to Sales Orders
+                </Link>
+                <button onClick={() => { setShowNew(true); setShowWave(false) }} className="erpnext-btn-secondary text-xs">
+                  <Plus size={12} /> Free-form
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -807,7 +813,23 @@ export default function Pick() {
             </div>
           </div>
 
-          <div className="flex gap-2 flex-wrap">
+          {/* Progress bar */}
+          <div className="erpnext-card px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-dim)' }}>Pick progress</span>
+              <span className="text-xs font-semibold" style={{ color: 'var(--accent)' }}>
+                {selectedList.picked_qty ?? 0} / {selectedList.total_qty ?? 0}
+              </span>
+            </div>
+            <div className="scan-progress-bar">
+              <div
+                className="scan-progress-fill"
+                style={{ width: `${Math.min(100, ((selectedList.picked_qty ?? 0) / Math.max(1, selectedList.total_qty ?? 1)) * 100)}%` }}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2 flex-wrap items-center">
             <button
               className="erpnext-btn-secondary text-xs"
               onClick={async () => {
@@ -866,10 +888,10 @@ export default function Pick() {
                         {statusBadge(pi.status)}
                       </div>
                       <div className="flex items-center gap-4 text-xs mt-2" style={{ color: 'var(--text-dim)' }}>
-                        <span>📦 {pi.allocated_qty ?? pi.qty}</span>
-                        <span>✅ {pi.picked_qty}</span>
-                        <span>📍 {pi.location_code || pi.bin_location || '—'}</span>
-                        {pi.batch_no && <span>🔢 {pi.batch_no}</span>}
+                        <span className="inline-flex items-center gap-1"><Boxes size={13} strokeWidth={1.8} /> {pi.allocated_qty ?? pi.qty}</span>
+                        <span className="inline-flex items-center gap-1"><CheckCircle2 size={13} strokeWidth={1.8} /> {pi.picked_qty}</span>
+                        <span className="inline-flex items-center gap-1"><MapPin size={13} strokeWidth={1.8} /> {pi.location_code || pi.bin_location || '—'}</span>
+                        {pi.batch_no && <span className="inline-flex items-center gap-1"><Hash size={13} strokeWidth={1.8} /> {pi.batch_no}</span>}
                       </div>
                       {pi.status !== 'picked' && pi.status !== 'shortage' && pi.status !== 'delivered' && (
                         <button
@@ -895,11 +917,11 @@ export default function Pick() {
                 Manual / exception pick
               </summary>
               <div className="px-4 pb-4 pt-1">
-                <p className="text-xs mb-3" style={{ color: 'var(--text-dim)' }}>
-                  Type item, bin, and qty without the camera. Prefer <strong>Start RF Scan</strong> for floor work.
+                <p className="text-xs mb-4" style={{ color: 'var(--text-dim)' }}>
+                  Type item, bin, and qty without the camera. Prefer <strong>RF Scan</strong> for floor work.
                 </p>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                  <div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                  <div className="md:col-span-4">
                     <label className="erpnext-label">Item Code</label>
                     <div className="flex gap-1">
                       <input
@@ -913,13 +935,13 @@ export default function Pick() {
                         type="button"
                         onClick={() => enterRfPick(selectedList.id)}
                         title="Open RF scanner"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)', flexShrink: 0 }}
                       >
                         <ScanLine size={18} strokeWidth={1.8} />
                       </button>
                     </div>
                   </div>
-                  <div>
+                  <div className="md:col-span-4">
                     <label className="erpnext-label">Suggested / Scanned Bin</label>
                     <div className="flex gap-1">
                       <input
@@ -933,13 +955,13 @@ export default function Pick() {
                         type="button"
                         onClick={() => enterRfPick(selectedList.id)}
                         title="Open RF scanner"
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)' }}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'grid', placeItems: 'center', color: 'var(--muted-foreground)', flexShrink: 0 }}
                       >
                         <ScanLine size={18} strokeWidth={1.8} />
                       </button>
                     </div>
                   </div>
-                  <div>
+                  <div className="md:col-span-2">
                     <label className="erpnext-label">Quantity</label>
                     <input
                       className="erpnext-input"
@@ -949,8 +971,8 @@ export default function Pick() {
                       onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); logScan() } }}
                     />
                   </div>
-                  <div className="flex items-end">
-                    <button onClick={logScan} className="erpnext-btn-secondary">Log Pick</button>
+                  <div className="md:col-span-2">
+                    <button onClick={logScan} className="erpnext-btn-primary w-full" style={{ minHeight: 38 }}>Log Pick</button>
                   </div>
                 </div>
               </div>
