@@ -13,6 +13,7 @@ import "../styles/receiving-wizard.css";
 import "../styles/scanner.css";
 import { mergeReceivingChoices, receivingChoiceMatches, type ReceivingChoice } from "../utils/receivingData";
 import { useLoadMore } from "../hooks/useLoadMore";
+import { useScanFeedback } from "../hooks/useScanFeedback";
 import { canonicalBoxNo } from "../utils/boxQr";
 
 type POInfo = ReceivingChoice;
@@ -22,8 +23,6 @@ type Phase = "box_verify" | "item_verify";
 interface StatsData { session_id: number; session_no?: string; session_status?: string; phase?: Phase; delivery_no: string; po_name?: string; packing_list_no?: string; packing_list_filename?: string; total_boxes: number; boxes_received: number; boxes_verified?: number; boxes_damaged?: number; single_item_boxes: number; multi_item_boxes: number; overall_progress_pct: number; box_progress_pct?: number; item_progress_pct?: number; total_items: number; items_full_match: number; items_shortage: number; items_excess: number; items_unknown: number; total_qty_expected: number; total_qty_scanned: number; exceptions_open: number; elapsed_time_sec: number; est_remaining_sec: number; }
 interface PendingBox { box_number: string; item_count: number; items: BoxItem[]; }
 
-const playBeep = (freq = 800, dur = 0.15) => { try { const ctx = new (window.AudioContext || (window as any).webkitAudioContext)(); const o = ctx.createOscillator(); const g = ctx.createGain(); o.type = "sine"; o.frequency.value = freq; g.gain.setValueAtTime(0.1, ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + dur); o.connect(g); g.connect(ctx.destination); o.start(); o.stop(ctx.currentTime + dur); } catch {} };
-const triggerVibrate = (p: number | number[] = 200) => { if (navigator.vibrate) navigator.vibrate(p); };
 const fmtDur = (s: number) => `${Math.floor(s / 60)}m ${s % 60}s`;
 const cut = (s: string, max = 22) => s.length <= max ? s : s.slice(0, max - 2) + "...";
 type Step = "select_po" | "scan_box" | "scan_items" | "complete";
@@ -76,15 +75,16 @@ export default function ReceivingWizard() {
   const [partialClosing, setPartialClosing] = useState(false);
   const autoClosedRef = useRef<string | null>(null);
   const DR = "INCOMING-01";
+  const scanFb = useScanFeedback();
 
   const toast = useCallback((text: string, type: "success" | "warning" | "error" = "success") => {
     const id = Date.now();
     setToasts(p => [...p, { id, text, type }]);
-    if (type === "success") playBeep(800, 0.15);
-    else if (type === "error") { playBeep(250, 0.4); triggerVibrate([100, 50, 100]); }
-    else { playBeep(400, 0.25); triggerVibrate(150); }
+    if (type === "success") scanFb.ok();
+    else if (type === "error") scanFb.err();
+    else scanFb.warn();
     setTimeout(() => setToasts(p => p.filter(t => t.id !== id)), 3000);
-  }, []);
+  }, [scanFb]);
 
   const doFlash = useCallback((t: "success" | "error") => { setFlash(t); setTimeout(() => setFlash(null), 300); }, []);
 

@@ -377,7 +377,6 @@ export default function CameraScanner({
           if (busyRef.current) return;
           busyRef.current = true;
           lastCodeRef.current = { value, at: now };
-          navigator.vibrate?.(10);
           setLastCode(value);
           void (async () => {
             try {

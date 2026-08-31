@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Keyboard, RefreshCw, ScanLine } from 'lucide-react'
 import CameraScanner from '../CameraScanner'
+import { buzz } from '../../hooks/useScanFeedback'
 import ScanViewport, { type ScanState } from './ScanViewport'
 import ScanVerdict from './ScanVerdict'
 
@@ -51,6 +52,13 @@ export default function ScanCard({
   const [manualOpen, setManualOpen] = useState(false)
   const wedgeRef = useRef<HTMLInputElement>(null)
   const manualRef = useRef<HTMLInputElement>(null)
+  const hapticPrimedRef = useRef(false)
+
+  const primeHaptic = () => {
+    if (hapticPrimedRef.current) return
+    hapticPrimedRef.current = true
+    buzz(1)
+  }
 
   useEffect(() => {
     if (manualOpen) {
@@ -85,6 +93,7 @@ export default function ScanCard({
       <input
         ref={wedgeRef}
         defaultValue=""
+        onFocus={primeHaptic}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) {
             deliverScan(e.currentTarget.value)

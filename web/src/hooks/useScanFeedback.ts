@@ -29,24 +29,36 @@ export function beep(freq = 800, dur = 0.12, vol = 0.08) {
 }
 
 export function buzz(pattern: number | number[] = 200) {
-  if (navigator.vibrate) navigator.vibrate(pattern)
+  try {
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      navigator.vibrate(pattern)
+    }
+  } catch { /* RF WebView may block without gesture */ }
 }
 
+// Short double-pulse — easier to feel on Zebra / Honeywell RF guns than a 10ms tick.
+export const SCAN_OK_BUZZ: number[] = [80, 45, 80]
+const OK_BUZZ = SCAN_OK_BUZZ
+const WARN_BUZZ = 140
+const ERR_BUZZ: number[] = [100, 55, 100, 55, 100]
+
 // Combined — beep + vibrate
-export function ping(freq = 800, dur = 0.12, buzzMs: number | number[] = 10) {
+export function ping(freq = 800, dur = 0.12, buzzMs: number | number[] = OK_BUZZ) {
   beep(freq, dur)
   buzz(buzzMs)
 }
 
 // Error feedback
-export function errPing() { ping(250, 0.35, [80, 50, 80]) }
+export function errPing() {
+  ping(250, 0.35, ERR_BUZZ)
+}
 
 // Hook version for React
 export function useScanFeedback() {
   return {
-    ok: useCallback(() => ping(880, 0.1, 10), []),
-    warn: useCallback(() => ping(440, 0.2, 40), []),
+    ok: useCallback(() => ping(880, 0.1, OK_BUZZ), []),
+    warn: useCallback(() => ping(440, 0.2, WARN_BUZZ), []),
     err: useCallback(() => errPing(), []),
-    click: useCallback(() => buzz(8), []),
+    click: useCallback(() => buzz(12), []),
   }
 }
