@@ -48,7 +48,27 @@ export default function Pack() {
   const [packBatch, setPackBatch] = useState('')
 
   const loadBoxes = () => api.packSessions().then(r => { if (r.ok) setBoxes(r.data ?? []) })
-  useEffect(() => { loadBoxes() }, [])
+  useEffect(() => {
+    loadBoxes()
+    // Flush offline-queued scans when the connection returns, then reload
+    // the box list so the operator sees their queued items landed.
+    const onOnline = async () => {
+      const { flushScans, listScans } = await import('../utils/offlineQueue')
+      const pending = listScans()
+      if (!pending.length) return
+      const result = await flushScans((path, body) => api.post(path, body))
+      if (result.flushed > 0) {
+        notify({ type: 'success', title: 'Offline scans synced', message: `${result.flushed} queued scan(s) sent` })
+        loadBoxes()
+        if (selectedBox) {
+          const r = await api.get(`/packing/${selectedBox.id}`)
+          if (r.ok) setSelectedBox(r.data)
+        }
+      }
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+  }, [])
   const pager = useClientPager(boxes)
   const rfBoxMore = useLoadMore(boxes, 10, boxes.length)
   useEffect(() => {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Package, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
@@ -49,6 +49,12 @@ export default function Dispatch() {
   const [loadBoxId, setLoadBoxId] = useState('')
   const [dnCustomer, setDnCustomer] = useState('')
   const [podSig, setPodSig] = useState('')
+  const [actionBusy, setActionBusy] = useState(false)
+
+  // Ref mirror so the continuous CameraScanner onScan always reads the latest
+  // loadBoxId without capturing a stale closure value.
+  const loadBoxIdRef = useRef(loadBoxId)
+  loadBoxIdRef.current = loadBoxId
 
   const loadTrips = () => api.dispatchTrips().then(r => { if (r.ok) setTrips(r.data ?? []) })
   useEffect(() => {
@@ -58,16 +64,24 @@ export default function Dispatch() {
   const pager = useClientPager(trips)
 
   const createTrip = async () => {
-    const r = await api.dispatchCreate({
-      vehicle_no: vehicle,
-      driver_name: driverName,
-      carrier_id: carrierId ? +carrierId : undefined,
-    })
-    if (r.ok) {
-      setMsg(`Trip ${r.data.trip_no} created`)
-      setVehicle(''); setDriverName(''); setCarrierId('')
-      loadTrips()
-      notify({ type: 'success', title: 'Trip Created', message: r.data.trip_no })
+    if (actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.dispatchCreate({
+        vehicle_no: vehicle,
+        driver_name: driverName,
+        carrier_id: carrierId ? +carrierId : undefined,
+      })
+      if (r.ok) {
+        setMsg(`Trip ${r.data.trip_no} created`)
+        setVehicle(''); setDriverName(''); setCarrierId('')
+        loadTrips()
+        notify({ type: 'success', title: 'Trip Created', message: r.data.trip_no })
+      } else {
+        notify({ type: 'error', title: 'Trip failed', message: r.error || '' })
+      }
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -82,43 +96,64 @@ export default function Dispatch() {
   }
 
   const loadBox = async () => {
-    if (!loadBoxId || !selectedTrip) return
-    const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { label: loadBoxId })
-    if (r.ok) {
-      notify({
-        type: 'success',
-        title: 'Box Loaded',
-        message: r.data?.stock_consumed
-          ? `Box ${loadBoxId} loaded — reserved stock consumed`
-          : `Box ${loadBoxId} loaded`,
-      })
-      setLoadBoxId('')
-      openTrip(selectedTrip.id)
-    } else {
-      notify({ type: 'error', title: 'Load failed', message: r.error || 'Could not load box' })
+    if (!loadBoxId || !selectedTrip || actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.post<{ stock_consumed?: boolean }>(`/dispatch/trip/${selectedTrip.id}/load`, { label: loadBoxId })
+      if (r.ok) {
+        notify({
+          type: 'success',
+          title: 'Box Loaded',
+          message: r.data?.stock_consumed
+            ? `Box ${loadBoxId} loaded — reserved stock consumed`
+            : `Box ${loadBoxId} loaded`,
+        })
+        setLoadBoxId('')
+        openTrip(selectedTrip.id)
+      } else {
+        notify({ type: 'error', title: 'Load failed', message: r.error || 'Could not load box' })
+      }
+    } finally {
+      setActionBusy(false)
     }
   }
 
   const startTrip = async (id: number) => {
-    const r = await api.post(`/dispatch/trip/${id}/start`, {})
-    if (r.ok) {
-      notify({ type: 'success', title: 'Trip Started', message: 'Vehicle departed' })
-      loadTrips()
-      if (selectedTrip?.id === id) openTrip(id)
+    if (actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.post(`/dispatch/trip/${id}/start`, {})
+      if (r.ok) {
+        notify({ type: 'success', title: 'Trip Started', message: 'Vehicle departed' })
+        loadTrips()
+        if (selectedTrip?.id === id) openTrip(id)
+      } else {
+        notify({ type: 'error', title: 'Start failed', message: r.error || '' })
+      }
+    } finally {
+      setActionBusy(false)
     }
   }
 
   const completeTrip = async (id: number) => {
-    const r = await api.post<{ delivery_notes?: { delivery_note?: string }[] }>(`/dispatch/trip/${id}/complete`, {})
-    if (r.ok) {
-      const dns = r.data?.delivery_notes?.map(d => d.delivery_note).filter(Boolean) || []
-      notify({
-        type: 'success',
-        title: 'Trip Completed',
-        message: dns.length ? `DNs: ${dns.join(', ')}` : 'All stops delivered',
-      })
-      loadTrips()
-      setSelectedTrip(null)
+    if (actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.post<{ delivery_notes?: { delivery_note?: string }[] }>(`/dispatch/trip/${id}/complete`, {})
+      if (r.ok) {
+        const dns = r.data?.delivery_notes?.map(d => d.delivery_note).filter(Boolean) || []
+        notify({
+          type: 'success',
+          title: 'Trip Completed',
+          message: dns.length ? `DNs: ${dns.join(', ')}` : 'All stops delivered',
+        })
+        loadTrips()
+        setSelectedTrip(null)
+      } else {
+        notify({ type: 'error', title: 'Complete failed', message: r.error || '' })
+      }
+    } finally {
+      setActionBusy(false)
     }
   }
 
@@ -138,28 +173,38 @@ export default function Dispatch() {
   }
 
   const generateDN = async () => {
-    if (!selectedTrip) return
-    const r = await api.dispatchGenerateDN(selectedTrip.id, {
-      customer: dnCustomer || undefined,
-      create_stop: true,
-    })
-    if (r.ok) {
-      notify({ type: 'success', title: 'DN Created', message: r.data.delivery_note })
-      setDnCustomer('')
-      openTrip(selectedTrip.id)
-    } else notify({ type: 'error', title: 'DN failed', message: r.error || '' })
+    if (!selectedTrip || actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.dispatchGenerateDN(selectedTrip.id, {
+        customer: dnCustomer || undefined,
+        create_stop: true,
+      })
+      if (r.ok) {
+        notify({ type: 'success', title: 'DN Created', message: r.data.delivery_note })
+        setDnCustomer('')
+        openTrip(selectedTrip.id)
+      } else notify({ type: 'error', title: 'DN failed', message: r.error || '' })
+    } finally {
+      setActionBusy(false)
+    }
   }
 
   const visitWithPOD = async (stopId: number) => {
-    if (!selectedTrip) return
-    const r = await api.dispatchVisitStop(selectedTrip.id, stopId, {
-      signature_data: podSig || `signed-at-${new Date().toISOString()}`,
-    })
-    if (r.ok) {
-      notify({ type: 'success', title: 'POD captured', message: 'Stop visited' })
-      setPodSig('')
-      openTrip(selectedTrip.id)
-    } else notify({ type: 'error', title: 'POD failed', message: r.error || '' })
+    if (!selectedTrip || actionBusy) return
+    setActionBusy(true)
+    try {
+      const r = await api.dispatchVisitStop(selectedTrip.id, stopId, {
+        signature_data: podSig || `signed-at-${new Date().toISOString()}`,
+      })
+      if (r.ok) {
+        notify({ type: 'success', title: 'POD captured', message: 'Stop visited' })
+        setPodSig('')
+        openTrip(selectedTrip.id)
+      } else notify({ type: 'error', title: 'POD failed', message: r.error || '' })
+    } finally {
+      setActionBusy(false)
+    }
   }
 
   const statusBadge = (status: string) => {
@@ -294,11 +339,14 @@ export default function Dispatch() {
                     minimal
                     continuous
                     onClose={() => {}}
-                    onScan={(code) => {
+                    onScan={useCallback((code: string) => {
                       const clean = String(code || '').trim()
                       if (!clean) return
-                      setLoadBoxId(clean)
-                    }}
+                      // Avoid clobbering a value the operator is mid-editing.
+                      if (!loadBoxIdRef.current || loadBoxIdRef.current === clean) {
+                        setLoadBoxId(clean)
+                      }
+                    }, [])}
                   />
                 </div>
 
@@ -316,7 +364,9 @@ export default function Dispatch() {
                       <ScanLine size={16} />
                     </button>
                   </div>
-                  <button type="button" className="scan-btn scan-btn-primary" onClick={() => void loadBox()}>Load box</button>
+                  <button type="button" className="scan-btn scan-btn-primary" disabled={actionBusy} onClick={() => void loadBox()}>
+                  {actionBusy ? 'Loading…' : 'Load box'}
+                </button>
                 </div>
               </>
             )}
@@ -340,7 +390,9 @@ export default function Dispatch() {
             )}
             {selectedTrip.status === 'in_transit' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button type="button" className="scan-btn scan-btn-primary" onClick={() => void completeTrip(selectedTrip.id)}>Complete</button>
+                <button type="button" className="scan-btn scan-btn-primary" disabled={actionBusy} onClick={() => void completeTrip(selectedTrip.id)}>
+                  {actionBusy ? 'Completing…' : 'Complete'}
+                </button>
                 <button type="button" className="scan-btn scan-btn-outline" onClick={() => void completeGated(selectedTrip.id)}>Complete (gated)</button>
               </div>
             )}
@@ -349,7 +401,7 @@ export default function Dispatch() {
               <div className="scan-section-card" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                 <div className="scan-section-title">Generate DN + stop</div>
                 <input className="scan-text-input" value={dnCustomer} onChange={e => setDnCustomer(e.target.value)} placeholder="Customer" />
-                <button type="button" className="scan-btn scan-btn-outline" onClick={() => void generateDN()}>Generate DN</button>
+                <button type="button" className="scan-btn scan-btn-outline" disabled={actionBusy} onClick={() => void generateDN()}>Generate DN</button>
               </div>
             )}
 
