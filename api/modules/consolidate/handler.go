@@ -339,11 +339,21 @@ func reconcile(db *pgxpool.Pool) fiber.Handler {
 			body.Resolution = "none"
 		}
 
+		// Start the transaction early so the pick_lists row is locked before
+		// we read wave status / orders / leftover — preventing two concurrent
+		// reconcile calls from both proceeding past the "already completed"
+		// check and double-processing leftover stock.
+		tx, err := db.Begin(c.Context())
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		defer tx.Rollback(c.Context())
+
 		var waveStatus string
 		var whID, packLocID *int
-		if err := db.QueryRow(c.Context(), `
+		if err := tx.QueryRow(c.Context(), `
 			SELECT COALESCE(status,''), warehouse_id, packing_location_id
-			FROM pick_lists WHERE id=$1`, waveID).Scan(&waveStatus, &whID, &packLocID); err != nil {
+			FROM pick_lists WHERE id=$1 FOR UPDATE`, waveID).Scan(&waveStatus, &whID, &packLocID); err != nil {
 			if err == pgx.ErrNoRows {
 				return shared.Err(c, fiber.StatusNotFound, "wave not found")
 			}
@@ -353,7 +363,7 @@ func reconcile(db *pgxpool.Pool) fiber.Handler {
 			return shared.OK(c, fiber.Map{"wave_id": waveID, "reconciled": true, "already": true})
 		}
 
-		orders, err := waveOrders(c.Context(), db, waveID)
+		orders, err := waveOrders(c.Context(), tx, waveID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -363,7 +373,7 @@ func reconcile(db *pgxpool.Pool) fiber.Handler {
 				incomplete = append(incomplete, o)
 			}
 		}
-		leftoverLines, leftover, err := leftoverBreakdown(c.Context(), db, waveID)
+		leftoverLines, leftover, err := leftoverBreakdown(c.Context(), tx, waveID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
@@ -399,12 +409,6 @@ func reconcile(db *pgxpool.Pool) fiber.Handler {
 		} else {
 			body.Resolution = "none"
 		}
-
-		tx, err := db.Begin(c.Context())
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		defer tx.Rollback(c.Context())
 
 		if leftover > 0.0001 {
 			switch body.Resolution {

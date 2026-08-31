@@ -254,9 +254,27 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 		}
 
 		// Legacy / ad-hoc boxes keep unrestricted insert with soft weight warn.
+		// Use a transaction with FOR UPDATE to prevent concurrent over-pack:
+		// two packers could both read packed=0, both pass the ceiling check,
+		// and both INSERT — exceeding the picked qty.
+		var id int
+		var warning string
+		var addWeight float64
+		var newTotal float64
 		if pickListID != nil {
+			tx, err := db.Begin(c.Context())
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			defer tx.Rollback(c.Context())
+
+			// Lock the pick list to serialize concurrent packers.
+			var lock int
+			_ = tx.QueryRow(c.Context(),
+				`SELECT id FROM pick_lists WHERE id=$1 FOR UPDATE`, *pickListID).Scan(&lock)
+
 			var ceiling float64
-			if err := db.QueryRow(c.Context(), `
+			if err := tx.QueryRow(c.Context(), `
 				SELECT COALESCE(SUM(COALESCE(picked_qty,0)),0)
 				FROM pick_list_items WHERE pick_list_id=$1 AND item_code=$2`,
 				*pickListID, body.ItemCode).Scan(&ceiling); err != nil {
@@ -267,7 +285,7 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 					"SKU not picked on this pick list: "+body.ItemCode)
 			}
 			var packed float64
-			if err := db.QueryRow(c.Context(), `
+			if err := tx.QueryRow(c.Context(), `
 				SELECT COALESCE(SUM(bi.quantity),0)
 				FROM box_items bi JOIN boxes b ON b.id = bi.box_id
 				WHERE b.pick_list_id=$1 AND bi.item_code=$2`,
@@ -278,44 +296,45 @@ func packItem(db *pgxpool.Pool) fiber.Handler {
 				return shared.Err(c, fiber.StatusConflict, fmt.Sprintf(
 					"over-pack: %.0f of %.0f picked already packed", packed, ceiling))
 			}
-		}
 
-		var batch any
-		if body.BatchNo != "" {
-			batch = body.BatchNo
-		}
+			var batch any
+			if body.BatchNo != "" {
+				batch = body.BatchNo
+			}
 
-		var unitWeight float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT COALESCE(weight_per_unit,0) FROM items WHERE code=$1`, body.ItemCode).Scan(&unitWeight)
-		addWeight := unitWeight * body.Quantity
+			var unitWeight float64
+			_ = tx.QueryRow(c.Context(), `
+				SELECT COALESCE(weight_per_unit,0) FROM items WHERE code=$1`, body.ItemCode).Scan(&unitWeight)
+			addWeight = unitWeight * body.Quantity
 
-		var maxWeight *float64
-		var declared float64
-		_ = db.QueryRow(c.Context(), `
-			SELECT max_weight, COALESCE(declared_weight,0) FROM boxes WHERE id=$1`, boxID).
-			Scan(&maxWeight, &declared)
-		newTotal := declared + addWeight
-		var warning string
-		if maxWeight != nil && *maxWeight > 0 && newTotal > *maxWeight {
-			warning = "box weight would exceed max_weight (" +
-				strconv.FormatFloat(newTotal, 'f', 2, 64) + " > " +
-				strconv.FormatFloat(*maxWeight, 'f', 2, 64) + ")"
-		}
+			var maxWeight *float64
+			var declared float64
+			_ = tx.QueryRow(c.Context(), `
+				SELECT max_weight, COALESCE(declared_weight,0) FROM boxes WHERE id=$1`, boxID).
+				Scan(&maxWeight, &declared)
+			newTotal := declared + addWeight
+			if maxWeight != nil && *maxWeight > 0 && newTotal > *maxWeight {
+				warning = "box weight would exceed max_weight (" +
+					strconv.FormatFloat(newTotal, 'f', 2, 64) + " > " +
+					strconv.FormatFloat(*maxWeight, 'f', 2, 64) + ")"
+			}
 
-		var id int
-		err = db.QueryRow(c.Context(),
-			`INSERT INTO box_items (box_id,item_code,quantity,batch_no,scanned_by,scanned_at)
-			 VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id`,
-			boxID, body.ItemCode, body.Quantity, batch, userID(c)).Scan(&id)
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			err = tx.QueryRow(c.Context(),
+				`INSERT INTO box_items (box_id,item_code,quantity,batch_no,scanned_by,scanned_at)
+				 VALUES ($1,$2,$3,$4,$5,NOW()) RETURNING id`,
+				boxID, body.ItemCode, body.Quantity, batch, userID(c)).Scan(&id)
+			if err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			if addWeight > 0 {
+				_, _ = tx.Exec(c.Context(), `
+					UPDATE boxes SET declared_weight = COALESCE(declared_weight,0) + $1 WHERE id=$2`, addWeight, boxID)
+			}
+			if err := tx.Commit(c.Context()); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
 		}
-		if addWeight > 0 {
-			_, _ = db.Exec(c.Context(), `
-				UPDATE boxes SET declared_weight = COALESCE(declared_weight,0) + $1 WHERE id=$2`, addWeight, boxID)
-		}
-		resp := fiber.Map{"id": id, "box_id": boxID, "declared_weight": newTotal}
+		resp := fiber.Map{"id": id, "box_id": boxID, "declared_weight": newTotal, "engine": "legacy"}
 		if warning != "" {
 			resp["warning"] = warning
 			resp["weight_ok"] = false
