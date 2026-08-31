@@ -4,6 +4,7 @@ import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
 import ItemAutocomplete from '../components/ItemAutocomplete'
+import { PageHead } from '../components/desktop/PageHead'
 
 export default function Returns() {
   const [list, setList] = useState<any[]>([])
@@ -51,6 +52,8 @@ export default function Returns() {
       notify({ type: 'success', title: 'Inspected', message: result })
       load()
       if (selected?.id === id) setSelected({ ...selected, status: r.data.status })
+    } else {
+      notify({ type: 'error', title: 'Inspect failed', message: r.error || '' })
     }
   }
 
@@ -92,13 +95,12 @@ export default function Returns() {
 
   return (
     <div className="desk-page space-y-3">
-      <div className="flex justify-between">
-        <div>
-          <h2 className="text-lg font-semibold">Returns</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>Receive → Inspect → Decide (restock / scrap / RTS)</p>
-        </div>
-        <button className="erpnext-btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel' : '+ Claim'}</button>
-      </div>
+      <PageHead
+        eyebrow="Outbound"
+        title="Returns"
+        subtitle="Receive → Inspect → Decide (restock / scrap / RTS)"
+        actions={<button className="erpnext-btn-primary" onClick={() => setShowNew(!showNew)}>{showNew ? 'Cancel' : '+ Claim'}</button>}
+      />
 
       {showNew && (
         <div className="erpnext-card p-4 space-y-3">
@@ -164,7 +166,6 @@ export default function Returns() {
             <button className="erpnext-btn-primary" onClick={() => decide('restock')}>Decide: Restock</button>
             <button className="erpnext-btn-secondary" onClick={() => decide('scrap')}>Decide: Scrap</button>
             <button className="erpnext-btn-secondary" onClick={() => decide('rts')}>Decide: RTS</button>
-            <button className="erpnext-btn-secondary" onClick={restock}>Legacy Restock</button>
           </div>
         </div>
       )}

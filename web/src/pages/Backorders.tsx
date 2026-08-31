@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
-import { api, getToken } from '../services/api'
+import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
 import ItemAutocomplete from '../components/ItemAutocomplete'
+import { PageHead } from '../components/desktop/PageHead'
 
 export default function Backorders() {
   const [tab, setTab] = useState<'v1' | 'v2'>('v2')
@@ -41,23 +42,23 @@ export default function Backorders() {
         notify({ type: 'success', title: 'Backorder', message: r.data.backorder_no })
         setSo(''); setCustomer(''); setNotes(''); load()
       } else {
-        notify({ type: 'error', title: 'Failed', message: r.error || 'UNIQUE(sales_order_no) — use v2 tab' })
+        notify({ type: 'error', title: 'Failed', message: r.error || 'A backorder already exists for this SO — use the v2 tab' })
       }
     }
   }
 
   return (
     <div className="desk-page space-y-3">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold">Backorders</h2>
-
-        </div>
-        <div className="flex gap-2">
-          <button className={tab === 'v2' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('v2')}>v2</button>
-          <button className={tab === 'v1' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('v1')}>v1</button>
-        </div>
-      </div>
+      <PageHead
+        eyebrow="Outbound"
+        title="Backorders"
+        actions={
+          <div className="flex gap-2">
+            <button className={tab === 'v2' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('v2')}>v2</button>
+            <button className={tab === 'v1' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('v1')}>v1</button>
+          </div>
+        }
+      />
 
       <div className="erpnext-card p-4">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
@@ -90,7 +91,7 @@ export default function Backorders() {
                 <td>{b.customer || '—'}</td>
                 <td>{b.status}</td>
                 <td>{b.line_count ?? '—'}</td>
-                <td>{b.created_at}</td>
+                <td>{b.created_at ? new Date(b.created_at).toLocaleDateString() : '—'}</td>
                 <td>
                   {tab === 'v2' && b.id && b.status === 'pending' && (
                     <button className="erpnext-btn-secondary text-xs" onClick={async () => {
@@ -107,7 +108,6 @@ export default function Backorders() {
           </tbody>
         </table>
       </div>
-      {!getToken() && null}
     </div>
   )
 }

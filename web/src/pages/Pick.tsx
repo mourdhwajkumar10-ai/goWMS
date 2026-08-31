@@ -83,6 +83,7 @@ export default function Pick() {
   const [scanBin, setScanBin] = useState('')
   const [scanQty, setScanQty] = useState('1')
   const [scanLineId, setScanLineId] = useState<number | null>(null)
+  const [scanBusy, setScanBusy] = useState(false)
 
   const loadLists = () => api.pickLists().then(r => { if (r.ok) setLists(r.data ?? []) })
   useEffect(() => {
@@ -231,7 +232,9 @@ export default function Pick() {
   }
 
   const logScan = async () => {
-    if (!scanItem || !selectedList) return
+    if (!scanItem || !selectedList || scanBusy) return
+    setScanBusy(true)
+    try {
     const currentLineId = scanLineId
     const expected = selectedList.items?.find((x: PickItem) => x.id === scanLineId)?.location_code
       || selectedList.items?.find((x: PickItem) => x.item_code === scanItem && x.status !== 'picked' && x.status !== 'shortage')?.location_code
@@ -273,6 +276,9 @@ export default function Pick() {
       loadLists()
     } else {
       notify({ type: 'error', title: 'Pick failed', message: r.error || 'Scan rejected' })
+    }
+    } finally {
+      setScanBusy(false)
     }
   }
 
@@ -510,8 +516,8 @@ export default function Pick() {
                   onChange={e => setScanQty(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void logScan() } }}
                 />
-                <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} onClick={() => void logScan()}>
-                  Log pick
+                <button type="button" className="scan-btn scan-btn-primary" style={{ flex: 1 }} disabled={scanBusy} onClick={() => void logScan()}>
+                  {scanBusy ? 'Logging…' : 'Log pick'}
                 </button>
               </div>
             </div>

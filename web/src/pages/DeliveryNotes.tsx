@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import ListPager from '../components/ListPager'
 import { useClientPager } from '../hooks/useClientPager'
+import { PageHead } from '../components/desktop/PageHead'
 
 interface Dn {
   id: number
@@ -30,12 +31,11 @@ export default function DeliveryNotes() {
 
   return (
     <div className="desk-page space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold" style={{ color: 'var(--text)' }}>Delivery Notes</h1>
-          <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>Outbound delivery notes for customer shipments</p>
-        </div>
-      </div>
+      <PageHead
+        eyebrow="Outbound"
+        title="Delivery Notes"
+        subtitle="Outbound delivery notes for customer shipments"
+      />
 
       <div className="erpnext-card">
         <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>

@@ -68,6 +68,8 @@ export default function Pack() {
       setShowCreate(false)
       loadBoxes()
       notify({ type: 'success', title: 'Box Created', message: r.data.label })
+    } else {
+      notify({ type: 'error', title: 'Box creation failed', message: r.error || 'Could not create box' })
     }
   }
 

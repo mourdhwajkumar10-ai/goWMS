@@ -132,6 +132,10 @@ export default function SalesOrders() {
 
   const pager = useClientPager(list)
 
+  // Reset to page 1 when the status filter changes so the user doesn't
+  // land on an empty page (e.g. was on page 3 of "all", switches to "draft").
+  useEffect(() => { pager.setPage(1) }, [statusFilter])
+
   const openSO = async (id: number) => {
     const r = await api.soGet(id)
     if (r.ok) setSelected(r.data)

@@ -3,7 +3,7 @@ import { api } from '../services/api'
 import { notify } from '../components/Notifications'
 import { ListPage, Column } from '../components/templates/ListPage'
 import { StatusBadge } from '../components/common/StatusBadge'
-import { useClientPager } from '../hooks/useClientPager'
+
 
 interface Cust {
   id: number
@@ -17,7 +17,6 @@ interface Cust {
 export default function Customers() {
   const [list, setList] = useState<Cust[]>([])
   const [showNew, setShowNew] = useState(false)
-  const [msg, setMsg] = useState('')
 
   const [name, setName] = useState('')
   const [group, setGroup] = useState('')
@@ -30,11 +29,12 @@ export default function Customers() {
   const createCustomer = async () => {
     const r = await api.customerCreate({ name, customer_group: group, gstin, territory })
     if (r.ok) {
-      setMsg(`Customer "${name}" created`)
       setName(''); setGroup(''); setGstin(''); setTerritory('')
       setShowNew(false)
       loadList()
       notify({ type: 'success', title: 'Customer Created', message: name })
+    } else {
+      notify({ type: 'error', title: 'Create failed', message: r.error || '' })
     }
   }
 
@@ -52,8 +52,8 @@ export default function Customers() {
       description="Customer master with GST and territory tracking"
       columns={columns}
       data={list}
-      search={{ placeholder: 'Search customers…', onChange: () => {} }}
-      actions={[{ label: showNew ? '✕ Cancel' : '+ New Customer', onClick: () => setShowNew(!showNew), variant: 'default' }]}
+      search={{ placeholder: 'Search customers…' }}
+      actions={[{ label: showNew ? '✕ Cancel' : '+ New Customer', onClick: () => setShowNew(!showNew), variant: 'default' as const }]}
       emptyState={{ icon: '👥', title: 'No customers', message: 'Create your first customer' }}
     />
   )

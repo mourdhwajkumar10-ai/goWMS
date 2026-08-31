@@ -159,7 +159,11 @@ export default function CounterSale() {
       setStep('cart')
       return
     }
-    await api.post(`/counter-sale/${session.pick_list_id}/cancel`, {})
+    const r = await api.post(`/counter-sale/${session.pick_list_id}/cancel`, {})
+    if (!r.ok) {
+      notify({ type: 'error', title: 'Cancel failed', message: r.error || 'Stock may still be reserved' })
+      return
+    }
     setSession(null)
     setStep('cart')
     notify({ type: 'info', title: 'Session cancelled', message: 'Reservations released' })

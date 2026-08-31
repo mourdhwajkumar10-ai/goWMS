@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react'
 import { api } from '../services/api'
 import { notify } from '../components/Notifications'
+import ListPager from '../components/ListPager'
+import { useClientPager } from '../hooks/useClientPager'
+import { PageHead } from '../components/desktop/PageHead'
 
 type Flag = {
   id: number
@@ -29,6 +32,7 @@ export default function ShortageReview() {
     api.shortageFlags(tab).then(r => { if (r.ok) setList(r.data ?? []) })
   }
   useEffect(() => { load() }, [tab])
+  const pager = useClientPager(list)
 
   const approve = async (f: Flag) => {
     setBusyId(f.id)
@@ -67,21 +71,22 @@ export default function ShortageReview() {
 
   return (
     <div className="desk-page space-y-3">
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-lg font-semibold">Shortage review</h2>
-          <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-            Lines pickers flagged "can't find it". Approve to move the shortfall to a backorder,
-            or reject to send it back into the pick queue.
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <button className={tab === 'pending' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('pending')}>Pending</button>
-          <button className={tab === 'all' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('all')}>All</button>
-        </div>
-      </div>
+      <PageHead
+        eyebrow="Outbound"
+        title="Shortage review"
+        subtitle={'Lines pickers flagged "can\'t find it". Approve → backorder, or reject → re-pick queue.'}
+        actions={
+          <div className="flex gap-2">
+            <button className={tab === 'pending' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('pending')}>Pending</button>
+            <button className={tab === 'all' ? 'erpnext-btn-primary' : 'erpnext-btn-secondary'} onClick={() => setTab('all')}>All</button>
+          </div>
+        }
+      />
 
       <div className="erpnext-card">
+        <div className="px-4 py-3 border-b" style={{ borderColor: 'var(--border)' }}>
+          <ListPager pager={pager} placeholder="Search flags…" />
+        </div>
         <table className="erpnext-table">
           <thead>
             <tr>
@@ -90,7 +95,7 @@ export default function ShortageReview() {
             </tr>
           </thead>
           <tbody>
-            {list.map(f => (
+            {pager.pageItems.map(f => (
               <tr key={f.id}>
                 <td className="font-medium">{f.flag_no}</td>
                 <td>{f.sales_order_no}</td>
@@ -101,8 +106,8 @@ export default function ShortageReview() {
                 <td>{f.flagged_at}</td>
                 <td>
                   <span className={
-                    f.status === 'pending' ? 'erpnext-badge-warning'
-                      : f.status === 'approved' ? 'erpnext-badge-success' : 'erpnext-badge-danger'
+                    f.status === 'pending' ? 'erpnext-badge-yellow'
+                      : f.status === 'approved' ? 'erpnext-badge-green' : 'erpnext-badge-red'
                   }>
                     {f.status}
                   </span>
@@ -140,7 +145,7 @@ export default function ShortageReview() {
                 </td>
               </tr>
             ))}
-            {list.length === 0 && (
+            {pager.total === 0 && (
               <tr><td colSpan={9} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>
                 {tab === 'pending' ? 'No pending shortage flags' : 'No shortage flags yet'}
               </td></tr>
