@@ -436,20 +436,20 @@ export default function PurchaseOrders() {
   const totalDiscount = items.reduce((s, i) => s + i.discount_amount, 0)
 
   return (
-    <div className="desk-page space-y-3">
+    <div className="desk-page po-page space-y-2">
       {showScanner && <BarcodeScanner onScan={handleBarcodeScan} onClose={() => { setShowScanner(false); setScanRowIdx(null) }} />}
 
-      <div className="page-head">
-        <div>
+      <div className="page-head desk-page-head">
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
           <h1 className="page-title">Purchase Order</h1>
-          <p className="page-sub">Create and manage inbound purchase orders</p>
+          <p className="page-sub">Home › Inward › Purchase Order — create and manage inbound orders</p>
         </div>
         <div className="page-actions">
-          <button type="button" onClick={() => { setShowScanner(true); setScanRowIdx(null) }} className="erpnext-btn-secondary">
+          <button type="button" onClick={() => { setShowScanner(true); setScanRowIdx(null) }} className="erpnext-btn-secondary po-head-btn">
             Scan PO
           </button>
           {!showNew && (
-            <button type="button" onClick={() => { setShowNew(true); setSelectedPO(null) }} className="erpnext-btn-primary">
+            <button type="button" onClick={() => { setShowNew(true); setSelectedPO(null) }} className="erpnext-btn-primary po-head-btn">
               + New
             </button>
           )}
@@ -467,14 +467,14 @@ export default function PurchaseOrders() {
       {showNew && (
         <div className="erpnext-card po-create-card">
           <div className="card-header">
-            <h2 style={{ margin: 0 }}>New Purchase Order</h2>
-            <button type="button" onClick={() => { setShowNew(false); resetForm() }} className="erpnext-btn-secondary">
+            <h2 className="po-card-title">New purchase order</h2>
+            <button type="button" onClick={() => { setShowNew(false); resetForm() }} className="erpnext-btn-secondary po-head-btn-sm">
               Cancel
             </button>
           </div>
           <div className="card-body space-y-6 po-create-form">
             <div className="form-section">
-              <div className="form-section-title">Essential Details</div>
+              <div className="form-section-title">Essential details</div>
               <div className="form-grid">
                 <div className="form-control">
                   <label className="erpnext-label">Supplier Name *</label>
@@ -516,13 +516,13 @@ export default function PurchaseOrders() {
             <div>
               <button type="button" onClick={() => setShowDetails(!showDetails)} className="link-btn">
                 <span style={{ transform: showDetails ? 'rotate(90deg)' : 'none', display: 'inline-block', transition: 'transform 0.15s' }}>▶</span>
-                {showDetails ? 'Hide' : 'Show'} Additional Details
+                {showDetails ? 'Hide' : 'Show'} additional details
               </button>
             </div>
 
             {showDetails && (
-              <div className="form-section" style={{ background: 'var(--gray-50)', border: '1px solid var(--border-color)', borderRadius: 'var(--border-radius-lg)', padding: 16 }}>
-                <div className="form-section-title">Additional Details</div>
+              <div className="form-section" style={{ background: 'var(--card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16 }}>
+                <div className="form-section-title">Additional details</div>
                 <div className="form-grid">
                   <div className="form-control">
                     <label className="erpnext-label">Cost Center</label>
@@ -578,18 +578,18 @@ export default function PurchaseOrders() {
 
             <div className="form-section">
               <div className="flex items-center justify-between mb-4">
-                <div className="form-section-title" style={{ marginBottom: 0 }}>Item Lines</div>
-                <div className="page-actions">
+                <div className="form-section-title" style={{ marginBottom: 0 }}>Item lines</div>
+                <div className="page-actions po-item-toolbar">
                   <CSVImport onImport={handleCSVImport} />
                   <button type="button" onClick={downloadTemplate} className="link-btn">Download template</button>
-                  <button type="button" onClick={addItem} className="erpnext-btn-secondary">+ Add Item</button>
+                  <button type="button" onClick={addItem} className="erpnext-btn-secondary po-head-btn-sm">+ Add item</button>
                 </div>
               </div>
 
               <p className="text-xs mb-2" style={{ color: 'var(--text-dim)' }}>
                 Type to search items — a new row appears automatically when you fill the last one.
               </p>
-              <div className="po-items-wrap rounded-lg" style={{ border: '1px solid var(--border-color)' }}>
+              <div className="po-items-wrap" style={{ border: '1px solid var(--border)', borderRadius: 8 }}>
                   <table className="erpnext-table po-items-table text-sm w-full">
                     <colgroup>
                       <col className="col-idx" />
@@ -604,10 +604,10 @@ export default function PurchaseOrders() {
                       <col className="col-actions" />
                     </colgroup>
                     <thead>
-                      <tr style={{ background: 'var(--gray-50)' }}>
+                      <tr>
                         <th className="col-idx">#</th>
-                        <th className="col-item-code">Item Code *</th>
-                        <th className="col-item-name">Item Name</th>
+                        <th className="col-item-code">Item code *</th>
+                        <th className="col-item-name">Item name</th>
                         <th className="col-qty">Qty *</th>
                         <th className="col-rate">Rate</th>
                         <th className="col-batch">Batch</th>
@@ -720,19 +720,19 @@ export default function PurchaseOrders() {
 
             {items.some(poItemFilled) && (
               <div className="flex justify-end">
-                <div className="text-right space-y-1 p-4 rounded-lg" style={{ background: 'var(--gray-50)', minWidth: 200 }}>
+                <div className="text-right space-y-1 p-4 rounded-lg" style={{ background: 'var(--card)', border: '1px solid var(--border)', minWidth: 200 }}>
                   <div className="text-sm" style={{ color: 'var(--text-muted)' }}>Subtotal: ₹{total.toFixed(2)}</div>
                   {totalDiscount > 0 && <div className="text-sm" style={{ color: 'var(--red)' }}>Discount: -₹{totalDiscount.toFixed(2)}</div>}
-                  <div className="text-lg font-semibold pt-1 border-t" style={{ borderColor: 'var(--border-color)' }}>
-                    Grand Total: ₹{(total - totalDiscount).toFixed(2)}
+                  <div className="text-lg font-semibold pt-1 border-t" style={{ borderColor: 'var(--border)' }}>
+                    Grand total: ₹{(total - totalDiscount).toFixed(2)}
                   </div>
                 </div>
               </div>
             )}
 
-            <div className="flex justify-end gap-3 pt-4 border-t" style={{ borderColor: 'var(--border-color)' }}>
-              <button type="button" onClick={() => { setShowNew(false); resetForm() }} className="erpnext-btn-secondary">Cancel</button>
-              <button type="button" onClick={createPO} className="erpnext-btn-primary">Save</button>
+            <div className="flex justify-end gap-2 pt-4 border-t" style={{ borderColor: 'var(--border)' }}>
+              <button type="button" onClick={() => { setShowNew(false); resetForm() }} className="erpnext-btn-secondary po-head-btn">Cancel</button>
+              <button type="button" onClick={createPO} className="erpnext-btn-primary po-head-btn">Save</button>
             </div>
           </div>
         </div>
@@ -740,17 +740,16 @@ export default function PurchaseOrders() {
 
       {/* PO List */}
       {!selectedPO && !showNew && (
-        <div className="erpnext-card">
-          <div className="px-6 py-4 border-b space-y-3" style={{ borderColor: 'var(--border)' }}>
-            <h2 className="text-lg font-semibold">All Purchase Orders</h2>
+        <div className="erpnext-card desk-list-card p-2">
+          <div className="desk-filter-bar po-filter-bar">
             <ListPager pager={pager} placeholder="Search POs…" />
           </div>
-          <div className="p-4">
-            <table className="erpnext-table">
+          <div className="table-wrap desk-table-scroll">
+            <table className="erpnext-table text-sm desk-table">
               <thead>
-                <tr style={{ background: 'var(--panel-2)' }}>
-                  <th>PO No</th>
-                  <th>Packing List</th>
+                <tr>
+                  <th>PO no</th>
+                  <th>Packing list</th>
                   <th>GRN</th>
                   <th>Supplier</th>
                   <th>Company</th>
@@ -758,7 +757,7 @@ export default function PurchaseOrders() {
                   <th className="text-right">Items</th>
                   <th className="text-right">Total</th>
                   <th className="text-right">Received</th>
-                  <th>Actions</th>
+                  <th className="po-col-actions">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -773,8 +772,8 @@ export default function PurchaseOrders() {
                     </td>
                     <td>{po.packing_list_no || "—"}</td>
                     <td>{po.grn_no || "—"}</td>
-                    <td>{po.supplier_name}</td>
-                    <td>{po.company || '-'}</td>
+                    <td className="desk-cell-ellipsis" title={po.supplier_name || ''}>{po.supplier_name || '—'}</td>
+                    <td>{po.company || '—'}</td>
                     <td>
                       <span className={`erpnext-badge ${po.status === 'draft' ? 'erpnext-badge-yellow' : po.status === 'submitted' ? 'erpnext-badge-blue' : po.status === 'received' ? 'erpnext-badge-green' : 'erpnext-badge-red'}`}>
                         {po.status}
@@ -783,13 +782,13 @@ export default function PurchaseOrders() {
                     <td className="text-right">{po.total_qty}</td>
                     <td className="text-right font-medium">{po.grand_total?.toFixed(2) || '0.00'}</td>
                     <td className="text-right">{po.total_received}</td>
-                    <td>
-                      <div className="flex gap-2">
-                        <button onClick={() => openPO(po.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                    <td className="po-col-actions">
+                      <div className="po-row-actions">
+                        <button type="button" onClick={() => openPO(po.id)} className="erpnext-btn-secondary text-xs">Open</button>
                         {po.status === 'draft' && (
-                          <button onClick={() => submitPO(po.id)} className="erpnext-btn-primary text-xs">Submit</button>
+                          <button type="button" onClick={() => submitPO(po.id)} className="erpnext-btn-primary text-xs">Submit</button>
                         )}
-                        <button onClick={() => deletePO(po.id)} className="text-xs px-2 py-1 rounded" style={{ background: 'rgba(220,38,38,0.06)', color: 'var(--red)' }}>
+                        <button type="button" onClick={() => deletePO(po.id)} className="erpnext-btn-secondary text-xs po-btn-delete">
                           Delete
                         </button>
                       </div>
@@ -797,7 +796,7 @@ export default function PurchaseOrders() {
                   </tr>
                 ))}
                 {pager.total === 0 && (
-                  <tr><td colSpan={8} className="text-center py-12" style={{ color: 'var(--text-dim)' }}>No purchase orders found</td></tr>
+                  <tr><td colSpan={10} className="text-center py-12" style={{ color: 'var(--text-dim)' }}>No purchase orders found</td></tr>
                 )}
               </tbody>
             </table>
@@ -810,19 +809,18 @@ export default function PurchaseOrders() {
         <div className="erpnext-card">
           <div className="px-6 py-4 flex items-center justify-between border-b" style={{ borderColor: 'var(--border)' }}>
             <div>
-              <h2 className="text-lg font-semibold">{selectedPO.name}</h2>
+              <h2 className="po-card-title">{selectedPO.name}</h2>
               <p className="text-sm mt-1" style={{ color: 'var(--text-dim)' }}>{selectedPO.supplier_name}</p>
             </div>
-            <div className="flex gap-3">
+            <div className="page-actions">
               {selectedPO.status === 'draft' && (
-                <button onClick={() => submitPO(selectedPO.id)} className="erpnext-btn-primary">Submit PO</button>
+                <button type="button" onClick={() => submitPO(selectedPO.id)} className="erpnext-btn-primary po-head-btn">Submit PO</button>
               )}
-              <button onClick={() => setSelectedPO(null)} className="erpnext-btn-secondary">← Back to List</button>
+              <button type="button" onClick={() => setSelectedPO(null)} className="erpnext-btn-secondary po-head-btn">Back to list</button>
             </div>
           </div>
           <div className="p-6">
-            {/* PO Info Grid */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg mb-6" style={{ background: 'var(--panel-2)' }}>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-4 rounded-lg mb-6" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
               <div>
                 <span className="text-xs font-medium" style={{ color: 'var(--text-dim)' }}>Company</span>
                 <p className="font-medium">{selectedPO.company || '-'}</p>
@@ -902,6 +900,126 @@ export default function PurchaseOrders() {
           </div>
         </div>
       )}
+
+      <style>{`
+        .po-page .page-head { min-width: 0; max-width: 100%; }
+        .po-page .page-actions { flex-shrink: 0; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+        .po-head-btn {
+          height: 40px !important;
+          min-height: 40px !important;
+          padding: 0 16px !important;
+          font-size: 14px !important;
+          font-weight: 600;
+          border-radius: 8px !important;
+          box-sizing: border-box;
+        }
+        .po-head-btn-sm {
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 12px !important;
+          font-size: 13px !important;
+          font-weight: 600;
+          border-radius: 6px !important;
+        }
+        .po-card-title {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 650;
+          letter-spacing: -0.02em;
+          text-transform: none !important;
+          color: var(--foreground);
+          line-height: 1.25;
+        }
+        .po-page .form-section-title {
+          font-size: 13px;
+          font-weight: 650;
+          letter-spacing: -0.01em;
+          text-transform: none;
+          color: var(--foreground);
+        }
+        .po-filter-bar {
+          margin-bottom: 8px;
+        }
+        .po-filter-bar .list-pager,
+        .po-filter-bar .desk-filter-bar {
+          margin: 0;
+        }
+        .po-filter-bar .list-pager-search,
+        .po-filter-bar .desk-filter-search,
+        .po-filter-bar input.erpnext-input {
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 10px !important;
+          font-size: 13px;
+          border: 1px solid var(--border) !important;
+          border-radius: 6px !important;
+          background: var(--card, #fff) !important;
+          box-shadow: none !important;
+        }
+        .po-page .desk-table th {
+          text-transform: none !important;
+          letter-spacing: -0.01em;
+          font-size: 12px;
+          font-weight: 600;
+          background: var(--card, #fff) !important;
+          color: var(--muted-foreground);
+        }
+        .po-col-actions {
+          width: 1%;
+          white-space: nowrap;
+          vertical-align: middle;
+          padding-left: 10px !important;
+          padding-right: 10px !important;
+        }
+        .po-row-actions {
+          display: inline-flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 6px;
+          width: max-content;
+          margin-left: auto;
+        }
+        .po-btn-delete {
+          color: var(--red, #b91c1c) !important;
+        }
+        .po-create-card .card-header {
+          background: var(--card, #fff);
+        }
+        .po-page .po-items-table th {
+          text-transform: none !important;
+          letter-spacing: -0.01em !important;
+          font-size: 12px !important;
+          font-weight: 600 !important;
+          background: var(--card, #fff) !important;
+          color: var(--muted-foreground) !important;
+        }
+        .po-page .po-items-table .col-actions {
+          width: 40px;
+          min-width: 40px;
+          max-width: 44px;
+          padding-left: 4px !important;
+          padding-right: 4px !important;
+        }
+        .po-page .po-create-form .form-control input,
+        .po-page .po-create-form .form-control select,
+        .po-page .po-create-form .form-control .erpnext-input,
+        .po-page .po-create-form .po-items-table .erpnext-input {
+          border-radius: 6px !important;
+          background: var(--card, #fff) !important;
+          border: 1px solid var(--border) !important;
+        }
+        .po-page .po-scan-btn {
+          height: 32px !important;
+          min-height: 32px !important;
+          border-radius: 6px !important;
+          padding: 0 10px !important;
+          font-size: 12px !important;
+          font-weight: 600;
+        }
+        .po-item-toolbar {
+          flex-wrap: nowrap;
+        }
+      `}</style>
     </div>
   )
 }

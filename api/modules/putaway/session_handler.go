@@ -682,21 +682,31 @@ var warehouseWarning string
 	// Fix #2: Lock source first (consistent lock order: source then target)
 	// to prevent deadlocks with concurrent putaway operations.
 	var sourceBalID int
-	_, err = tx.Exec(c.Context(), `
+	var sourceAvail float64
+	_ = tx.QueryRow(c.Context(),
+		`SELECT id, COALESCE(actual_qty,0)
+		 FROM stock_location_balances
+		 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2)
+		 FOR UPDATE`,
+		sourceLocationID, itemCode).Scan(&sourceBalID, &sourceAvail)
+	if sourceBalID < 1 {
+		return shared.Err(c, fiber.StatusBadRequest,
+			fmt.Sprintf("insufficient stock at source (available 0, requested %.0f)", qty))
+	}
+	tag, err := tx.Exec(c.Context(), `
 		UPDATE stock_location_balances
 		SET actual_qty = actual_qty - $1,
 		    reserved_qty = CASE WHEN reserved_qty >= $1 THEN reserved_qty - $1 ELSE 0 END,
 		    updated_at=now()
-		WHERE location_id=$2 AND UPPER(item_code)=UPPER($3) AND actual_qty >= $1 - 1e-9`,
-		qty, sourceLocationID, itemCode)
+		WHERE id=$2 AND actual_qty >= $1 - 1e-9`,
+		qty, sourceBalID)
 	if err != nil {
 		return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 	}
-	// Verify source decrement succeeded by checking the balance
-	_ = tx.QueryRow(c.Context(),
-		`SELECT id FROM stock_location_balances
-		 WHERE location_id=$1 AND UPPER(item_code)=UPPER($2) FOR UPDATE`,
-		sourceLocationID, itemCode).Scan(&sourceBalID)
+	if tag.RowsAffected() != 1 {
+		return shared.Err(c, fiber.StatusBadRequest,
+			fmt.Sprintf("insufficient stock at source (available %.0f, requested %.0f)", sourceAvail, qty))
+	}
 
 	var existingID int
 	err = tx.QueryRow(c.Context(),
@@ -729,14 +739,15 @@ var warehouseWarning string
 		var targetCode, sourceCode string
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, body.TargetLocationID).Scan(&targetCode)
 		_ = tx.QueryRow(c.Context(), `SELECT code FROM warehouse_locations WHERE id=$1`, sourceLocationID).Scan(&sourceCode)
-if targetCode != "" {
+		if targetCode != "" {
 			// Prefer the GRN line linked at pick time so we update the exact row the
 			// operator is working on. Fall back to the legacy fuzzy match for old
 			// sessions that pre-date the grn_line_id column.
-			// Fix #5: Add FOR UPDATE to prevent concurrent updates to same GRN line
+			// Lock with SELECT … FOR UPDATE (FOR UPDATE is invalid on UPDATE in Postgres).
 			if grnLineID != nil {
-				_, _ = tx.Exec(c.Context(), `
-					UPDATE grn_lines SET route_location=$2
+				var lockID int
+				if err = tx.QueryRow(c.Context(), `
+					SELECT id FROM grn_lines
 					WHERE id=$1
 					  AND (
 					    NULLIF(BTRIM(route_location),'') IS NULL
@@ -744,24 +755,53 @@ if targetCode != "" {
 					    OR UPPER(route_location) LIKE 'HOLD%'
 					    OR UPPER(route_location) LIKE 'STAGING%'
 					  )
-					FOR UPDATE`, *grnLineID, targetCode)
+					FOR UPDATE`, *grnLineID).Scan(&lockID); err != nil && err != pgx.ErrNoRows {
+					return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+				}
+				if err == nil {
+					if _, err = tx.Exec(c.Context(), `
+						UPDATE grn_lines SET route_location=$2 WHERE id=$1`,
+						*grnLineID, targetCode); err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+				}
 			} else {
-				_, _ = tx.Exec(c.Context(), `
-					UPDATE grn_lines gl SET route_location=$2
+				rows, qErr := tx.Query(c.Context(), `
+					SELECT gl.id FROM grn_lines gl
 					WHERE UPPER(gl.item_code)=UPPER($1)
 					  AND COALESCE(gl.scanned_qty,0) > 0
 					  AND (
 					    NULLIF(BTRIM(gl.route_location),'') IS NULL
-					    OR UPPER(route_location) LIKE 'INCOMING%'
-					    OR UPPER(route_location) LIKE 'HOLD%'
-					    OR UPPER(route_location) LIKE 'STAGING%'
+					    OR UPPER(gl.route_location) LIKE 'INCOMING%'
+					    OR UPPER(gl.route_location) LIKE 'HOLD%'
+					    OR UPPER(gl.route_location) LIKE 'STAGING%'
 					  )
 					  AND EXISTS (
 					    SELECT 1 FROM grn_sessions gs
 					    WHERE gs.id = gl.grn_session_id
 					      AND gs.status IN ('completed','closed','putaway_pending','putaway_in_progress','item_verification_complete')
 					  )
-					FOR UPDATE`, itemCode, targetCode)
+					FOR UPDATE OF gl`, itemCode)
+				if qErr != nil {
+					return shared.Err(c, fiber.StatusInternalServerError, qErr.Error())
+				}
+				var ids []int
+				for rows.Next() {
+					var id int
+					if err = rows.Scan(&id); err != nil {
+						rows.Close()
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+					ids = append(ids, id)
+				}
+				rows.Close()
+				for _, id := range ids {
+					if _, err = tx.Exec(c.Context(), `
+						UPDATE grn_lines SET route_location=$2 WHERE id=$1`,
+						id, targetCode); err != nil {
+						return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+					}
+				}
 			}
 		}
 

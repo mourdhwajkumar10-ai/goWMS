@@ -43,14 +43,14 @@ export default function ScanCard({
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       {viewport ?? <ScanViewport state={state} />}
       <ScanVerdict state={state} code={code} reason={reason} />
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="scan-action-row">
         {showMarkDamaged && (
           <button
             type="button"
             onClick={onMarkDamaged}
             disabled={!canMarkDamaged}
             className="scan-btn scan-btn-outline"
-            style={{ flex: 1, minHeight: 48, color: 'var(--destructive)', borderColor: 'oklch(0.912 0.005 250 / 0.7)' }}
+            style={{ flex: 1, color: 'var(--destructive)', borderColor: 'oklch(0.912 0.005 250 / 0.7)' }}
           >
             <AlertTriangle className="h-4 w-4" aria-hidden="true" />
             {markDamagedLabel}
@@ -60,7 +60,7 @@ export default function ScanCard({
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
         </button>
       </div>
-      <div style={{ display: 'flex', gap: 8 }}>
+      <div className="scan-action-row">
         <input
           value={value}
           onChange={(e) => setValue(e.target.value)}
@@ -69,10 +69,9 @@ export default function ScanCard({
           }}
           placeholder={placeholder}
           aria-label={placeholder}
-          className="scan-count-input"
-          style={{ flex: 1, minHeight: 48, fontSize: 15, textAlign: 'left' }}
+          className="scan-count-input scan-manual-input"
         />
-        <button type="button" onClick={submit} className="scan-btn scan-btn-primary" style={{ width: 'auto', padding: '0 20px' }}>
+        <button type="button" onClick={submit} className="scan-btn scan-btn-primary scan-enter-btn">
           Enter
         </button>
       </div>

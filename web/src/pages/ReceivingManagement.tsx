@@ -2,6 +2,17 @@ import React, { useEffect, useRef, useState, useMemo, useCallback } from "react"
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import * as XLSX from "xlsx";
+import {
+  Check,
+  ClipboardList,
+  Download,
+  FileSpreadsheet,
+  FolderOpen,
+  PackageOpen,
+  PenLine,
+  Truck,
+  Upload,
+} from "lucide-react";
 import api from "../services/api";
 import "../styles/receiving-wizard.css";
 
@@ -330,7 +341,7 @@ export default function ReceivingManagement() {
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Pagination
-  const PAGE_SIZE = 10;
+  const PAGE_SIZE = 20;
   const [grnPage, setGrnPage] = useState(1);
 
   // Detail modal filters
@@ -938,18 +949,17 @@ export default function ReceivingManagement() {
   const closeDetail = useCallback(() => setSelectedList(null), []);
 
   return (
-    <div className="desk-page rw-dash-page">
-      {/* Page Head */}
-      <div className="rw-page-head desk-page-head">
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="rw-page-title">Receiving</div>
-          <div className="rw-page-sub">Upload, manage, and approve packing lists</div>
+    <div className="desk-page rw-dash-page space-y-2">
+      <div className="page-head desk-page-head">
+        <div style={{ minWidth: 0, flex: "1 1 auto" }}>
+          <h1 className="page-title">Receiving</h1>
+          <p className="page-sub">Home › Inward › Receiving — upload, manage, and approve packing lists</p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        <div className="page-actions">
           <button
-            className="rw-btn rw-btn-primary"
-            onClick={() => setShowUpload(true)}
             type="button"
+            className="erpnext-btn-primary rm-head-btn"
+            onClick={() => setShowUpload(true)}
           >
             + Upload Packing List
           </button>
@@ -974,36 +984,36 @@ export default function ReceivingManagement() {
       >
             <div className="rw-modal-header">
               <div>
-                <h2>📦 Add Packing List</h2>
-                <div style={{ fontSize: 12, color: "var(--rw-text-dim)", marginTop: 4 }}>
+                <h2>
+                  <PackageOpen className="rw-modal-icon" size={18} strokeWidth={1.8} aria-hidden />
+                  Add packing list
+                </h2>
+                <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4 }}>
                   Enter delivery details, then upload the Excel file (or download the sample format)
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <button className="rw-btn rw-btn-secondary" onClick={downloadSample}>
-                  ⬇ Sample Format
+                <button type="button" className="erpnext-btn-secondary text-xs" onClick={downloadSample} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  <Download size={14} strokeWidth={1.8} aria-hidden />
+                  Sample format
                 </button>
-                <button className="rw-modal-close" onClick={closeUpload}>✕</button>
+                <button className="rw-modal-close" onClick={closeUpload} type="button" aria-label="Close">✕</button>
               </div>
             </div>
-            {/* Entry mode tabs */}
-            <div style={{ display: "flex", gap: 4, padding: "12px 24px 0", borderBottom: "1px solid var(--border)" }}>
-              {([["upload", "📄 Upload File"], ["manual", "✍️ Manual Entry"]] as const).map(([mode, label]) => (
+            <div className="rw-modal-tabs" role="tablist" aria-label="Entry mode">
+              {([
+                ["upload", "Upload file", Upload],
+                ["manual", "Manual entry", PenLine],
+              ] as const).map(([mode, label, Icon]) => (
                 <button
                   key={mode}
                   type="button"
-                  className="rw-btn"
-                  style={{
-                    border: "none",
-                    borderBottom: entryMode === mode ? "3px solid var(--accent)" : "3px solid transparent",
-                    borderRadius: 0,
-                    background: "transparent",
-                    padding: "8px 16px",
-                    fontWeight: entryMode === mode ? 600 : 400,
-                    color: entryMode === mode ? "var(--accent)" : "var(--text-dim)",
-                  }}
+                  role="tab"
+                  aria-selected={entryMode === mode}
+                  className={`rw-modal-tab${entryMode === mode ? " is-active" : ""}`}
                   onClick={() => setEntryMode(mode)}
                 >
+                  <Icon className="rw-modal-icon" size={15} strokeWidth={1.8} aria-hidden />
                   {label}
                 </button>
               ))}
@@ -1011,8 +1021,10 @@ export default function ReceivingManagement() {
 
             <form onSubmit={entryMode === "upload" ? handleUpload : handleManualImport}>
               <div className="rw-modal-body">
-                {/* Delivery details */}
-                <div className="rw-section-title" style={{ marginBottom: 12 }}>🚚 Delivery Details</div>
+                <div className="rw-section-title" style={{ marginBottom: 12 }}>
+                  <Truck className="rw-modal-icon" size={15} strokeWidth={1.8} aria-hidden />
+                  Delivery details
+                </div>
                 <div className="rw-form-grid">
                   <div className="rw-field" ref={poDropdownRef}>
                     <label className="rw-label">Purchase Order</label>
@@ -1233,20 +1245,22 @@ export default function ReceivingManagement() {
                   </div>
                 </div>
 
-                {/* ═══ Upload mode ═══ */}
                 {entryMode === "upload" && (
                   <>
-                    <div className="rw-section-title" style={{ marginBottom: 12, marginTop: 20 }}>📄 Packing List File</div>
+                    <div className="rw-section-title" style={{ marginBottom: 12, marginTop: 20 }}>
+                      <FileSpreadsheet className="rw-modal-icon" size={15} strokeWidth={1.8} aria-hidden />
+                      Packing list file
+                    </div>
                     <div className="rw-field" style={{ marginBottom: 8 }}>
                       <div
                         className="rw-upload-drop"
                         style={{
-                          border: "2px dashed var(--rw-accent, #3b82f6)",
-                          borderRadius: 12,
+                          border: "2px dashed var(--primary)",
+                          borderRadius: 8,
                           padding: "24px 16px",
                           textAlign: "center",
                           cursor: "pointer",
-                          background: packingFile ? "#f0fdf4" : "var(--panel)",
+                          background: packingFile ? "oklch(0.7 0.16 155 / 0.08)" : "var(--card)",
                         }}
                         onClick={() => document.getElementById("packing-file-input")?.click()}
                       >
@@ -1259,18 +1273,19 @@ export default function ReceivingManagement() {
                         />
                         {packingFile ? (
                           <div>
-                            <div style={{ fontSize: 24 }}>📄</div>
-                            <div className="font-medium" style={{ marginTop: 4 }}>{packingFile.name}</div>
-                            <div style={{ fontSize: 12, color: "var(--rw-text-dim)", marginTop: 4 }}>
+                            <FileSpreadsheet size={22} strokeWidth={1.8} style={{ margin: "0 auto", color: "var(--muted-foreground)" }} aria-hidden />
+                            <div className="font-medium" style={{ marginTop: 6 }}>{packingFile.name}</div>
+                            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4 }}>
                               {(packingFile.size / 1024).toFixed(1)} KB — click to preview & review rows
                             </div>
                           </div>
                         ) : (
                           <div>
-                            <div style={{ fontSize: 24 }}>📁</div>
-                            <div className="font-medium" style={{ marginTop: 4 }}>Click to upload .xlsx file</div>
-                            <div style={{ fontSize: 12, color: "var(--rw-text-dim)", marginTop: 4 }}>
-                              Columns: Dealer Code · Dealer · Branch · Invoice · Delivery · Plant · Box Range · Part Code · Part Name · Qty · Weight · Box Number — need <b style={{ color: "var(--accent)" }}>⬇ Sample Format</b>
+                            <FolderOpen size={22} strokeWidth={1.8} style={{ margin: "0 auto", color: "var(--muted-foreground)" }} aria-hidden />
+                            <div className="font-medium" style={{ marginTop: 6 }}>Click to upload .xlsx file</div>
+                            <div style={{ fontSize: 12, color: "var(--muted-foreground)", marginTop: 4 }}>
+                              Columns: Dealer Code · Dealer · Branch · Invoice · Delivery · Plant · Box Range · Part Code · Part Name · Qty · Weight · Box Number — need{" "}
+                              <b style={{ color: "var(--primary)" }}>Sample format</b>
                             </div>
                           </div>
                         )}
@@ -1279,28 +1294,35 @@ export default function ReceivingManagement() {
                   </>
                 )}
 
-                {/* ═══ Manual entry mode — 15 columns ═══ */}
                 {entryMode === "manual" && (
                   <>
-                    <div className="rw-section-title" style={{ marginBottom: 12, marginTop: 20 }}>📝 Packing List Details</div>
-                    <div style={{ overflowX: "auto" }}>
-                      <table className="erpnext-table pl-manual-table" style={{ width: "100%" }}>
+                    <div className="rw-section-title" style={{ marginBottom: 12, marginTop: 20 }}>
+                      <ClipboardList className="rw-modal-icon" size={15} strokeWidth={1.8} aria-hidden />
+                      Packing list details
+                    </div>
+                    <div className="pl-manual-scroll">
+                      <table className="erpnext-table pl-manual-table">
+                        <colgroup>
+                          {manualCols.map((col) => (
+                            <col key={col.key} style={{ width: col.width || 100 }} />
+                          ))}
+                          <col style={{ width: 44 }} />
+                        </colgroup>
                         <thead>
-                          <tr style={{ background: "var(--panel-2)" }}>
+                          <tr>
                             {manualCols.map((col) => (
-                              <th key={col.key} style={{ width: col.width || 100, minWidth: col.width || 80 }}>{col.label}</th>
+                              <th key={col.key} scope="col">{col.label}</th>
                             ))}
-                            <th style={{ width: 40 }}></th>
+                            <th scope="col" aria-label="Remove row" />
                           </tr>
                         </thead>
                         <tbody>
                           {manualRows.map((row, idx) => (
                             <tr key={idx}>
                               {manualCols.map((col) => (
-                                <td key={col.key} style={{ minWidth: col.width || 80 }}>
+                                <td key={col.key}>
                                   <input
-                                    className="rw-input"
-                                    style={{ padding: col.type === "number" ? "4px 6px" : "4px 8px", fontSize: 13 }}
+                                    className="rw-input pl-manual-input"
                                     placeholder={col.placeholder}
                                     type={col.type || "text"}
                                     inputMode={col.type === "number" ? "decimal" : undefined}
@@ -1311,12 +1333,12 @@ export default function ReceivingManagement() {
                                   />
                                 </td>
                               ))}
-                              <td>
+                              <td className="pl-manual-remove">
                                 <button
                                   type="button"
-                                  className="rw-btn rw-btn-secondary"
-                                  style={{ padding: "2px 8px", fontSize: 12 }}
+                                  className="erpnext-btn-secondary text-xs"
                                   onClick={() => removeManualRow(idx)}
+                                  aria-label="Remove row"
                                 >
                                   ✕
                                 </button>
@@ -1326,8 +1348,8 @@ export default function ReceivingManagement() {
                         </tbody>
                       </table>
                     </div>
-                    <button type="button" className="rw-btn rw-btn-secondary" style={{ marginTop: 8 }} onClick={addManualRow}>
-                      + Add Row
+                    <button type="button" className="erpnext-btn-secondary text-xs" style={{ marginTop: 8 }} onClick={addManualRow}>
+                      + Add row
                     </button>
                   </>
                 )}
@@ -1335,7 +1357,7 @@ export default function ReceivingManagement() {
               <div className="rw-modal-footer">
                 <button
                   type="button"
-                  className="rw-btn rw-btn-secondary"
+                  className="erpnext-btn-secondary rw-modal-action"
                   onClick={() => {
                     if (!uploadFormDirty || window.confirm("Discard this incomplete packing list? Unsaved details will be cleared.")) {
                       resetUploadForm();
@@ -1347,11 +1369,12 @@ export default function ReceivingManagement() {
                 </button>
                 <button
                   type="submit"
-                  className="rw-btn rw-btn-primary"
+                  className="erpnext-btn-primary rw-modal-action"
                   disabled={loading || (entryMode === "upload" && !packingFile)}
                   title={entryMode === "upload" && !packingFile ? "Select a file first" : ""}
                 >
-                  {loading ? "Importing..." : entryMode === "upload" ? "✅ Upload & Review" : "✅ Review & Import"}
+                  {!loading && <Check size={14} strokeWidth={2} aria-hidden />}
+                  {loading ? "Importing..." : entryMode === "upload" ? "Upload & review" : "Review & import"}
                 </button>
               </div>
             </form>
@@ -1627,16 +1650,16 @@ export default function ReceivingManagement() {
                   handleUpload(e as any);
                 }}
               >
-                {loading ? "Importing..." : `✅ Import ${parsedRows.filter((r) => r._selected).length} Rows`}
+                {loading ? "Importing..." : `Import ${parsedRows.filter((r) => r._selected).length} rows`}
               </button>
             </div>
       </ReceivingModal>
 
       {/* ═══ GRN Sessions — filter + table in one viewport card ═══ */}
-      <div className="rw-card desk-list-card">
-        <div className="desk-filter-bar">
+      <div className="erpnext-card desk-list-card p-2">
+        <div className="desk-filter-bar rm-filter-bar">
           <select
-            className="rw-select desk-filter-status"
+            className="erpnext-input desk-filter-status"
             value={statusFilter}
             onChange={(e) => { setStatusFilter(e.target.value); setGrnPage(1); }}
             aria-label="Filter by status"
@@ -1652,36 +1675,60 @@ export default function ReceivingManagement() {
             <option value="closed">Closed</option>
           </select>
           <input
-            className="rw-input desk-filter-search"
+            className="erpnext-input desk-filter-search"
             placeholder="Search GRN, packing list, PO, supplier…"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setGrnPage(1); }}
             aria-label="Search sessions"
           />
-          <span className="desk-filter-meta">
-            {filteredGRNs.length} sessions
-          </span>
+          <div className="list-pager-meta desk-filter-meta">
+            <span>
+              {filteredGRNs.length === 0
+                ? "0"
+                : `${(grnPage - 1) * PAGE_SIZE + 1}–${Math.min(grnPage * PAGE_SIZE, filteredGRNs.length)}`}
+              {" of "}{filteredGRNs.length}
+              {" · "}{PAGE_SIZE} / page
+            </span>
+            <button
+              type="button"
+              className="erpnext-btn-secondary text-xs"
+              disabled={grnPage <= 1}
+              onClick={() => setGrnPage((p) => Math.max(1, p - 1))}
+            >
+              Prev
+            </button>
+            <span className="text-xs" style={{ color: "var(--text-dim)" }}>
+              {grnPage} / {Math.max(1, Math.ceil(filteredGRNs.length / PAGE_SIZE))}
+            </span>
+            <button
+              type="button"
+              className="erpnext-btn-secondary text-xs"
+              disabled={grnPage >= Math.ceil(filteredGRNs.length / PAGE_SIZE)}
+              onClick={() => setGrnPage((p) => Math.min(Math.ceil(filteredGRNs.length / PAGE_SIZE), p + 1))}
+            >
+              Next
+            </button>
+          </div>
         </div>
-        <div className="desk-section-label">GRN Sessions</div>
           {filteredGRNs.length === 0 ? (
-            <div className="rw-empty-state">
+            <div className="rw-empty-state" style={{ padding: "40px 20px", textAlign: "center" }}>
               <div className="rw-empty-title">No GRN sessions found</div>
               <div className="rw-empty-msg">{search ? "Try a different search" : "Sessions appear here once receiving starts"}</div>
             </div>
           ) : (
-            <div className="desk-table-scroll">
-              <table className="erpnext-table desk-table" style={{ width: "100%" }}>
+            <div className="table-wrap desk-table-scroll">
+              <table className="erpnext-table text-sm desk-table desk-table-sticky-actions" style={{ width: "100%" }}>
                 <thead>
-                  <tr style={{ background: "var(--panel-2)" }}>
+                  <tr style={{ background: "var(--card, #fff)" }}>
                     <th>PO</th>
                     <th>Packing List</th>
                     <th>GRN</th>
                     <th>Supplier</th>
                     <th>Status</th>
-                    <th>Boxes</th>
-                    <th>Items</th>
+                    <th className="text-right">Boxes</th>
+                    <th className="text-right">Items</th>
                     <th>Created</th>
-                    <th>Actions</th>
+                    <th className="desk-col-actions">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1692,13 +1739,13 @@ export default function ReceivingManagement() {
                       style={{ cursor: "pointer" }}
                       onClick={() => openDetail({ id: s.id, name: s.session_no, supplier_name: s.supplier_name || s.supplier || "", status: s.status, driver_name: s.driver_name || "", total_boxes: s.box_count || s.boxes_total || 0, total_items: s.item_count || 0, total_qty: 0, created_at: s.created_at, driver_phone: "", transporter: "", created_by: "", items: [] } as any)}
                     >
-                      <td>{s.po_no || s.purchase_receipt_no || "—"}</td>
+                      <td className="desk-cell-ellipsis" title={s.po_no || s.purchase_receipt_no || ""}>{s.po_no || s.purchase_receipt_no || "—"}</td>
                       <td>
-                        <div>{s.packing_list_no || "—"}</div>
+                        <div className="desk-cell-ellipsis" title={s.packing_list_no || ""}>{s.packing_list_no || "—"}</div>
                         {s.packing_list_filename ? <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{s.packing_list_filename}</div> : null}
                       </td>
                       <td className="font-medium" style={{ color: "var(--accent)" }}>{s.session_no}</td>
-                      <td>{s.supplier_name || s.supplier || "—"}</td>
+                      <td className="desk-cell-ellipsis" title={s.supplier_name || s.supplier || ""}>{s.supplier_name || s.supplier || "—"}</td>
                       <td>
                         <span className={`erpnext-badge ${
                           s.status === "completed" || s.status === "closed" ? "erpnext-badge-blue" :
@@ -1710,9 +1757,9 @@ export default function ReceivingManagement() {
                       </td>
                       <td className="text-right">{s.boxes_received ?? 0}/{s.box_count ?? s.boxes_total ?? 0}</td>
                       <td className="text-right">{s.items_scanned ?? 0}/{s.item_count ?? 0}</td>
-                      <td>{formatDate(s.created_at)}</td>
-                      <td>
-                        <div className="flex gap-2">
+                      <td className="whitespace-nowrap">{formatDate(s.created_at)}</td>
+                      <td className="desk-col-actions">
+                        <div className="desk-row-actions">
                           <button
                             onClick={(e) => { e.stopPropagation(); openDetail({ id: s.id, name: s.session_no, supplier_name: s.supplier_name || s.supplier || "", status: s.status, driver_name: s.driver_name || "", total_boxes: s.box_count || s.boxes_total || 0, total_items: s.item_count || 0, total_qty: 0, created_at: s.created_at, driver_phone: "", transporter: "", created_by: "", items: [] } as any); }}
                             className="erpnext-btn-secondary text-xs"
@@ -1746,33 +1793,74 @@ export default function ReceivingManagement() {
                   ))}
                 </tbody>
               </table>
-              {/* Pagination */}
-              {filteredGRNs.length > PAGE_SIZE && (
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 8px 4px" }}>
-                  <span className="text-sm" style={{ color: "var(--text-dim)" }}>
-                    Page {grnPage} of {Math.ceil(filteredGRNs.length / PAGE_SIZE)}
-                  </span>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button
-                      className="rw-btn rw-btn-secondary"
-                      disabled={grnPage === 1}
-                      onClick={() => setGrnPage((p) => Math.max(1, p - 1))}
-                    >
-                      ← Prev
-                    </button>
-                    <button
-                      className="rw-btn rw-btn-secondary"
-                      disabled={grnPage >= Math.ceil(filteredGRNs.length / PAGE_SIZE)}
-                      onClick={() => setGrnPage((p) => Math.min(Math.ceil(filteredGRNs.length / PAGE_SIZE), p + 1))}
-                    >
-                      Next →
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
+
+      <style>{`
+        .rw-dash-page .page-actions { flex-shrink: 0; display: flex; gap: 8px; align-items: center; }
+        .rm-head-btn {
+          height: 40px !important;
+          min-height: 40px !important;
+          padding: 0 16px !important;
+          font-size: 14px !important;
+          font-weight: 600;
+          border-radius: 8px !important;
+          box-sizing: border-box;
+        }
+        .rm-filter-bar {
+          margin-bottom: 8px;
+        }
+        .rm-filter-bar .desk-filter-status,
+        .rm-filter-bar .desk-filter-search {
+          border: 1px solid var(--border, #d1d5db) !important;
+          border-radius: 6px !important;
+          background: var(--card, #fff) !important;
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 10px !important;
+          font-size: 13px;
+          box-shadow: none !important;
+        }
+        .rm-filter-bar .desk-filter-status {
+          width: auto !important;
+          min-width: 140px;
+          max-width: 180px;
+          flex: 0 0 auto;
+        }
+        .rm-filter-bar .desk-filter-search {
+          flex: 1 1 auto;
+          min-width: 160px;
+          width: auto !important;
+        }
+        /* Actions: fit content — don't reserve Exceptions-sized empty space */
+        .rw-dash-page .desk-table-sticky-actions {
+          min-width: 900px;
+        }
+        .rw-dash-page .desk-table-sticky-actions .desk-col-actions {
+          width: 1%;
+          min-width: 0 !important;
+          max-width: none;
+          padding-left: 10px;
+          padding-right: 10px;
+          white-space: nowrap;
+          vertical-align: middle;
+        }
+        .rw-dash-page .desk-row-actions {
+          min-width: 0 !important;
+          width: max-content;
+          max-width: 280px;
+          justify-content: flex-end;
+          margin-left: auto;
+          flex-wrap: nowrap;
+          gap: 6px;
+        }
+        .rw-dash-page .desk-table th {
+          text-transform: none;
+          letter-spacing: -0.01em;
+          font-size: 12px;
+        }
+      `}</style>
 
       {/* Detail Modal — live packing-list row monitor */}
       {selectedList && (

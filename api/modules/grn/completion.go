@@ -658,7 +658,10 @@ func listAllAudits(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT a.id, a.grn_session_id, s.session_no, a.sample_size, COALESCE(a.status,'open'),
-			       a.started_at::text, COALESCE(s.supplier_name,'')
+			       a.started_at::text, COALESCE(s.supplier_name,''),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND COALESCE(i.result,'')<>''),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='pass'),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='fail')
 			FROM grn_audits a
 			JOIN grn_sessions s ON s.id = a.grn_session_id
 			ORDER BY a.id DESC LIMIT 100`)
@@ -668,14 +671,15 @@ func listAllAudits(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 		out := []fiber.Map{}
 		for rows.Next() {
-			var id, sid, sample int
+			var id, sid, sample, checked, passed, failed int
 			var sno, st, started, supplier string
-			if err := rows.Scan(&id, &sid, &sno, &sample, &st, &started, &supplier); err != nil {
+			if err := rows.Scan(&id, &sid, &sno, &sample, &st, &started, &supplier, &checked, &passed, &failed); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			out = append(out, fiber.Map{
 				"id": id, "grn_session_id": sid, "session_no": sno, "sample_size": sample,
 				"status": st, "started_at": started, "supplier_name": supplier,
+				"checked": checked, "passed": passed, "failed": failed,
 			})
 		}
 		return shared.OK(c, out)

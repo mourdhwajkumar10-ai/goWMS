@@ -286,7 +286,7 @@ func TestAllowedGRNException(t *testing.T) {
 		"packing_list_po_mismatch", "packing_list_physical_mismatch",
 		"invoice_po_mismatch", "quality_fail", "expired", "wrong_supplier",
 		"unscheduled_delivery", "undo_last_box", "return_receipt", "cross_dock",
-		"quarantine", "serialized", "hazmat",
+		"quarantine", "serialized", "hazmat", "audit_discrepancy",
 	}
 	for _, k := range ok {
 		if !allowedGRNException(k) {

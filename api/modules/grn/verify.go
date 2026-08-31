@@ -1019,48 +1019,60 @@ func startAudit(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid session id")
 		}
+		var status string
+		err = db.QueryRow(c.Context(), `SELECT COALESCE(status,'') FROM grn_sessions WHERE id=$1`, sessionID).Scan(&status)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "GRN session not found")
+		}
+		if !sessionAuditable(status) {
+			return shared.Err(c, fiber.StatusBadRequest, "cannot audit a completed or closed GRN")
+		}
+
+		var openID int
+		openErr := db.QueryRow(c.Context(), `
+			SELECT id FROM grn_audits
+			WHERE grn_session_id=$1 AND COALESCE(status,'open')='open'
+			ORDER BY id DESC LIMIT 1`, sessionID).Scan(&openID)
+		if openErr == nil && openID > 0 {
+			items, _ := loadAuditItems(db, c, openID)
+			return shared.OK(c, fiber.Map{
+				"id": openID, "sample_size": len(items), "items": items, "resumed": true,
+			})
+		}
+
 		var body struct {
 			SampleSize int `json:"sample_size"`
 		}
 		_ = shared.Bind(c, &body)
-		if body.SampleSize < 1 {
-			body.SampleSize = 5
+		limit := clampAuditSampleSize(body.SampleSize)
+
+		type sku struct {
+			code string
+			qty  float64
 		}
-		if body.SampleSize > 100 {
-			body.SampleSize = 100
-		}
-		var auditID int
-		err = db.QueryRow(c.Context(), `
-			INSERT INTO grn_audits (grn_session_id, sample_size, started_by)
-			VALUES ($1,$2,$3) RETURNING id`, sessionID, body.SampleSize, userID(c)).Scan(&auditID)
-		if err != nil {
-			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
-		}
-		// Pick random distinct parts from session lines
+		skus := []sku{}
 		rows, err := db.Query(c.Context(), `
 			SELECT item_code, SUM(COALESCE(scanned_qty,0)) AS qty
 			FROM grn_lines WHERE grn_session_id=$1
 			GROUP BY item_code
 			ORDER BY random()
-			LIMIT $2`, sessionID, body.SampleSize)
+			LIMIT $2`, sessionID, limit)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		defer rows.Close()
-		items := []fiber.Map{}
 		for rows.Next() {
-			var code string
-			var qty float64
-			if err := rows.Scan(&code, &qty); err != nil {
+			var s sku
+			if err := rows.Scan(&s.code, &s.qty); err != nil {
+				rows.Close()
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
-			var itemID int
-			_ = db.QueryRow(c.Context(), `
-				INSERT INTO grn_audit_items (audit_id, part_no, system_qty) VALUES ($1,$2,$3) RETURNING id`,
-				auditID, code, qty).Scan(&itemID)
-			items = append(items, fiber.Map{"id": itemID, "part_no": code, "system_qty": qty})
+			if strings.TrimSpace(s.code) != "" {
+				skus = append(skus, s)
+			}
 		}
-		if len(items) == 0 {
+		rows.Close()
+
+		if len(skus) == 0 {
 			poRows, poErr := db.Query(c.Context(), `
 				SELECT poi.item_code, COALESCE(poi.qty,0)
 				FROM purchase_order_items poi
@@ -1068,27 +1080,45 @@ func startAudit(db *pgxpool.Pool) fiber.Handler {
 				JOIN grn_sessions gs ON gs.purchase_receipt_no = po.name
 				WHERE gs.id=$1
 				ORDER BY random()
-				LIMIT $2`, sessionID, body.SampleSize)
+				LIMIT $2`, sessionID, limit)
 			if poErr == nil && poRows != nil {
-				defer poRows.Close()
 				for poRows.Next() {
-					var code string
-					var qty float64
-					if err := poRows.Scan(&code, &qty); err != nil {
+					var s sku
+					if err := poRows.Scan(&s.code, &s.qty); err != nil {
 						continue
 					}
-					var itemID int
-					_ = db.QueryRow(c.Context(), `
-						INSERT INTO grn_audit_items (audit_id, part_no, system_qty) VALUES ($1,$2,$3) RETURNING id`,
-						auditID, code, qty).Scan(&itemID)
-					items = append(items, fiber.Map{"id": itemID, "part_no": code, "system_qty": qty})
+					if strings.TrimSpace(s.code) != "" {
+						skus = append(skus, s)
+					}
 				}
+				poRows.Close()
 			}
+		}
+		if len(skus) == 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "No receivable SKUs to sample — receive items first")
+		}
+
+		var auditID int
+		err = db.QueryRow(c.Context(), `
+			INSERT INTO grn_audits (grn_session_id, sample_size, started_by)
+			VALUES ($1,$2,$3) RETURNING id`, sessionID, len(skus), userID(c)).Scan(&auditID)
+		if err != nil {
+			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+		}
+		items := []fiber.Map{}
+		for _, s := range skus {
+			var itemID int
+			if err := db.QueryRow(c.Context(), `
+				INSERT INTO grn_audit_items (audit_id, part_no, system_qty) VALUES ($1,$2,$3) RETURNING id`,
+				auditID, s.code, s.qty).Scan(&itemID); err != nil {
+				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
+			}
+			items = append(items, fiber.Map{"id": itemID, "part_no": s.code, "system_qty": s.qty})
 		}
 		writeEvent(db, c, sessionID, "AUDIT_STARTED", fiber.Map{
 			"payload": fiber.Map{"audit_id": auditID, "sample_size": len(items)},
 		})
-		return shared.OK(c, fiber.Map{"id": auditID, "sample_size": len(items), "items": items})
+		return shared.OK(c, fiber.Map{"id": auditID, "sample_size": len(items), "items": items, "resumed": false})
 	}
 }
 
@@ -1100,7 +1130,9 @@ func listAudits(db *pgxpool.Pool) fiber.Handler {
 		}
 		rows, err := db.Query(c.Context(), `
 			SELECT a.id, a.sample_size, a.status, a.started_at::text, a.completed_at::text,
-			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result IS NOT NULL) AS checked
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND COALESCE(i.result,'')<>'') AS checked,
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='pass') AS passed,
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='fail') AS failed
 			FROM grn_audits a WHERE a.grn_session_id=$1 ORDER BY a.id DESC`, sessionID)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -1108,17 +1140,17 @@ func listAudits(db *pgxpool.Pool) fiber.Handler {
 		defer rows.Close()
 		out := []fiber.Map{}
 		for rows.Next() {
-			var id, sample, checked int
+			var id, sample, checked, passed, failed int
 			var st string
 			var started string
 			var completed *string
-			if err := rows.Scan(&id, &sample, &st, &started, &completed, &checked); err != nil {
+			if err := rows.Scan(&id, &sample, &st, &started, &completed, &checked, &passed, &failed); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			items, _ := loadAuditItems(db, c, id)
 			out = append(out, fiber.Map{
 				"id": id, "sample_size": sample, "status": st, "started_at": started,
-				"completed_at": completed, "checked": checked, "items": items,
+				"completed_at": completed, "checked": checked, "passed": passed, "failed": failed, "items": items,
 			})
 		}
 		return shared.OK(c, out)
@@ -1158,41 +1190,56 @@ func checkAuditItem(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid id")
 		}
 		var body struct {
-			PhysicalQty float64 `json:"physical_qty"`
-			Notes       string  `json:"notes"`
+			PhysicalQty *float64 `json:"physical_qty"`
+			Notes       string   `json:"notes"`
 		}
 		if err := shared.Bind(c, &body); err != nil {
 			return err
 		}
+		if body.PhysicalQty == nil {
+			return shared.Err(c, fiber.StatusBadRequest, "physical_qty required")
+		}
+		phys := *body.PhysicalQty
+		if phys < 0 {
+			return shared.Err(c, fiber.StatusBadRequest, "physical_qty cannot be negative")
+		}
 		var sys float64
 		var sessionID int
-		var part string
+		var part, prior, auditStatus string
 		err = db.QueryRow(c.Context(), `
-			SELECT i.system_qty, i.part_no, a.grn_session_id
+			SELECT i.system_qty, i.part_no, a.grn_session_id, COALESCE(i.result,''), COALESCE(a.status,'open')
 			FROM grn_audit_items i JOIN grn_audits a ON a.id = i.audit_id
-			WHERE i.id=$1`, id).Scan(&sys, &part, &sessionID)
+			WHERE i.id=$1`, id).Scan(&sys, &part, &sessionID, &prior, &auditStatus)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "audit item not found")
 		}
-		result := "pass"
-		if body.PhysicalQty != sys {
-			result = "fail"
+		if auditStatus == "completed" {
+			return shared.Err(c, fiber.StatusBadRequest, "audit already completed")
+		}
+		if prior != "" {
+			return shared.Err(c, fiber.StatusConflict, "item already checked")
+		}
+		result := auditItemResult(sys, phys)
+		if result == "fail" {
 			writeEvent(db, c, sessionID, "AUDIT_DISCREPANCY_FOUND", fiber.Map{
-				"part_no": part, "quantity": body.PhysicalQty, "result": "fail",
-				"payload": fiber.Map{"system_qty": sys, "physical_qty": body.PhysicalQty},
+				"part_no": part, "quantity": phys, "result": "fail",
+				"payload": fiber.Map{"system_qty": sys, "physical_qty": phys},
+			})
+			writeException(db, c, sessionID, "audit_discrepancy", fiber.Map{
+				"part_no": part, "expected_qty": sys, "scanned_qty": phys, "variance": phys - sys,
 			})
 		} else {
 			writeEvent(db, c, sessionID, "AUDIT_ITEM_CHECKED", fiber.Map{
-				"part_no": part, "quantity": body.PhysicalQty, "result": "pass",
+				"part_no": part, "quantity": phys, "result": "pass",
 			})
 		}
 		_, err = db.Exec(c.Context(), `
 			UPDATE grn_audit_items SET physical_qty=$2, result=$3, notes=$4, checked_by=$5, checked_at=now()
-			WHERE id=$1`, id, body.PhysicalQty, result, nullStr(body.Notes), userID(c))
+			WHERE id=$1`, id, phys, result, nullStr(body.Notes), userID(c))
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
-		return shared.OK(c, fiber.Map{"id": id, "result": result, "system_qty": sys, "physical_qty": body.PhysicalQty})
+		return shared.OK(c, fiber.Map{"id": id, "result": result, "system_qty": sys, "physical_qty": phys})
 	}
 }
 
@@ -1206,6 +1253,25 @@ func completeAudit(db *pgxpool.Pool) fiber.Handler {
 		if err != nil {
 			return shared.Err(c, fiber.StatusBadRequest, "invalid audit id")
 		}
+		var status string
+		var itemCount, checked, passed, failed int
+		err = db.QueryRow(c.Context(), `
+			SELECT COALESCE(a.status,'open'),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND COALESCE(i.result,'')<>''),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='pass'),
+			       (SELECT COUNT(*) FROM grn_audit_items i WHERE i.audit_id=a.id AND i.result='fail')
+			FROM grn_audits a WHERE a.id=$1 AND a.grn_session_id=$2`, auditID, sessionID).
+			Scan(&status, &itemCount, &checked, &passed, &failed)
+		if err != nil {
+			return shared.Err(c, fiber.StatusNotFound, "audit not found")
+		}
+		if status == "completed" {
+			return shared.Err(c, fiber.StatusConflict, "audit already completed")
+		}
+		if err := auditReadyToComplete(itemCount, checked); err != nil {
+			return shared.Err(c, fiber.StatusBadRequest, err.Error())
+		}
 		_, err = db.Exec(c.Context(), `
 			UPDATE grn_audits SET status='completed', completed_at=now()
 			WHERE id=$1 AND grn_session_id=$2`, auditID, sessionID)
@@ -1213,9 +1279,11 @@ func completeAudit(db *pgxpool.Pool) fiber.Handler {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 		}
 		writeEvent(db, c, sessionID, "AUDIT_COMPLETED", fiber.Map{
-			"payload": fiber.Map{"audit_id": auditID},
+			"payload": fiber.Map{"audit_id": auditID, "passed": passed, "failed": failed},
 		})
-		return shared.OK(c, fiber.Map{"id": auditID, "status": "completed"})
+		return shared.OK(c, fiber.Map{
+			"id": auditID, "status": "completed", "sample_size": itemCount, "passed": passed, "failed": failed,
+		})
 	}
 }
 

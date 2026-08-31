@@ -124,39 +124,56 @@ export default function ItemAutocomplete({ value, onSelect, onChangeText, onComm
   const menu = open && rect ? createPortal(
     <div
       ref={menuRef}
-      className="rounded-lg shadow-lg overflow-y-auto border"
+      className="item-suggest-menu rounded-lg shadow-lg overflow-y-auto border"
       style={{
         position: 'fixed',
         top: rect.top,
         left: rect.left,
-        width: rect.width,
-        maxHeight: 240,
+        width: Math.max(rect.width, 280),
+        maxHeight: 220,
         zIndex: 2000,
-        background: 'var(--panel)',
+        background: 'var(--card, #fff)',
         borderColor: 'var(--border)',
       }}
     >
       {results.length > 0 ? (
-        results.slice(0, 10).map((item) => (
-          <button
-            key={item.id ?? item.code}
-            type="button"
-            className="w-full text-left px-3 py-2 flex justify-between items-center gap-2 text-sm border-b last:border-0"
-            style={{ borderColor: 'var(--border)' }}
-            onMouseDown={() => handleSelect(item)}
-          >
-            <div className="min-w-0">
-              <span className="font-medium">{display === 'name' ? (item.name || item.code) : item.code}</span>
-              <span className="ml-2" style={{ color: 'var(--text-dim)' }}>
-                {display === 'name' ? item.code : item.name}
+        results.slice(0, 10).map((item) => {
+          const code = String(item.code || '').trim()
+          const name = String(item.name || '').trim()
+          const primary = display === 'name' ? (name || code) : code
+          const secondary = display === 'name' ? code : name
+          const showSecondary = !!secondary && secondary.toLowerCase() !== primary.toLowerCase()
+          return (
+            <button
+              key={item.id ?? code}
+              type="button"
+              className="item-suggest-row w-full text-left border-b last:border-0"
+              style={{
+                borderColor: 'var(--border)',
+                padding: '6px 10px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
+                gap: 2,
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+              onMouseDown={() => handleSelect(item)}
+            >
+              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--foreground)', lineHeight: 1.3 }}>
+                {primary || '—'}
               </span>
-            </div>
-            <span className="text-xs" style={{ color: 'var(--text-dim)' }}>{item.brand || ''}</span>
-          </button>
-        ))
+              {showSecondary ? (
+                <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-dim)', lineHeight: 1.3 }}>
+                  {secondary}
+                </span>
+              ) : null}
+            </button>
+          )
+        })
       ) : (
         !loading && (
-          <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-dim)' }}>
+          <div style={{ padding: '6px 10px', color: 'var(--text-dim)', fontSize: 11 }}>
             No matching items — keep typing or scan
           </div>
         )

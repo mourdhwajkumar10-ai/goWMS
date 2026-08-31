@@ -79,16 +79,16 @@ export default function PutawayLogs() {
   }
 
   return (
-    <div className="desk-page">
+    <div className="desk-page putaway-logs-page">
       <div className="page-head desk-page-head">
         <div>
           <h1 className="page-title">Putaway Logs</h1>
-          <p className="page-sub">Filter and review putaway history</p>
+          <p className="page-sub">Home › Inventory › Putaway Logs — filter and review putaway history</p>
         </div>
       </div>
 
       <div className="erpnext-card desk-list-card">
-        <div className="desk-filter-bar" style={{ padding: '8px 12px' }}>
+        <div className="desk-filter-bar pl-filter-bar">
           <div className="desk-field-inline">
             <label className="erpnext-label">Item</label>
             <input
@@ -140,38 +140,36 @@ export default function PutawayLogs() {
               <option value="capacity_exceeded">Capacity Exceeded</option>
             </select>
           </div>
-          <ButtonPress className="erpnext-btn-primary" onClick={handleSearch}>
+          <button type="button" className="erpnext-btn-primary pl-search-btn" onClick={handleSearch}>
             Search
-          </ButtonPress>
+          </button>
         </div>
 
       {/* Table */}
-      <div className="desk-table-scroll" style={{
-        borderTop: '1px solid var(--pw-border, #e5e7eb)',
-        overflow: 'auto',
-      }}>
-        <table className="desk-table" style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+      <div className="table-wrap desk-table-scroll">
+        <table className="erpnext-table text-sm desk-table" style={{ width: '100%' }}>
           <thead>
-            <tr style={{ borderBottom: '2px solid var(--pw-border, #e5e7eb)' }}>
-              {['Log #', 'Item', 'Qty', 'From', 'To', 'By', 'When', 'Exception'].map(h => (
-                <th key={h} style={{
-                  textAlign: 'left', padding: '8px 12px', fontWeight: 600,
-                  color: 'var(--pw-text-dim, #6b7280)', fontSize: 11, textTransform: 'uppercase',
-                  letterSpacing: '0.5px', background: 'var(--pw-bg-2, #f9fafb)'
-                }}>{h}</th>
-              ))}
+            <tr>
+              <th>Log #</th>
+              <th>Item</th>
+              <th className="text-right">Qty</th>
+              <th>From</th>
+              <th>To</th>
+              <th>By</th>
+              <th>When</th>
+              <th>Exception</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={8} style={{ padding: 32, textAlign: 'center', color: 'var(--pw-text-dim, #6b7280)' }}>
+                <td colSpan={8} className="text-dim" style={{ padding: 32, textAlign: 'center' }}>
                   Loading...
                 </td>
               </tr>
             ) : logs.length === 0 ? (
               <tr>
-                <td colSpan={8} style={{ padding: 32, textAlign: 'center', color: 'var(--pw-text-dim, #6b7280)' }}>
+                <td colSpan={8} className="text-dim" style={{ padding: 32, textAlign: 'center' }}>
                   No putaway logs found
                 </td>
               </tr>
@@ -179,42 +177,29 @@ export default function PutawayLogs() {
               logs.map(log => (
                 <tr
                   key={log.id}
+                  className="pl-row"
                   onClick={() => setSelectedLog(log)}
-                  style={{
-                    cursor: 'pointer', borderBottom: '1px solid var(--pw-border, #e5e7eb)',
-                    transition: 'background 100ms'
-                  }}
-                  onMouseEnter={e => (e.currentTarget.style.background = 'var(--pw-bg-2, #f9fafb)')}
-                  onMouseLeave={e => (e.currentTarget.style.background = '')}
                 >
-                  <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontWeight: 600 }}>{log.log_no}</td>
-                  <td style={{ padding: '10px 12px' }}>
-                    <div style={{ fontWeight: 600 }}>{log.item_code}</div>
-                    {log.item_name && <div style={{ fontSize: 11, color: 'var(--pw-text-dim, #6b7280)' }}>{log.item_name}</div>}
+                  <td className="font-medium">{log.log_no}</td>
+                  <td>
+                    <div className="font-medium">{log.item_code}</div>
+                    {log.item_name && <div className="text-dim" style={{ fontSize: 12 }}>{log.item_name}</div>}
                   </td>
-                  <td style={{ padding: '10px 12px', fontWeight: 600 }}>{log.quantity}</td>
-                  <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12 }}>
-                    {formatLocation(log.source_location_code, log.source_aisle, log.source_shelf, log.source_level)}
-                  </td>
-                  <td style={{ padding: '10px 12px', fontFamily: 'monospace', fontSize: 12 }}>
-                    {formatLocation(log.target_location_code, log.target_aisle, log.target_shelf, log.target_level)}
-                  </td>
-                  <td style={{ padding: '10px 12px' }}>{log.placed_by || '—'}</td>
-                  <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--pw-text-dim, #6b7280)', whiteSpace: 'nowrap' }}>
+                  <td className="text-right" style={{ fontVariantNumeric: 'tabular-nums' }}>{log.quantity}</td>
+                  <td>{formatLocation(log.source_location_code, log.source_aisle, log.source_shelf, log.source_level)}</td>
+                  <td>{formatLocation(log.target_location_code, log.target_aisle, log.target_shelf, log.target_level)}</td>
+                  <td>{log.placed_by || '—'}</td>
+                  <td className="whitespace-nowrap text-dim" style={{ fontSize: 12 }}>
                     {log.placed_at ? new Date(log.placed_at).toLocaleString() : '—'}
                   </td>
-                  <td style={{ padding: '10px 12px' }}>
+                  <td>
                     {log.is_override && (
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 10,
-                        background: '#fef3c7', color: '#92400e', fontSize: 11, fontWeight: 600
-                      }}>Override</span>
+                      <span className="erpnext-badge erpnext-badge-yellow">Override</span>
                     )}
                     {log.exception_reason && (
-                      <span style={{
-                        display: 'inline-block', padding: '2px 8px', borderRadius: 10, marginLeft: 4,
-                        background: '#fee2e2', color: '#991b1b', fontSize: 11, fontWeight: 600
-                      }}>{log.exception_reason}</span>
+                      <span className="erpnext-badge erpnext-badge-red" style={{ marginLeft: log.is_override ? 4 : 0 }}>
+                        {log.exception_reason}
+                      </span>
                     )}
                   </td>
                 </tr>
@@ -226,26 +211,26 @@ export default function PutawayLogs() {
 
       {/* Pagination */}
       {pagination.total_pages > 1 && (
-        <div style={{
-          display: 'flex', justifyContent: 'center', alignItems: 'center', gap: 12, padding: '8px 12px'
-        }}>
-          <ButtonPress
-            className="erpnext-btn-secondary"
+        <div className="pl-pager">
+          <button
+            type="button"
+            className="erpnext-btn-secondary pl-pager-btn"
             onClick={() => handlePageChange(pagination.page - 1)}
             disabled={pagination.page <= 1}
           >
-            ← Prev
-          </ButtonPress>
-          <span style={{ fontSize: 13, color: 'var(--pw-text-dim, #6b7280)' }}>
+            Prev
+          </button>
+          <span className="pl-pager-meta">
             Page {pagination.page} of {pagination.total_pages} ({pagination.total} total)
           </span>
-          <ButtonPress
-            className="erpnext-btn-secondary"
+          <button
+            type="button"
+            className="erpnext-btn-secondary pl-pager-btn"
             onClick={() => handlePageChange(pagination.page + 1)}
             disabled={pagination.page >= pagination.total_pages}
           >
-            Next →
-          </ButtonPress>
+            Next
+          </button>
         </div>
       )}
       </div>
@@ -261,8 +246,13 @@ export default function PutawayLogs() {
         >
           <div
             style={{
-              background: '#fff', borderRadius: 12, padding: 24, maxWidth: 480, width: '100%',
-              boxShadow: '0 20px 60px rgba(0,0,0,0.2)'
+              background: 'var(--card)',
+              color: 'var(--foreground)',
+              borderRadius: 12,
+              padding: 24,
+              maxWidth: 480,
+              width: '100%',
+              border: '1px solid var(--border)',
             }}
             onClick={e => e.stopPropagation()}
           >
@@ -288,6 +278,78 @@ export default function PutawayLogs() {
           </div>
         </div>
       )}
+      <style>{`
+        .putaway-logs-page .desk-list-card {
+          padding: 0 !important;
+          overflow: hidden;
+        }
+        .pl-filter-bar {
+          padding: 12px;
+          gap: 12px;
+          align-items: center;
+          flex-wrap: wrap;
+          margin: 0;
+          border-radius: 0;
+          border-bottom: 1px solid var(--border, #e5e7eb);
+          background: var(--card, #fff);
+        }
+        .pl-filter-bar .desk-field-inline {
+          align-items: center;
+          gap: 8px;
+        }
+        .pl-filter-bar .desk-field-inline > label,
+        .pl-filter-bar .desk-field-inline .erpnext-label {
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          height: 32px;
+        }
+        .pl-filter-bar .erpnext-input {
+          border: 1px solid var(--border, #d1d5db) !important;
+          border-radius: 6px !important;
+          background: var(--card, #fff) !important;
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 10px !important;
+          font-size: 13px;
+          box-sizing: border-box;
+          box-shadow: none !important;
+        }
+        .pl-search-btn {
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 14px !important;
+          font-size: 13px !important;
+          font-weight: 600;
+          border-radius: 8px !important;
+          align-self: center;
+          margin-left: auto;
+        }
+        .putaway-logs-page .pl-row {
+          cursor: pointer;
+        }
+        .putaway-logs-page .pl-row:hover {
+          background: var(--secondary, #f8fafc);
+        }
+        .pl-pager {
+          display: flex;
+          justify-content: center;
+          align-items: center;
+          gap: 12px;
+          padding: 10px 12px;
+          border-top: 1px solid var(--border, #e5e7eb);
+        }
+        .pl-pager-meta {
+          font-size: 13px;
+          color: var(--text-muted);
+        }
+        .pl-pager-btn {
+          height: 32px !important;
+          min-height: 32px !important;
+          padding: 0 12px !important;
+          border-radius: 8px !important;
+        }
+      `}</style>
     </div>
   )
 }
@@ -299,9 +361,10 @@ function DetailRow({ label, value, mono, highlight }: {
     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--pw-border, #e5e7eb)' }}>
       <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--pw-text-dim, #6b7280)', textTransform: 'uppercase', letterSpacing: '0.3px' }}>{label}</span>
       <span style={{
-        fontSize: 14, fontWeight: 600, fontFamily: mono ? 'monospace' : 'inherit',
+        fontSize: 14, fontWeight: 600, fontFamily: 'var(--font-stack)',
         color: highlight ? '#dc2626' : 'var(--pw-text, #111827)',
-        textAlign: 'right', maxWidth: '60%'
+        textAlign: 'right', maxWidth: '60%',
+        fontVariantNumeric: mono ? 'tabular-nums' : undefined,
       }}>{value}</span>
     </div>
   )

@@ -14,6 +14,7 @@ import (
 
 // Register wires inventory-health + transfer routes under /inventory.
 func Register(r fiber.Router, db *pgxpool.Pool) {
+	r.Get("/balances", listBalances(db))
 	r.Get("/reorder-alerts", reorderAlerts(db))
 	r.Get("/expiry-alerts", expiryAlerts(db))
 	r.Post("/refresh-alerts", refreshAlerts(db))

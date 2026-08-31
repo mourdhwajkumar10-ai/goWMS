@@ -72,7 +72,7 @@ func list(db *pgxpool.Pool) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		rows, err := db.Query(c.Context(), `
 			SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status,
-			       warehouse_id, location_id, COALESCE(qty,0), grn_session_id, batch_no
+			       warehouse_id, location_id, COALESCE(qty,0), grn_session_id, batch_no, created_at::text
 			FROM quality_inspections ORDER BY created_at DESC LIMIT 50`)
 		if err != nil {
 			return shared.Err(c, fiber.StatusInternalServerError, err.Error())
@@ -92,13 +92,14 @@ func list(db *pgxpool.Pool) fiber.Handler {
 			Qty           float64  `json:"qty"`
 			GRNSessionID  *int     `json:"grn_session_id"`
 			BatchNo       *string  `json:"batch_no"`
+			CreatedAt     *string  `json:"created_at"`
 		}
 		list := []qiRow{}
 		for rows.Next() {
 			var q qiRow
 			if err := rows.Scan(&q.ID, &q.InspectionNo, &q.ReferenceType, &q.ReferenceName,
 				&q.ItemCode, &q.SampleSize, &q.Status, &q.WarehouseID, &q.LocationID,
-				&q.Qty, &q.GRNSessionID, &q.BatchNo); err != nil {
+				&q.Qty, &q.GRNSessionID, &q.BatchNo, &q.CreatedAt); err != nil {
 				return shared.Err(c, fiber.StatusInternalServerError, err.Error())
 			}
 			list = append(list, q)
@@ -123,17 +124,18 @@ func get(db *pgxpool.Pool) fiber.Handler {
 			SampleSize    *float64 `json:"sample_size"`
 			Status        *string  `json:"status"`
 			InspectedAt   *string  `json:"inspected_at"`
+			CreatedAt     *string  `json:"created_at"`
 			WarehouseID   *int     `json:"warehouse_id"`
 			LocationID    *int     `json:"location_id"`
 			Qty           float64  `json:"qty"`
 			BatchNo       *string  `json:"batch_no"`
 		}
 		err = db.QueryRow(c.Context(),
-			`SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status, inspected_at::text,
+			`SELECT id, inspection_no, reference_type, reference_name, item_code, sample_size, status, inspected_at::text, created_at::text,
 			        warehouse_id, location_id, COALESCE(qty,0), batch_no
 			 FROM quality_inspections WHERE id=$1`, id).
 			Scan(&q.ID, &q.InspectionNo, &q.ReferenceType, &q.ReferenceName, &q.ItemCode,
-				&q.SampleSize, &q.Status, &q.InspectedAt, &q.WarehouseID, &q.LocationID, &q.Qty, &q.BatchNo)
+				&q.SampleSize, &q.Status, &q.InspectedAt, &q.CreatedAt, &q.WarehouseID, &q.LocationID, &q.Qty, &q.BatchNo)
 		if err != nil {
 			return shared.Err(c, fiber.StatusNotFound, "inspection not found")
 		}
@@ -163,7 +165,7 @@ func get(db *pgxpool.Pool) fiber.Handler {
 		return shared.OK(c, fiber.Map{
 			"id": q.ID, "inspection_no": q.InspectionNo, "reference_type": q.ReferenceType,
 			"reference_name": q.ReferenceName, "item_code": q.ItemCode, "sample_size": q.SampleSize,
-			"status": q.Status, "inspected_at": q.InspectedAt, "warehouse_id": q.WarehouseID,
+			"status": q.Status, "inspected_at": q.InspectedAt, "created_at": q.CreatedAt, "warehouse_id": q.WarehouseID,
 			"location_id": q.LocationID, "qty": q.Qty, "batch_no": q.BatchNo, "readings": readings,
 		})
 	}

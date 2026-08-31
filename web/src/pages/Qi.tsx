@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Plus, ScanLine, Search } from 'lucide-react'
 import { api } from '../services/api'
 import BarcodeScanner from '../components/BarcodeScanner'
@@ -21,15 +22,29 @@ interface QiInspection {
   item_name: string
   sample_size: number | null
   status: string | null
-  created_at: string
+  created_at?: string
+  qty?: number
+}
+
+function fmtWhen(s?: string | null) {
+  if (!s) return '—'
+  const d = new Date(s)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
+}
+
+function fmtQty(n: unknown) {
+  if (n == null || n === '') return '—'
+  const v = Number(n)
+  if (Number.isNaN(v)) return String(n)
+  return String(v)
 }
 
 export default function Qi() {
   const rf = useRfUi()
+  const [params, setSearchParams] = useSearchParams()
   const [list, setList] = useState<QiInspection[]>([])
   const [selected, setSelected] = useState<any>(null)
   const [showScanner, setShowScanner] = useState(false)
-  const [msg, setMsg] = useState('')
   const [rfQuery, setRfQuery] = useState('')
   const [showNew, setShowNew] = useState(false)
 
@@ -54,7 +69,46 @@ export default function Qi() {
   }, [])
   const pager = useClientPager(list)
 
+  const loadInspection = async (id: number) => {
+    const r = await api.get<any>(`/qi/${id}`)
+    if (r.ok) {
+      setSelected(r.data)
+      const rows = r.data?.readings?.length ? r.data.readings : [{ specification: 'Visual', value: '', status: 'pending', expected: '' }]
+      setReadings(rows)
+    } else {
+      notify({ type: 'error', title: 'Open failed', message: r.error || 'Inspection not found' })
+    }
+  }
+
+  const openInspection = (id: number) => {
+    setSearchParams({ id: String(id) }, { replace: true })
+  }
+
+  const closeInspection = () => {
+    setSelected(null)
+    setSearchParams({}, { replace: true })
+  }
+
+  useEffect(() => {
+    const id = Number(params.get('id') || '')
+    if (id > 0) {
+      if (selected?.id !== id) void loadInspection(id)
+    } else if (selected) {
+      setSelected(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params])
+
+  useEffect(() => {
+    if (!selected?.id) return
+    document.getElementById(`qi-card-${selected.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [selected?.id])
+
   const createInspection = async () => {
+    if (!itemCode.trim()) {
+      notify({ type: 'error', title: 'Item code required', message: 'Scan or enter the item to inspect' })
+      return
+    }
     if (templateId) {
       const r = await api.qiFromTemplate({
         template_id: +templateId,
@@ -64,10 +118,10 @@ export default function Qi() {
         sample_size: +sampleSize || undefined,
       })
       if (r.ok) {
-        setMsg(`Inspection ${r.data.inspection_no} from template`)
         setItemCode(''); setReferenceName('')
         loadList()
         notify({ type: 'success', title: 'From template', message: r.data.inspection_no })
+        if (r.data?.id) openInspection(r.data.id)
       } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
       return
     }
@@ -78,11 +132,11 @@ export default function Qi() {
       sample_size: +sampleSize || 10,
     })
     if (r.ok) {
-      setMsg(`Inspection ${r.data.inspection_no} created`)
       setItemCode(''); setReferenceName('')
       loadList()
       notify({ type: 'success', title: 'Inspection Created', message: r.data.inspection_no })
-    }
+      if (r.data?.id) openInspection(r.data.id)
+    } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
   }
 
   const createTemplate = async () => {
@@ -94,15 +148,6 @@ export default function Qi() {
       setShowTmpl(false); setTmplName('')
       api.qiTemplates().then(res => { if (res.ok) setTemplates(res.data ?? []) })
     } else notify({ type: 'error', title: 'Failed', message: r.error || '' })
-  }
-
-  const openInspection = async (id: number) => {
-    const r = await api.get<any>(`/qi/${id}`)
-    if (r.ok) {
-      setSelected(r.data)
-      const rows = r.data?.readings?.length ? r.data.readings : [{ specification: 'Visual', value: '', status: 'pending', expected: '' }]
-      setReadings(rows)
-    }
   }
 
   const updateReading = (idx: number, field: string, value: string) => {
@@ -120,7 +165,7 @@ export default function Qi() {
     setReadingsBusy(false)
     if (r.ok) {
       notify({ type: r.data.failed ? 'warning' : 'success', title: 'Readings saved', message: r.data.failed ? `${r.data.failed} failed spec(s)` : `${r.data.saved} reading(s)` })
-      await openInspection(selected.id)
+      await loadInspection(selected.id)
     } else {
       notify({ type: 'error', title: 'Save failed', message: r.error || '' })
     }
@@ -144,7 +189,7 @@ export default function Qi() {
           ? `${selected.item_code} → ${r.data.moved_to} (ready for putaway)`
           : `${selected.item_code} passed inspection`,
       })
-      setSelected(null)
+      closeInspection()
       loadList()
     }
   }
@@ -161,7 +206,7 @@ export default function Qi() {
           ? `${selected.item_code} moved to ${r.data.moved_to}`
           : `${selected.item_code} failed inspection`,
       })
-      setSelected(null)
+      closeInspection()
       setRejectReason('')
       loadList()
     }
@@ -298,7 +343,7 @@ export default function Qi() {
           </>
         ) : (
           <>
-            <button type="button" className="scan-btn scan-btn-outline" onClick={() => setSelected(null)} style={{ alignSelf: 'flex-start', width: 'auto' }}>
+            <button type="button" className="scan-btn scan-btn-outline" onClick={closeInspection} style={{ alignSelf: 'flex-start', width: 'auto' }}>
               <ArrowLeft size={16} strokeWidth={1.8} /> Back to list
             </button>
 
@@ -390,185 +435,280 @@ export default function Qi() {
   }
 
   return (
-    <div className="desk-page space-y-3">
+    <div className="desk-page qi-page space-y-3">
       {showScanner && <BarcodeScanner onScan={handleScan} onClose={() => setShowScanner(false)} />}
 
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Quality Inspection</h2>
-        <button onClick={() => setShowScanner(true)} className="erpnext-btn-secondary">📷 Scan Item</button>
+      <div className="page-head desk-page-head">
+        <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+          <h1 className="page-title">Quality inspection</h1>
+          <p className="page-sub">Home › Inward › Quality inspection — sample check against expected specs after receiving</p>
+        </div>
+        <div className="page-actions">
+          <button type="button" className="erpnext-btn-secondary qi-head-btn" onClick={() => setShowScanner(true)}>
+            <ScanLine size={16} strokeWidth={1.8} /> Scan item
+          </button>
+          <button
+            type="button"
+            className="erpnext-btn-primary qi-head-btn"
+            onClick={() => { void createInspection() }}
+            disabled={!itemCode.trim()}
+            title={!itemCode.trim() ? 'Enter or scan an item first' : 'Create inspection'}
+          >
+            + Create inspection
+          </button>
+        </div>
       </div>
 
-      {!selected ? (
-        <>
-          <div className="erpnext-card">
-            <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-              <h3 className="font-semibold">Create Inspection</h3>
+      <div className="erpnext-card p-5 space-y-4">
+        <div>
+          <div className="font-semibold" style={{ fontSize: 15, color: 'var(--text-color)', letterSpacing: '-0.01em' }}>Create inspection</div>
+          <p style={{ fontSize: 13, color: 'var(--text-dim)', marginTop: 2, lineHeight: 1.5 }}>
+            Scan or enter an item, set sample size, then record expected vs actual readings.
+          </p>
+        </div>
+        <div className="qi-form-grid">
+          <div className="qi-field qi-field-wide">
+            <label className="erpnext-label qi-label">Item code <span style={{ color: 'var(--red-500)' }}>*</span></label>
+            <div className="qi-field-box">
+              <input className="erpnext-input qi-control" value={itemCode} onChange={e => setItemCode(e.target.value)} placeholder="Scan or type item code" />
+              <button type="button" className="qi-scan-in-field" onClick={() => setShowScanner(true)} aria-label="Scan item">
+                <ScanLine size={16} strokeWidth={1.8} />
+              </button>
             </div>
-            <div className="p-4 space-y-3">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="erpnext-label">Item Code *</label>
-                  <div className="flex gap-1">
-                    <input className="erpnext-input" value={itemCode} onChange={e => setItemCode(e.target.value)} placeholder="ITEM-001" />
-                    <button onClick={() => setShowScanner(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>📷</button>
-                  </div>
-                </div>
-                <div>
-                  <label className="erpnext-label">QC Template</label>
-                  <select className="erpnext-input" value={templateId} onChange={e => setTemplateId(e.target.value)}>
-                    <option value="">None</option>
-                    {templates.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="erpnext-label">Reference Type</label>
-                  <select className="erpnext-input" value={referenceType} onChange={e => setReferenceType(e.target.value)}>
-                    <option>Purchase Receipt</option>
-                    <option>Purchase Order</option>
-                    <option>Stock Entry</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="erpnext-label">Reference Name</label>
-                  <input className="erpnext-input" value={referenceName} onChange={e => setReferenceName(e.target.value)} placeholder="PR-001" />
-                </div>
-                <div>
-                  <label className="erpnext-label">Sample Size</label>
-                  <input className="erpnext-input" type="number" value={sampleSize} onChange={e => setSampleSize(e.target.value)} />
-                </div>
-                <div className="flex items-end gap-2">
-                  <button onClick={createInspection} className="erpnext-btn-primary">Create</button>
-                  <button onClick={() => setShowTmpl(!showTmpl)} className="erpnext-btn-secondary">+ Template</button>
-                </div>
+          </div>
+          <div className="qi-field">
+            <label className="erpnext-label qi-label">QC template</label>
+            <div className="qi-field-box">
+              <select className="erpnext-input qi-control qi-select" value={templateId} onChange={e => setTemplateId(e.target.value)}>
+                <option value="">None</option>
+                {templates.map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="qi-field">
+            <label className="erpnext-label qi-label">Reference type</label>
+            <div className="qi-field-box">
+              <select className="erpnext-input qi-control qi-select" value={referenceType} onChange={e => setReferenceType(e.target.value)}>
+                <option>Purchase Receipt</option>
+                <option>Purchase Order</option>
+                <option>Stock Entry</option>
+              </select>
+            </div>
+          </div>
+          <div className="qi-field">
+            <label className="erpnext-label qi-label">Reference name</label>
+            <div className="qi-field-box">
+              <input className="erpnext-input qi-control" value={referenceName} onChange={e => setReferenceName(e.target.value)} placeholder="PR-001" />
+            </div>
+          </div>
+          <div className="qi-field">
+            <label className="erpnext-label qi-label">Sample size</label>
+            <div className="qi-field-box qi-qty-box">
+              <input className="erpnext-input qi-control qi-qty-input" type="number" min={1} value={sampleSize} onChange={e => setSampleSize(e.target.value)} placeholder="Count" />
+            </div>
+            <div className="qi-hint">{sampleSize || 0} pieces to inspect</div>
+          </div>
+          <div className="qi-field qi-field-actions">
+            <label className="erpnext-label qi-label">&nbsp;</label>
+            <button type="button" className="erpnext-btn-secondary qi-head-btn" onClick={() => setShowTmpl(!showTmpl)}>+ Template</button>
+          </div>
+        </div>
+        {showTmpl && (
+          <div className="qi-form-grid">
+            <div className="qi-field">
+              <label className="erpnext-label qi-label">Template name</label>
+              <div className="qi-field-box">
+                <input className="erpnext-input qi-control" value={tmplName} onChange={e => setTmplName(e.target.value)} placeholder="Incoming visual" />
               </div>
-              {showTmpl && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div><label className="erpnext-label">Template name</label><input className="erpnext-input" value={tmplName} onChange={e => setTmplName(e.target.value)} /></div>
-                  <div><label className="erpnext-label">Checklist specs (comma)</label><input className="erpnext-input" value={tmplSpec} onChange={e => setTmplSpec(e.target.value)} /></div>
-                  <div className="flex items-end"><button className="erpnext-btn-primary" onClick={createTemplate}>Save Template</button></div>
-                </div>
-              )}
+            </div>
+            <div className="qi-field qi-field-wide">
+              <label className="erpnext-label qi-label">Checklist specs</label>
+              <div className="qi-field-box">
+                <input className="erpnext-input qi-control" value={tmplSpec} onChange={e => setTmplSpec(e.target.value)} placeholder="Visual, Quantity" />
+              </div>
+              <div className="qi-hint">Comma-separated spec names</div>
+            </div>
+            <div className="qi-field qi-field-actions">
+              <label className="erpnext-label qi-label">&nbsp;</label>
+              <button type="button" className="erpnext-btn-primary qi-head-btn" onClick={() => void createTemplate()}>Save template</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {selected && (
+        <div id={`qi-card-${selected.id}`} className="erpnext-card p-4 space-y-4 qi-card-focus">
+          <div className="flex items-center gap-3 text-sm" style={{ flexWrap: 'wrap' }}>
+            <span className="font-medium">{selected.inspection_no}</span>
+            {statusBadge(selected.status || 'pending')}
+            <span style={{ color: 'var(--text-dim)' }}>{selected.item_code} · {selected.reference_name || 'no reference'}</span>
+            <button type="button" className="erpnext-btn-secondary text-xs ml-auto" onClick={closeInspection}>Close</button>
+          </div>
+          <div className="qi-meta-row">
+            <div className="qi-field">
+              <label className="erpnext-label qi-label">Item</label>
+              <div className="qi-field-box"><span className="qi-qty-value" style={{ justifyContent: 'flex-start' }}>{selected.item_code}</span></div>
+            </div>
+            <div className="qi-field">
+              <label className="erpnext-label qi-label">Qty</label>
+              <div className="qi-field-box qi-qty-box"><span className="qi-qty-value">{fmtQty(selected.qty)}</span></div>
+            </div>
+            <div className="qi-field">
+              <label className="erpnext-label qi-label">Sample size</label>
+              <div className="qi-field-box qi-qty-box"><span className="qi-qty-value">{fmtQty(selected.sample_size)}</span></div>
+            </div>
+            <div className="qi-field">
+              <label className="erpnext-label qi-label">Created</label>
+              <div className="qi-field-box"><span className="qi-qty-value" style={{ justifyContent: 'flex-start', fontWeight: 500 }}>{fmtWhen(selected.created_at)}</span></div>
             </div>
           </div>
 
-          {msg && (
-            <div style={{ background: 'rgba(22,163,74,0.06)', border: '1px solid rgba(22,163,74,0.2)', color: 'var(--green)', padding: '10px 14px', borderRadius: 8, fontSize: 13 }}>
-              {msg}
+          <div>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="font-medium text-sm">Checklist readings</div>
+              {selected.status === 'pending' && (
+                <button type="button" className="erpnext-btn-secondary text-xs ml-auto" onClick={() => setReadings([...readings, { specification: '', value: '', status: 'pending' }])}>+ Spec</button>
+              )}
             </div>
-          )}
-
-          <div className="erpnext-card">
-            <div className="px-4 py-3 space-y-3" style={{ borderBottom: '1px solid var(--border)' }}>
-              <h3 className="font-semibold">Inspections</h3>
-              <ListPager pager={pager} placeholder="Search inspections…" />
-            </div>
-            <div className="table-wrap">
-              <table className="erpnext-table">
+            <div className="qi-items-wrap">
+              <table className="erpnext-table text-sm">
                 <thead>
-                  <tr><th>Inspection No</th><th>Item</th><th>Reference</th><th>Sample</th><th>Status</th><th>Created</th><th>Action</th></tr>
+                  <tr style={{ background: 'var(--panel-2)' }}>
+                    <th>Specification</th>
+                    <th>Expected</th>
+                    <th>Actual</th>
+                    <th>Result</th>
+                  </tr>
                 </thead>
                 <tbody>
-                  {pager.pageItems.map(q => (
-                    <tr key={q.id}>
-                      <td className="font-medium cursor-pointer hover:underline" style={{ color: 'var(--accent)' }} onClick={() => openInspection(q.id)}>{q.inspection_no}</td>
-                      <td>{q.item_code}</td>
-                      <td>{q.reference_name || '—'}</td>
-                      <td>{q.sample_size ?? '—'}</td>
-                      <td>{statusBadge(q.status || 'pending')}</td>
-                      <td>{new Date(q.created_at).toLocaleDateString()}</td>
-                      <td>
-                        <button onClick={() => openInspection(q.id)} className="erpnext-btn-secondary text-xs">Open</button>
+                  {readings.map((rd: any, idx: number) => (
+                    <tr key={rd.id || idx}>
+                      <td className="font-medium">
+                        {rd.id ? rd.specification : (
+                          <div className="qi-field-box">
+                            <input className="erpnext-input qi-control" value={rd.specification || ''} onChange={e => updateReading(idx, 'specification', e.target.value)} placeholder="Spec name" />
+                          </div>
+                        )}
                       </td>
+                      <td>
+                        <div className="qi-field-box qi-qty-box">
+                          <span className="qi-qty-value">{rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} - ${rd.max_value ?? '—'}` : '—')}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="qi-field-box qi-qty-box">
+                          <input
+                            className="erpnext-input qi-control qi-qty-input"
+                            value={rd.value || ''}
+                            onChange={e => updateReading(idx, 'value', e.target.value)}
+                            placeholder="Count"
+                            disabled={selected.status !== 'pending'}
+                            aria-label={`Actual reading for ${rd.specification || 'spec'}`}
+                          />
+                        </div>
+                      </td>
+                      <td>{statusBadge(rd.status || 'pending')}</td>
                     </tr>
                   ))}
-                  {pager.total === 0 && <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections</td></tr>}
                 </tbody>
               </table>
             </div>
-          </div>
-        </>
-      ) : (
-        <div className="erpnext-card">
-          <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border)' }}>
-            <div>
-              <h3 className="font-semibold">{selected.inspection_no}</h3>
-              <p className="text-sm" style={{ color: 'var(--text-dim)' }}>
-                {selected.item_code} — {selected.item_name || ''} | Reference: {selected.reference_name || '—'}
-              </p>
-            </div>
-            <button onClick={() => setSelected(null)} className="erpnext-btn-secondary">Back</button>
-          </div>
-
-          <div className="p-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm mb-4">
-              <div><span style={{ color: 'var(--text-dim)' }}>Item: </span><strong>{selected.item_code}</strong></div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Sample Size: </span>{selected.sample_size}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Status: </span>{statusBadge(selected.status || 'pending')}</div>
-              <div><span style={{ color: 'var(--text-dim)' }}>Created: </span>{new Date(selected.created_at || Date.now()).toLocaleString()}</div>
-            </div>
-
-            <div className="mb-6">
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="font-medium text-sm">Checklist readings</h4>
-                <button type="button" className="erpnext-btn-secondary text-xs" onClick={() => setReadings([...readings, { specification: '', value: '', status: 'pending' }])}>+ Spec</button>
-              </div>
-              <div className="table-wrap">
-                <table className="erpnext-table text-sm">
-                  <thead>
-                    <tr>
-                      <th>Specification</th>
-                      <th>Expected</th>
-                      <th>Actual</th>
-                      <th>Result</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {readings.map((rd: any, idx: number) => (
-                      <tr key={rd.id || idx}>
-                        <td>
-                          {rd.id ? rd.specification : (
-                            <input className="erpnext-input" value={rd.specification || ''} onChange={e => updateReading(idx, 'specification', e.target.value)} placeholder="Spec name" />
-                          )}
-                        </td>
-                        <td style={{ color: 'var(--text-dim)' }}>{rd.expected || (rd.min_value != null || rd.max_value != null ? `${rd.min_value ?? '—'} – ${rd.max_value ?? '—'}` : '—')}</td>
-                        <td>
-                          <input className="erpnext-input" value={rd.value || ''} onChange={e => updateReading(idx, 'value', e.target.value)} placeholder="Reading" disabled={selected.status !== 'pending'} />
-                        </td>
-                        <td>{statusBadge(rd.status || 'pending')}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {selected.status === 'pending' && (
-                <button className="erpnext-btn-secondary text-xs mt-2" disabled={readingsBusy} onClick={() => { void saveReadings() }}>
-                  {readingsBusy ? 'Saving…' : 'Save readings'}
-                </button>
-              )}
-            </div>
-
             {selected.status === 'pending' && (
-              <div className="mt-4">
-                <h4 className="font-medium text-sm mb-2">Inspection Result</h4>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  <div className="flex gap-2">
-                    <button onClick={acceptInspection} className="erpnext-btn-primary" style={{ background: 'var(--green)' }}>✓ Accept</button>
-                    <button onClick={() => rejectInspection()} className="erpnext-btn-primary" style={{ background: 'var(--red)' }}>✕ Reject</button>
-                  </div>
-                  <div className="md:col-span-2">
-                    <label className="erpnext-label">Reject Reason (if rejecting)</label>
-                    <input className="erpnext-input" value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Reason for rejection..." />
-                  </div>
-                </div>
-              </div>
+              <button type="button" className="erpnext-btn-secondary text-xs mt-3" disabled={readingsBusy} onClick={() => { void saveReadings() }}>
+                {readingsBusy ? 'Saving…' : 'Save readings'}
+              </button>
             )}
           </div>
 
-          <div className="p-4" style={{ borderTop: '1px solid var(--border)' }}>
+          {selected.status === 'pending' && (
+            <div className="qi-result-row">
+              <div className="qi-field qi-field-wide">
+                <label className="erpnext-label qi-label">Reject reason</label>
+                <div className="qi-field-box">
+                  <input className="erpnext-input qi-control" value={rejectReason} onChange={e => setRejectReason(e.target.value)} placeholder="Required when rejecting" />
+                </div>
+              </div>
+              <div className="qi-result-actions">
+                <button type="button" className="erpnext-btn-primary qi-head-btn" style={{ background: 'var(--green)' }} onClick={() => void acceptInspection()}>Accept</button>
+                <button type="button" className="erpnext-btn-primary qi-head-btn" style={{ background: 'var(--red)' }} onClick={() => void rejectInspection()}>Reject</button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12 }}>
             <Comments entityType="quality_inspection" entityId={selected.id} />
           </div>
         </div>
       )}
+
+      <div className="erpnext-card overflow-x-auto p-4 space-y-3">
+        <div className="font-medium">Inspections</div>
+        <ListPager pager={pager} placeholder="Search inspections, item, reference…" />
+        <table className="erpnext-table text-sm">
+          <thead>
+            <tr style={{ background: 'var(--panel-2)' }}>
+              <th>Inspection</th><th>Item</th><th>Reference</th><th>Qty</th><th>Sample</th><th>Status</th><th>Created</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pager.pageItems.map(q => (
+              <tr
+                key={q.id}
+                onClick={() => openInspection(q.id)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openInspection(q.id) }
+                }}
+                tabIndex={0}
+                style={{ cursor: 'pointer', background: selected?.id === q.id ? 'var(--panel-2)' : undefined }}
+              >
+                <td>
+                  <button type="button" className="qi-open-btn" onClick={e => { e.stopPropagation(); openInspection(q.id) }}>{q.inspection_no}</button>
+                </td>
+                <td>{q.item_code}</td>
+                <td>{q.reference_name || '—'}</td>
+                <td>{fmtQty(q.qty)}</td>
+                <td>{fmtQty(q.sample_size)}</td>
+                <td>{statusBadge(q.status || 'pending')}</td>
+                <td className="whitespace-nowrap">{fmtWhen(q.created_at)}</td>
+              </tr>
+            ))}
+            {pager.total === 0 && (
+              <tr><td colSpan={7} className="text-center py-8" style={{ color: 'var(--text-dim)' }}>No inspections yet. Scan an item and press Create inspection.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      <style>{`
+        .qi-head-btn { height: 40px; min-height: 40px; padding: 0 16px; font-size: 14px; font-weight: 600; border-radius: 6px; display: inline-flex; align-items: center; gap: 8px; }
+        .qi-form-grid { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(160px, 0.7fr); gap: 16px 20px; align-items: start; }
+        .qi-meta-row { display: grid; grid-template-columns: minmax(0, 1.4fr) 112px 112px minmax(0, 1fr); gap: 16px; }
+        .qi-field { min-width: 0; }
+        .qi-field-wide { grid-column: span 1; }
+        .qi-label { font-weight: 600; color: var(--text-color); font-size: 13px; margin-bottom: 6px; display: block; }
+        .qi-field-box { position: relative; display: flex; align-items: stretch; height: 40px; min-width: 0; box-sizing: border-box; border: 1px solid var(--border, #d1d5db); border-radius: 6px; background: var(--card, #fff); }
+        .qi-field-box:focus-within { border-color: var(--primary, #2563eb); box-shadow: 0 0 0 3px oklch(0.56 0.18 250 / 0.10); }
+        .qi-control, .qi-select { appearance: none; -webkit-appearance: none; background: transparent !important; border: 0 !important; box-shadow: none !important; color: var(--text-color); box-sizing: border-box; height: 100%; width: 100%; min-width: 0; padding: 0 12px; font-size: 13px; font-weight: 500; }
+        .qi-select { padding-right: 32px; }
+        .qi-field-box:has(.qi-select)::after { content: ''; position: absolute; right: 14px; top: 50%; width: 6px; height: 6px; margin-top: -5px; border-right: 1.5px solid var(--text-dim, #6b7280); border-bottom: 1.5px solid var(--text-dim, #6b7280); transform: rotate(45deg); pointer-events: none; }
+        .qi-scan-in-field { flex: 0 0 40px; width: 40px; border: 0; background: transparent; color: var(--text-dim); cursor: pointer; display: flex; align-items: center; justify-content: center; }
+        .qi-qty-box { width: 112px; }
+        .qi-qty-input { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .qi-qty-input::placeholder { color: var(--text-dim); font-weight: 500; }
+        .qi-qty-value { display: flex; align-items: center; justify-content: flex-end; width: 100%; padding: 0 12px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .qi-hint { font-size: 11px; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+        .qi-field-actions { display: flex; flex-direction: column; align-items: flex-start; }
+        .qi-field-actions .qi-head-btn { width: auto; }
+        .qi-card-focus { box-shadow: 0 0 0 2px var(--primary, #2563eb); }
+        .qi-items-wrap { overflow-x: auto; }
+        .qi-open-btn { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; font-weight: 600; cursor: pointer; }
+        .qi-result-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: end; }
+        .qi-result-actions { display: flex; gap: 8px; padding-bottom: 0; }
+        @media (max-width: 900px) {
+          .qi-form-grid, .qi-meta-row, .qi-result-row { grid-template-columns: minmax(0, 1fr); }
+          .qi-qty-box { width: 100%; }
+        }
+      `}</style>
     </div>
   )
 }

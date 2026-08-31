@@ -595,7 +595,12 @@ export default function ReceivingWizard() {
       {flash && <div className={`rw-scan-flash ${flash}`} />}
 
       {step === "select_po" && <>
-        <div className="rw-header"><div className="rw-header-info"><div className="rw-header-session">Receiving</div><div className="rw-header-po">Select PO / GRN to receive</div></div></div>
+        <div className="rw-header rw-header--select">
+          <div className="rw-header-info">
+            <div className="rw-header-title">Receiving</div>
+            <div className="rw-header-po">Select PO / GRN to receive</div>
+          </div>
+        </div>
         <div className="rw-po-list">
           <input
             className="rw-po-search"

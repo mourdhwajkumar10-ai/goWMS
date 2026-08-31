@@ -38,6 +38,17 @@
   gap: 12px;
 }
 
+/* Select-PO intro: card-like, not sticky — avoids square bar overlapping the list */
+.rw-header--select {
+  position: static;
+  z-index: auto;
+  margin: 16px 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--rw-border);
+  border-bottom: 1px solid var(--rw-border);
+  border-radius: var(--rw-radius);
+}
+
 .rw-header-back {
   width: 36px;
   height: 36px;
@@ -702,20 +713,34 @@
 
 .rw-toast {
   padding: 14px 16px;
-  border-radius: var(--rw-radius);
+  border-radius: 8px;
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
   display: flex;
   align-items: center;
   gap: 10px;
   box-shadow: var(--rw-shadow-lg);
   animation: rw-toast-in 250ms cubic-bezier(0.2, 0, 0, 1);
   pointer-events: auto;
+  line-height: 1.35;
+  border: 1px solid transparent;
 }
 
-.rw-toast-success { background: var(--rw-success); color: white; }
-.rw-toast-error { background: var(--rw-error); color: white; }
-.rw-toast-warning { background: var(--warning, #f5c542); color: var(--warning-foreground, #3b2f00); }
+.rw-toast-success {
+  background: var(--rw-success, #16a34a);
+  color: #fff;
+  border-color: oklch(0.45 0.14 155 / 0.35);
+}
+.rw-toast-error {
+  background: var(--rw-error, #dc2626);
+  color: #fff;
+  border-color: oklch(0.5 0.19 25 / 0.35);
+}
+.rw-toast-warning {
+  background: var(--warning, #f5c542);
+  color: var(--warning-foreground, #3b2f00);
+  border-color: oklch(0.7 0.14 78 / 0.45);
+}
 
 /* Duplicate/already-counted boxes are warnings, not successful blue counts. */
 .rw-box-row-badge-counted { background: var(--warning, #f5c542); color: var(--warning-foreground, #3b2f00); }
@@ -831,7 +856,7 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 16px;
+  padding: 12px 16px 16px;
 }
 
 .rw-po-search {
@@ -1713,9 +1738,14 @@
 }
 
 .rw-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
-  font-weight: 700;
-  color: var(--rw-text);
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: var(--foreground);
   margin-bottom: 12px;
 }
 
@@ -1754,30 +1784,65 @@
   box-shadow: 0 0 0 3px var(--rw-accent-light);
 }
 
-/* Manual packing-list table: keep Qty/Weight digits readable in narrow cells
-   (same clipping issue as PO line qty — padding + spinners). */
+/* Manual packing-list table: fixed columns so headers sit over inputs */
+.pl-manual-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card, #fff);
+}
 .pl-manual-table {
-  min-width: 1280px;
-  table-layout: auto;
+  width: max-content;
+  min-width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0;
 }
 .pl-manual-table th,
 .pl-manual-table td {
-  padding-left: 6px;
-  padding-right: 6px;
+  padding: 8px 6px;
+  vertical-align: middle;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
 }
+.pl-manual-table thead th {
+  padding-top: 10px;
+  padding-bottom: 8px;
+  white-space: nowrap;
+  text-align: left;
+  text-transform: none !important;
+  letter-spacing: -0.01em !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--muted-foreground) !important;
+  background: var(--card, #fff) !important;
+  border-bottom: 1px solid var(--border);
+}
+.pl-manual-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.pl-manual-table .pl-manual-input,
 .pl-manual-table input.rw-input {
-  padding: 4px 8px;
-  min-height: 32px;
-  font-size: 13px;
+  display: block;
+  width: 100% !important;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0 8px !important;
+  min-height: 32px !important;
+  height: 32px !important;
+  font-size: 13px !important;
   font-variant-numeric: tabular-nums;
-  color: var(--rw-text);
-  overflow: visible;
+  color: var(--foreground);
+  border-radius: 6px !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .pl-manual-table input[type="number"] {
   text-align: right;
-  min-width: 4.5rem;
-  padding-left: 6px;
-  padding-right: 6px;
   -moz-appearance: textfield;
   appearance: textfield;
 }
@@ -1785,6 +1850,16 @@
 .pl-manual-table input[type="number"]::-webkit-inner-spin-button {
   -webkit-appearance: none;
   margin: 0;
+}
+.pl-manual-remove {
+  text-align: center;
+  width: 44px;
+}
+.pl-manual-remove .erpnext-btn-secondary {
+  height: 28px;
+  min-height: 28px;
+  padding: 0 8px;
+  width: 28px;
 }
 
 .rw-dropdown {
@@ -1821,15 +1896,17 @@
   overflow-y: auto;
 }
 .rw-modal {
-  background: var(--rw-bg);
-  border: 1px solid var(--rw-border);
-  border-radius: 12px;
+  background: var(--card, #fff);
+  border: 1px solid var(--border);
+  border-radius: 10px;
   box-shadow: var(--rw-shadow-lg);
   width: min(720px, 100%);
   max-height: calc(100dvh - 48px);
   display: flex;
   flex-direction: column;
   margin: auto;
+  color: var(--foreground);
+  font-family: var(--font-stack, inherit);
 }
 .rw-modal-lg { width: min(1180px, 100%); }
 .rw-modal-header {
@@ -1838,13 +1915,86 @@
   justify-content: space-between;
   gap: 12px;
   padding: 16px 24px;
-  border-bottom: 1px solid var(--rw-border);
+  border-bottom: 1px solid var(--border);
   flex-shrink: 0;
+  background: var(--card, #fff);
 }
 .rw-modal-header h2 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  text-transform: none;
+  color: var(--foreground);
+  line-height: 1.25;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rw-modal-header h2 .rw-modal-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  opacity: 0.85;
+  color: var(--muted-foreground);
+}
+.rw-section-title .rw-modal-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.85;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.rw-modal-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card, #fff);
+}
+.rw-modal-tab {
+  appearance: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: inherit;
+  min-height: 40px;
+}
+.rw-modal-tab.is-active {
+  color: var(--primary);
+  font-weight: 600;
+  border-bottom-color: var(--primary);
+}
+.rw-modal-tab .rw-modal-icon {
+  width: 15px;
+  height: 15px;
+  opacity: 0.9;
+}
+.rw-btn {
+  border-radius: var(--rw-radius-sm, 6px) !important;
+}
+.rw-input, .rw-select {
+  border-radius: var(--rw-radius-sm, 6px) !important;
+  background: var(--card, #fff) !important;
+  border-color: var(--border) !important;
+  color: var(--foreground) !important;
+}
+.pl-manual-table th {
+  text-transform: none !important;
+  letter-spacing: -0.01em !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  color: var(--muted-foreground) !important;
+  background: var(--card, #fff) !important;
 }
 .rw-modal-close {
   width: 32px;
@@ -1909,11 +2059,36 @@
 .rw-modal-footer {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   padding: 12px 24px 16px;
-  border-top: 1px solid var(--rw-border);
+  border-top: 1px solid var(--border);
   flex-shrink: 0;
-  background: var(--rw-bg);
+  background: var(--card, #fff);
+}
+.rw-modal-footer .rw-modal-action,
+.rw-modal-footer .erpnext-btn-primary,
+.rw-modal-footer .erpnext-btn-secondary {
+  height: 40px !important;
+  min-height: 40px !important;
+  max-height: 40px;
+  padding: 0 16px !important;
+  font-size: 14px !important;
+  font-weight: 600;
+  line-height: 1;
+  border-radius: 8px !important;
+  box-sizing: border-box;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  flex: 0 0 auto;
+}
+.rw-modal-footer .rw-modal-action svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
 }
 
 .rw-info-grid {

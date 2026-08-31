@@ -107,6 +107,7 @@ export const NAV_CATALOG: NavItemDef[] = [
   // ── Inventory management ──
   { to: '/cycle-count', label: 'Cycle Count', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
   { to: '/stock-scan', label: 'Stock Scan', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'], floor: true },
+  { to: '/inventory', label: 'Inventory', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
   { to: '/inventory-health', label: 'Inventory Health', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.view'] },
   { to: '/transfers', label: 'Transfers', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },
   { to: '/stock-entries', label: 'Stock Entry', section: 'inventory', rolesFallback: ['admin', 'wm', 'supervisor'], permissions: ['inventory.adjust'] },

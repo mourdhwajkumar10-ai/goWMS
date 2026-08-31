@@ -65,8 +65,10 @@
   --panel: var(--card);
   --panel-2: var(--secondary);
   --border-color: var(--border);
+  --primary-color: var(--primary);
+  /* Desk “accent” = brand blue; keep green as its own token */
   --accent: var(--primary);
-  --green: var(--accent);
+  --green: oklch(0.7 0.16 155);
   --amber: var(--warning);
   --red: var(--destructive);
 
@@ -91,17 +93,14 @@
   --shadow-base: 0 4px 8px oklch(0.17 0.018 258 / 0.06), 0 1px 3px oklch(0.17 0.018 258 / 0.05);
   --shadow-md: 0 8px 24px oklch(0.17 0.018 258 / 0.08), 0 2px 6px oklch(0.17 0.018 258 / 0.04);
 
-  /* RF/Scanner specific */
-  --sm-gap: 12px;
-  --sm-btn-h: 52px;
-  --sm-font: 'Geist', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --sm-font-mono: 'Geist Mono', 'SF Mono', 'Fira Code', monospace;
-  --sm-shadow: 0 1px 2px oklch(0.17 0.018 258 / 0.04);
-  --sm-shadow-md: 0 1px 2px oklch(0.17 0.018 258 / 0.04), 0 4px 12px oklch(0.17 0.018 258 / 0.06);
-  --rf-content-max: 32.5rem;
-  --scan-flash-success: oklch(0.7 0.16 155 / 0.08);
-  --scan-flash-error:   oklch(0.6 0.198 24 / 0.10);
-  --scan-flash-warn:    oklch(0.78 0.15 78 / 0.10);
+  /* Desk chrome */
+  --navbar-height: 64px;
+  --navbar-bg: var(--card);
+  --btn-height: 32px;
+  --card-bg: var(--card);
+  --control-bg: var(--secondary);
+  --fg-hover-color: var(--secondary);
+  --fg-color: var(--card);
 
   /* Motion tokens (from index.css) */
   --animate-sweep: sweep 2.8s cubic-bezier(0.45, 0, 0.55, 1) infinite;
@@ -109,24 +108,129 @@
   --animate-verdict: verdict 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-/* Wizard hex migration: safe :root alias mapping (Phase 1.3) */
-:root {
-  /* Receiving wizard hex tokens → unified tokens */
+/* Dark theme — must override C core tokens (not only legacy gray vars) */
+[data-theme="dark"] {
+  --background: oklch(0.18 0.012 258);
+  --foreground: oklch(0.93 0.01 250);
+  --card: oklch(0.22 0.012 258);
+  --card-foreground: oklch(0.93 0.01 250);
+  --popover: oklch(0.24 0.012 258);
+  --popover-foreground: oklch(0.93 0.01 250);
+  --primary: oklch(0.62 0.17 250);
+  --primary-foreground: oklch(0.99 0.004 250);
+  --secondary: oklch(0.26 0.012 258);
+  --secondary-foreground: oklch(0.93 0.01 250);
+  --muted: oklch(0.26 0.01 258);
+  --muted-foreground: oklch(0.72 0.012 250);
+  --accent: oklch(0.72 0.14 155);
+  --accent-foreground: oklch(0.16 0.02 155);
+  --destructive: oklch(0.65 0.18 24);
+  --destructive-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.78 0.14 78);
+  --warning-foreground: oklch(0.22 0.04 78);
+  --border: oklch(0.32 0.012 258);
+  --input: oklch(0.32 0.012 258);
+  --ring: oklch(0.72 0.12 250);
+
+  --sm-bg: var(--background);
+  --sm-fg: var(--foreground);
+  --sm-card: var(--card);
+  --sm-card-foreground: var(--card-foreground);
+  --sm-border: var(--border);
+  --sm-secondary: var(--secondary);
+  --sm-muted-fg: var(--muted-foreground);
+  --sm-accent: var(--accent);
+  --sm-accent-fg: var(--accent-foreground);
+  --sm-destructive: var(--destructive);
+  --sm-warning: var(--warning);
+  --scan-flash-success: oklch(0.7 0.16 155 / 0.16);
+  --scan-flash-error:   oklch(0.6 0.198 24 / 0.20);
+  --scan-flash-warn:    oklch(0.78 0.15 78 / 0.18);
+
+  --text: var(--foreground);
+  --text-dim: var(--muted-foreground);
+  --text-muted: var(--muted-foreground);
+  --text-color: var(--foreground);
+  --heading-color: var(--foreground);
+  --bg: var(--background);
+  --bg-color: var(--background);
+  --bg-soft: var(--secondary);
+  --panel: var(--card);
+  --panel-2: var(--secondary);
+  --border-color: var(--border);
+  --primary-color: var(--primary);
+  --accent: var(--primary);
+  --green: oklch(0.72 0.14 155);
+  --amber: var(--warning);
+  --red: var(--destructive);
+
+  --shadow-xs: 0 1px 2px oklch(0 0 0 / 0.35);
+  --shadow-sm: 0 1px 2px oklch(0 0 0 / 0.35), 0 1px 3px oklch(0 0 0 / 0.28);
+  --shadow-base: 0 4px 8px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+  --shadow-md: 0 8px 24px oklch(0 0 0 / 0.45), 0 2px 6px oklch(0 0 0 / 0.3);
+  --sm-shadow: var(--shadow-xs);
+  --sm-shadow-md: var(--shadow-sm);
+
+  --navbar-height: 64px;
+  --navbar-bg: var(--card);
+  --btn-height: 32px;
+  --card-bg: var(--card);
+  --control-bg: var(--secondary);
+  --fg-hover-color: var(--secondary);
+  --fg-color: var(--card);
+
   --rw-accent: var(--primary);
   --rw-accent-hover: var(--primary);
-  --rw-bg: var(--bg);
-  --rw-bg-2: var(--bg-soft);
+  --rw-accent-light: oklch(0.62 0.17 250 / 0.18);
+  --rw-bg: var(--card);
+  --rw-bg-2: var(--secondary);
+  --rw-bg-3: var(--muted);
   --rw-border: var(--border);
-  --rw-text: var(--text);
-  --rw-text-dim: var(--text-dim);
-  --rw-radius: var(--border-radius-lg);
+  --rw-text: var(--foreground);
+  --rw-text-dim: var(--muted-foreground);
+  --rw-text-muted: var(--muted-foreground);
+  --rw-success-bg: oklch(0.7 0.16 155 / 0.18);
+  --rw-error-bg: oklch(0.6 0.198 24 / 0.18);
+  --rw-warning-bg: oklch(0.78 0.15 78 / 0.18);
+  --grn-accent: var(--primary);
+  --grn-bg: var(--card);
+  --grn-border: var(--border);
+  --grn-text: var(--foreground);
+}
+
+
+/* Wizard hex migration: safe :root alias mapping (Phase 1.3) */
+:root {
+  /* Receiving wizard → desk card theme (white surfaces, soft radius) */
+  --rw-accent: var(--primary);
+  --rw-accent-hover: var(--primary);
+  --rw-accent-light: oklch(0.56 0.18 250 / 0.10);
+  --rw-bg: var(--card);
+  --rw-bg-2: var(--secondary);
+  --rw-bg-3: var(--muted);
+  --rw-border: var(--border);
+  --rw-text: var(--foreground);
+  --rw-text-dim: var(--muted-foreground);
+  --rw-text-muted: var(--muted-foreground);
+  --rw-radius: 8px;
+  --rw-radius-sm: 6px;
+  --rw-shadow-md: var(--shadow-md, 0 4px 12px oklch(0.17 0.018 258 / 0.08));
+  --rw-shadow-lg: var(--shadow-lg, 0 12px 40px oklch(0.17 0.018 258 / 0.16));
+  /* Status colors used by toasts / badges (must stay solid — white text on these) */
+  --rw-success: oklch(0.55 0.14 155);
+  --rw-success-bg: oklch(0.7 0.16 155 / 0.12);
+  --rw-error: oklch(0.55 0.19 25);
+  --rw-error-bg: oklch(0.6 0.198 24 / 0.12);
+  --rw-warning: var(--warning);
+  --rw-warning-bg: oklch(0.78 0.15 78 / 0.16);
 
   /* GRN wizard hex tokens → unified tokens */
   --grn-accent: var(--primary);
-  --grn-bg: var(--bg);
+  --grn-bg: var(--card);
   --grn-border: var(--border);
-  --grn-text: var(--text);
-  --grn-radius: var(--border-radius-lg);
+  --grn-text: var(--foreground);
+  --grn-radius: 8px;
+  --grn-radius-sm: 6px;
 }
 
 /* ALL animations — NO DUPLICATES */

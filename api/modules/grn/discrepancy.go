@@ -18,7 +18,7 @@ func allowedGRNException(et string) bool {
 		"wrong_revision", "substitute", "counterfeit", "wrong_po", "other",
 		"internal_damage", "unknown_box", "relabeled", "no_box_id", "damaged_barcode",
 		"nested_box", "no_packing_list", "no_invoice", "packing_list_po_mismatch",
-		"packing_list_physical_mismatch":
+		"packing_list_physical_mismatch", "audit_discrepancy":
 		return true
 	default:
 		_, ok := extraDiscrepancyKinds[et]

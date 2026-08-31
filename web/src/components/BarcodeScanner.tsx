@@ -174,63 +174,200 @@ export default function BarcodeScanner({ onScan, onClose }: Props) {
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 460 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <h2 style={{ margin: 0 }}>Scan QR / Barcode</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-dim)' }} aria-label="Close scanner">✕</button>
+    <div className="modal-overlay scanner-overlay" onClick={onClose}>
+      <div className="modal scanner-modal" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true" aria-labelledby="scanner-title">
+        <div className="scanner-head">
+          <h2 id="scanner-title" className="scanner-title">Scan QR / Barcode</h2>
+          <button type="button" className="scanner-close" onClick={onClose} aria-label="Close scanner">✕</button>
         </div>
 
         {useCamera ? (
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#000' }}>
+          <div className="scanner-camera">
+            <div className="scanner-viewport">
               <video
                 ref={videoRef}
                 autoPlay
                 muted
                 playsInline
-                style={{ width: '100%', display: 'block', aspectRatio: '4 / 3', objectFit: 'cover' }}
+                className="scanner-video"
               />
-              <div
-                aria-hidden
-                style={{
-                  position: 'absolute',
-                  inset: '18% 22%',
-                  border: '2px solid rgba(255,255,255,0.9)',
-                  borderRadius: 12,
-                  boxShadow: '0 0 0 100vmax rgba(0,0,0,0.25)',
-                }}
-              />
+              <div className="scanner-reticle" aria-hidden />
             </div>
-            <p style={{ fontSize: 12, color: 'var(--text-dim)', marginTop: 8, textAlign: 'center' }}>
-              {status}
-            </p>
+            <p className="scanner-status">{status}</p>
           </div>
         ) : (
-          <div style={{ marginBottom: 16, padding: 24, textAlign: 'center', background: 'var(--panel-2)', borderRadius: 8 }}>
-            <p style={{ fontSize: 13, color: 'var(--text-dim)' }}>📷 Camera unavailable</p>
+          <div className="scanner-fallback">
+            <p className="scanner-fallback-copy">Camera unavailable — type or paste a code below.</p>
             <button
+              type="button"
+              className="erpnext-btn-secondary scanner-retry"
               onClick={() => { setError(''); setUseCamera(true) }}
-              style={{ marginTop: 8, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 12px', cursor: 'pointer', fontSize: 12 }}
             >
               Try camera again
             </button>
           </div>
         )}
 
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="scanner-manual">
           <input
-            className="erpnext-input"
+            className="erpnext-input scanner-input"
             value={manualCode}
             onChange={e => setManualCode(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleManualSubmit()}
             placeholder="Or type / paste code…"
+            aria-label="Type or paste barcode"
           />
-          <button className="erpnext-btn-primary" onClick={handleManualSubmit}>Enter</button>
+          <button type="button" className="erpnext-btn-primary scanner-enter" onClick={handleManualSubmit}>
+            Enter
+          </button>
         </div>
 
-        {error && <p style={{ color: 'var(--red)', fontSize: 12, marginTop: 8 }}>{error}</p>}
+        {error && <p className="scanner-error">{error}</p>}
       </div>
+
+      <style>{`
+        .scanner-overlay {
+          padding: 16px;
+        }
+        .scanner-modal {
+          max-width: 440px;
+          width: 100%;
+          background: var(--card, #fff);
+          border: 1px solid var(--border, #d1d5db);
+          border-radius: 10px;
+          padding: 16px;
+          box-shadow: var(--shadow-md, 0 12px 40px rgba(15, 23, 42, 0.18));
+        }
+        .scanner-head {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 12px;
+        }
+        .scanner-title {
+          margin: 0;
+          font-size: 16px;
+          font-weight: 650;
+          letter-spacing: -0.02em;
+          color: var(--text-color, #111827);
+          line-height: 1.2;
+        }
+        .scanner-close {
+          appearance: none;
+          background: none;
+          border: none;
+          width: 32px;
+          height: 32px;
+          border-radius: 6px;
+          cursor: pointer;
+          color: var(--text-dim, #6b7280);
+          font-size: 18px;
+          line-height: 1;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+        }
+        .scanner-close:hover {
+          background: oklch(0.96 0.005 250);
+          color: var(--text-color, #111827);
+        }
+        .scanner-camera {
+          margin-bottom: 14px;
+        }
+        .scanner-viewport {
+          position: relative;
+          border-radius: 8px;
+          overflow: hidden;
+          background: #0b1220;
+          border: 1px solid var(--border, #d1d5db);
+        }
+        .scanner-video {
+          width: 100%;
+          display: block;
+          aspect-ratio: 4 / 3;
+          object-fit: cover;
+          vertical-align: top;
+        }
+        .scanner-reticle {
+          position: absolute;
+          inset: 18% 22%;
+          border: 2px solid rgba(255, 255, 255, 0.92);
+          border-radius: 12px;
+          box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.28);
+          pointer-events: none;
+        }
+        .scanner-status {
+          margin: 10px 0 0;
+          font-size: 12px;
+          line-height: 1.4;
+          color: var(--text-dim, #6b7280);
+          text-align: center;
+        }
+        .scanner-fallback {
+          margin-bottom: 14px;
+          padding: 20px 16px;
+          text-align: center;
+          border: 1px solid var(--border, #d1d5db);
+          border-radius: 8px;
+          background: var(--card, #fff);
+        }
+        .scanner-fallback-copy {
+          margin: 0;
+          font-size: 13px;
+          color: var(--text-dim, #6b7280);
+          line-height: 1.45;
+        }
+        .scanner-retry {
+          margin-top: 10px;
+          height: 32px;
+          min-height: 32px;
+          padding: 0 12px;
+          font-size: 13px;
+        }
+        .scanner-manual {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          min-width: 0;
+        }
+        .scanner-input.erpnext-input,
+        .scanner-modal .scanner-input {
+          flex: 1 1 auto;
+          min-width: 0;
+          width: auto !important;
+          max-width: none;
+          height: 40px !important;
+          min-height: 40px !important;
+          padding: 0 12px !important;
+          border: 1px solid var(--border, #d1d5db) !important;
+          border-radius: 6px !important;
+          background: var(--card, #fff) !important;
+          box-shadow: none !important;
+          font-size: 13px;
+        }
+        .scanner-input.erpnext-input:focus,
+        .scanner-modal .scanner-input:focus {
+          border-color: var(--primary, #2563eb) !important;
+          box-shadow: 0 0 0 3px oklch(0.56 0.18 250 / 0.10) !important;
+        }
+        .scanner-enter {
+          flex: 0 0 auto;
+          height: 40px !important;
+          min-height: 40px !important;
+          padding: 0 16px !important;
+          font-size: 14px;
+          font-weight: 600;
+          border-radius: 6px;
+        }
+        .scanner-error {
+          margin: 10px 0 0;
+          font-size: 12px;
+          line-height: 1.4;
+          color: var(--red, #b91c1c);
+        }
+      `}</style>
     </div>
   )
 }

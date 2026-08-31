@@ -19,6 +19,7 @@ import Workflow from "./pages/Workflow";
 import Reports from "./pages/Reports";
 import Analytics from "./pages/Analytics";
 import InventoryHealth from "./pages/InventoryHealth";
+import Inventory from "./pages/Inventory";
 import Transfers from "./pages/Transfers";
 import Items from "./pages/Items";
 import Locations from "./pages/Locations";
@@ -103,6 +104,7 @@ export default function App() {
         <Route path="cycle-count" element={<CycleCount />} />
         <Route path="stock-scan" element={<StockScan />} />
         <Route path="inventory-health" element={<InventoryHealth />} />
+        <Route path="inventory" element={<Inventory />} />
         <Route path="transfers" element={<Transfers />} />
         <Route path="po" element={<PurchaseOrders />} />
         <Route path="sales-orders" element={<SalesOrders />} />
